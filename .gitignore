@@ -26,3 +26,7 @@ dist/
 
 # Generated robot programs
 output/
+
+# Licensed / confidential material - local only, never commit
+assets/cad/
+docs/manuals/
