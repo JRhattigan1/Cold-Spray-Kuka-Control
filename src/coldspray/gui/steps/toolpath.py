@@ -1,0 +1,182 @@
+"""Step 3 Toolpath: strategy, process parameters, Generate."""
+
+import time
+
+import numpy as np
+from pydantic import ValidationError
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QApplication, QComboBox, QDoubleSpinBox, QFormLayout, QMessageBox, QPushButton, QSpinBox, QVBoxLayout,
+    QWidget,
+)
+
+from coldspray.cad.part import build_mesh, other_mesh
+from coldspray.cell import robroot
+from coldspray.gui.stepper import SIMULATE, TOOLPATH
+from coldspray.gui.widgets import Section, primary_button, wrap_label
+from coldspray.kinematics.robot import Robot
+from coldspray.models import ProcessConfig, load_process, save_process
+from coldspray.pipeline import MODES, plan_part
+from coldspray.sim.scene import gantry_offset, make_gun
+
+UNITS = {"_mm_s": " mm/s", "_mm": " mm", "_deg": " °", "_s": " s"}
+
+
+def _label(field: str) -> tuple[str, str]:
+    for suffix, unit in UNITS.items():
+        if field.endswith(suffix):
+            return field[: -len(suffix)].replace("_", " ").capitalize(), unit
+    return field.replace("_", " ").capitalize(), ""
+
+
+def estimate_time_s(path, proc: ProcessConfig) -> float:
+    """Rough program time: robot moves at their speed over the part, plus spray settling.
+    Pure table rotations count at their speed over the part too."""
+    total, on = 0.0, False
+    for a, b in zip(path.moves, path.moves[1:]):
+        total += np.linalg.norm(b.pose[:3, 3] - a.pose[:3, 3]) / b.speed
+        if b.gun_on and not on:
+            total += proc.spray_settle_s
+        on = b.gun_on
+    return total
+
+
+class ToolpathStep:
+    def _build_toolpath_panel(self) -> QWidget:
+        inner = QWidget()
+        layout = QVBoxLayout(inner)
+
+        plan_box = self.strategy_section = Section("Strategy")
+        pform = QFormLayout()
+        self.mode = QComboBox()
+        for key, text in MODES.items():
+            self.mode.addItem(text, key)
+        self.mode.setToolTip("Layers: slice the part and build it up layer by layer.\n"
+                             "Revolve: spin the turntable and coat the outside of a round part.")
+        self.mode.currentIndexChanged.connect(self._mode_changed)
+        self.coats = QSpinBox()
+        self.coats.setRange(1, 500)
+        self.coats.setToolTip("Revolve: number of complete coats; each backs off by the layer thickness")
+        pform.addRow("Mode", self.mode)
+        pform.addRow("Coats", self.coats)
+        plan_box.add(pform)
+        layout.addWidget(plan_box)
+
+        proc_box = self.process_section = Section("Process")
+        self.process_form = form = QFormLayout()
+        self.fields = {}
+        proc = load_process()
+        for name, info in ProcessConfig.model_fields.items():
+            text, unit = _label(name)
+            if info.annotation is int:
+                box = QSpinBox()
+                box.setRange(0, 1000)
+            else:
+                box = QDoubleSpinBox()
+                box.setDecimals(2)
+                box.setRange(-360.0 if name.endswith("_deg") else 0.0, 100000.0)
+            box.setValue(getattr(proc, name))
+            box.setSuffix(unit)
+            box.setToolTip(info.description)
+            form.addRow(text, box)
+            self.fields[name] = box
+        proc_box.add(form)
+        layout.addWidget(proc_box)
+
+        self.generate_btn = primary_button("Generate toolpath", self.generate)
+        self.save_settings_btn = QPushButton("Save as default")
+        self.save_settings_btn.setToolTip("Write these process values to config/process.yaml")
+        self.save_settings_btn.clicked.connect(self._save_settings)
+        layout.addWidget(self.generate_btn)
+        layout.addWidget(self.save_settings_btn)
+        self.summary = wrap_label()
+        layout.addWidget(self.summary)
+
+        layout.addWidget(primary_button("Next: Simulate  →", lambda: self.go_to(SIMULATE)))
+        layout.addStretch(1)
+        self._mode_changed()
+        return inner
+
+    def _mode_changed(self):
+        revolve = self.mode.currentData() == "revolve"
+        self.coats.setEnabled(revolve)
+        self.rotation.setEnabled(not revolve)
+        self._show_placement()
+        self._enter_setup()
+
+    def read_process(self) -> ProcessConfig:
+        return ProcessConfig(**{name: box.value() for name, box in self.fields.items()})
+
+    def generate(self):
+        if self.scene is None or self.part is None:
+            return
+        try:
+            proc = self.read_process()
+        except ValidationError as e:
+            QMessageBox.warning(self, "Invalid parameter", str(e))
+            return
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            t0 = time.time()
+            a = self.assets
+            tool = a.tool.model_copy(deep=True)
+            if tool.gun:
+                tool.gun.nozzle = self.nozzle.currentData()
+            robot = Robot(a.robot.cfg, tool)
+            gun = make_gun(tool, a.gun_mesh)
+            self.scene.set_gun(robot, gun)
+
+            cell = self._work_cell()
+            self.scene.set_placement(robroot(cell), gantry_offset(cell))
+
+            name, mode = self.part.name, self.mode.currentData()
+            self._status("Planning...")
+            summary, path = plan_part(self.part, proc, mode=mode, tilt_deg=self.tilt.value(),
+                                      rotation_deg=self.rotation.value(), coats=self.coats.value(), cell=cell,
+                                      substrate=self.substrate, roll_deg=self.roll.value())
+            if not path.moves:
+                raise ValueError("No toolpath: the part gave no layers (is it thinner than one layer?)")
+            self._status("Checking reach...")
+            part_mesh, fixture_mesh = build_mesh(self.part), other_mesh(self.part)
+            substrate_mesh = self._substrate_mesh()
+            joints = self.scene.set_path(path, cell, part=part_mesh, substrate=substrate_mesh,
+                                         fixture=fixture_mesh, step=2.0,
+                                         home=cell.home_deg, angle_step=5.0,
+                                         gun_limit_deg=cell.gun_max_down_deg)
+            self.result = (path, proc, cell, robot)
+        except Exception as e:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.warning(self, "Could not generate toolpath", str(e))
+            self._status("Generate failed")
+            return
+        QApplication.restoreOverrideCursor()
+
+        self.slider.blockSignals(True)
+        self.slider.setRange(0, self.scene.n_points - 1)
+        self.slider.setValue(self.scene.first_reachable())
+        self.slider.blockSignals(False)
+        self.unreachable = int(np.isnan(joints[:, 0]).sum())
+        minutes = estimate_time_s(path, proc) / 60
+        self.collision_text = "collision check off" if not self.check_box.isChecked() else "checking collisions..."
+        self.summary_head = (f"<b>{name}</b><br>{summary}, {len(path.moves)} moves<br>"
+                             f"Estimated time: {minutes:.1f} min<br>")
+        self.summary.setText(f"{summary} · {len(path.moves)} moves · ≈ {minutes:.1f} min")
+        self._update_info()
+        self.save_krl_btn.setEnabled(self.unreachable == 0)
+        self.plotter.render()
+        self._status(f"Generated in {time.time() - t0:.1f} s")
+        self._invalidate(SIMULATE)         # a new toolpath: check and save it again
+        self._mark_done(TOOLPATH)
+        if self.check_box.isChecked() and a.meshes is not None:
+            self._start_collision_check(robot, gun, cell, part_mesh, substrate_mesh, fixture_mesh, joints)
+        else:
+            self._mark_done(SIMULATE)
+
+    def _save_settings(self):
+        try:
+            proc = self.read_process()
+        except ValidationError as e:
+            QMessageBox.warning(self, "Invalid parameter", str(e))
+            return
+        save_process(proc)
+        self._status("Saved process settings to config/process.yaml")

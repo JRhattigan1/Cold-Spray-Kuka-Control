@@ -18,22 +18,28 @@ C:\Users\qrb21117\.venvs\coldspray\Scripts\python.exe -m coldspray.cad.step_cach
 ```
 
 ## Run
-**Main window**, two tabs:
+**Main window**: five steps across the top. Click any step to go there; the
+"Next" button at the bottom of each panel moves on. A tick marks a finished
+step; an amber dot marks one that is out of date because an earlier step changed.
 1. **Part** - open a STEP part or assembly. Give each body a role: **Build**
    (sliced and sprayed, e.g. a repair patch), **Fixture** (the component,
    clamps: collision-checked only) or **Ignore**. Hide / isolate bodies to reach
    hidden faces, then pick the **start face** (on the build body: layers are
    parallel to it and grow away from it) and optionally a **base face** for the
    part to stand on.
-2. **Cell** - position it on the faceplate (drag handles, X/Y/Z/A/B/C boxes or
+2. **Position** - place it on the faceplate (drag handles, X/Y/Z/A/B/C boxes or
    a SpaceMouse), optional substrate plate. **Keep on plate** (on when a base
    face is set) stands it on its base face and locks Z/B/C; untick it to place
    the part anywhere in 3D (fixture, riser). "Snap base face down" / "Drop onto
-   plate" move it once. "Auto position" picks table tilt,
-   gun roll and gantry E1 to keep the gun level (max `gun_max_down_deg` below
-   horizontal). Choose a strategy (Layers, or Revolve: coat a round part while
-   the turntable spins), set process parameters, generate, check reach and
-   collisions in 3D, save the KRL program.
+   plate" move it once. Table tilt E2, rotation E5, gantry E1, gun roll and
+   nozzle; "Auto position" (also run on entering this step) picks tilt, gun
+   roll and E1 to keep the gun level (max `gun_max_down_deg` below horizontal).
+3. **Toolpath** - strategy (Layers, or Revolve: coat a round part while the
+   turntable spins) and process parameters, then Generate. "Save as default"
+   writes the process values to `config/process.yaml`.
+4. **Simulate** - reach, gun angle and collision results (the collision check
+   runs in the background after Generate) and playback.
+5. **Export** - save the KRL program.
 
 Start it with:
 ```
@@ -54,7 +60,7 @@ Other entry points: `python -m coldspray.demo_part [part.step]` (command line),
 | `src/coldspray/toolpath/` | Toolpath format |
 | `src/coldspray/post/krl.py` | Toolpath → KRL `.src` |
 | `src/coldspray/sim/` | 3D scene (cell, robot, gun, turntable, path), collision checking |
-| `src/coldspray/gui.py` | Main window |
+| `src/coldspray/gui/` | Main window: `app.py` shell and step bar, `steps/` one module per step |
 
 ## Before running on the real robot
 - Gun TCP is computed from CAD: check `clock_deg` / nozzle length in `tool.yaml`, or paste the taught TOOL_DATA.
