@@ -5,6 +5,7 @@ Run with:  python -m coldspray.gui
 
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -17,16 +18,17 @@ from PySide6.QtWidgets import (
 )
 from pyvistaqt import QtInteractor
 
-from coldspray.cell import base_in_robot, robroot
+from coldspray.cell import robroot
 from coldspray.kinematics.robot import Robot
 from coldspray.models import PROJECT_ROOT, ProcessConfig, load_process, save_process
-from coldspray.pipeline import load_part, plan_part
+from coldspray.pipeline import MODES, load_part, plan_part
 from coldspray.post.krl import KRLError, to_krl
 from coldspray.sim.cell_model import OPTIONAL
 from coldspray.sim.scene import gantry_offset, load_assets, make_gun
 from coldspray.sim.viewer import Scene
 
 UNITS = {"_mm_s": " mm/s", "_mm": " mm", "_deg": " °", "_s": " s"}
+CHECK_EVERY = 3        # collision-check every 3rd sampled point (~6 mm of travel)
 
 
 def _label(field: str) -> tuple[str, str]:
@@ -37,6 +39,8 @@ def _label(field: str) -> tuple[str, str]:
 
 
 def estimate_time_s(path, proc: ProcessConfig) -> float:
+    """Rough program time: robot moves at their speed over the part, plus spray settling.
+    Pure table rotations count at their speed over the part too."""
     total, on = 0.0, False
     for a, b in zip(path.moves, path.moves[1:]):
         total += np.linalg.norm(b.pose[:3, 3] - a.pose[:3, 3]) / b.speed
@@ -44,6 +48,16 @@ def estimate_time_s(path, proc: ProcessConfig) -> float:
             total += proc.spray_settle_s
         on = b.gun_on
     return total
+
+
+def _spin(lo, hi, value, suffix, decimals=1, tip=""):
+    box = QDoubleSpinBox()
+    box.setDecimals(decimals)
+    box.setRange(lo, hi)
+    box.setValue(value)
+    box.setSuffix(suffix)
+    box.setToolTip(tip)
+    return box
 
 
 class MainWindow(QMainWindow):
@@ -56,6 +70,14 @@ class MainWindow(QMainWindow):
         self.part = None        # (name, vertices, faces)
         self.result = None      # (path, proc, cell, robot)
         self.play_timer = QTimer(self, interval=30, timeout=self._tick)
+
+        # Collision checking runs on one worker thread (FCL objects stay on it)
+        self.pool = ThreadPoolExecutor(max_workers=1)
+        self.checker = None
+        self.checker_e1 = None
+        self.check_future = None
+        self.check_id = 0
+        self.poll_timer = QTimer(self, interval=200, timeout=self._poll_check)
 
         self.plotter = QtInteractor(self)
         panel = self._build_panel()
@@ -84,11 +106,30 @@ class MainWindow(QMainWindow):
         self.part_label.setWordWrap(True)
         open_btn = QPushButton("Open STEP file...")
         open_btn.clicked.connect(self._open_step)
-        block_btn = QPushButton("Use test block")
-        block_btn.clicked.connect(lambda: self._set_part(None))
-        for w in (self.part_label, open_btn, block_btn):
-            pl.addWidget(w)
+        row = QHBoxLayout()
+        for text, key in (("Test block", "test_block"), ("Test tube", "test_tube")):
+            btn = QPushButton(text)
+            btn.clicked.connect(lambda _=False, k=key: self._set_part(k))
+            row.addWidget(btn)
+        pl.addWidget(self.part_label)
+        pl.addWidget(open_btn)
+        pl.addLayout(row)
         layout.addWidget(part_box)
+
+        plan_box = QGroupBox("Strategy")
+        pform = QFormLayout(plan_box)
+        self.mode = QComboBox()
+        for key, text in MODES.items():
+            self.mode.addItem(text, key)
+        self.mode.setToolTip("Layers: slice the part and build it up layer by layer.\n"
+                             "Revolve: spin the turntable and coat the outside of a round part.")
+        self.mode.currentIndexChanged.connect(self._mode_changed)
+        self.coats = QSpinBox()
+        self.coats.setRange(1, 500)
+        self.coats.setToolTip("Revolve: number of complete coats; each backs off by the layer thickness")
+        pform.addRow("Mode", self.mode)
+        pform.addRow("Coats", self.coats)
+        layout.addWidget(plan_box)
 
         proc_box = QGroupBox("Process")
         form = QFormLayout(proc_box)
@@ -114,18 +155,22 @@ class MainWindow(QMainWindow):
         cform = QFormLayout(cell_box)
         self.nozzle = QComboBox()
         self.nozzle.setToolTip("Nozzle fitted to the gun (sets the TCP)")
-        self.e1 = QDoubleSpinBox()
-        self.e1.setDecimals(1)
-        self.e1.setSuffix(" mm")
-        self.e1.setToolTip("Gantry position for this program (+E1 moves towards the turntable)")
+        self.e1 = _spin(0, 1, 0, " mm", tip="Gantry position for this program (+E1 moves towards the turntable)")
+        self.tilt = _spin(0, 1, 0, " °", tip="Turntable tilt for this program (90° = faceplate facing the tailstock)")
+        self.rotation = _spin(0, 1, 0, " °", tip="Turntable rotation for Layers mode (Revolve turns the table itself)")
         cform.addRow("Nozzle", self.nozzle)
         cform.addRow("Gantry E1", self.e1)
+        cform.addRow("Table tilt", self.tilt)
+        cform.addRow("Table rotation", self.rotation)
+        self.check_box = QCheckBox("Check collisions")
+        self.check_box.setChecked(True)
+        cform.addRow(self.check_box)
         layout.addWidget(cell_box)
 
         show_box = QGroupBox("Show")
         sbox = QVBoxLayout(show_box)
         self.group_checks = {}
-        for label, (_, default) in OPTIONAL.items():
+        for label, (_, default, _) in OPTIONAL.items():
             check = QCheckBox(label)
             check.setChecked(default)
             check.toggled.connect(lambda on, lbl=label: self._show_group(lbl, on))
@@ -153,7 +198,8 @@ class MainWindow(QMainWindow):
         scroll = QScrollArea()
         scroll.setWidget(inner)
         scroll.setWidgetResizable(True)
-        scroll.setFixedWidth(360)
+        scroll.setFixedWidth(380)
+        self._mode_changed()
         return scroll
 
     def _build_playback(self) -> QHBoxLayout:
@@ -165,6 +211,11 @@ class MainWindow(QMainWindow):
         row.addWidget(self.play_btn)
         row.addWidget(self.slider, 1)
         return row
+
+    def _mode_changed(self):
+        revolve = self.mode.currentData() == "revolve"
+        self.coats.setEnabled(revolve)
+        self.rotation.setEnabled(not revolve)
 
     def _show_group(self, label, on):
         if self.scene:
@@ -191,6 +242,17 @@ class MainWindow(QMainWindow):
                 self.e1.setValue(a.cell.gantry.position_mm)
             else:
                 self.e1.setEnabled(False)
+            tt = a.cell.turntable
+            if tt:
+                self.tilt.setRange(*tt.tilt.limits_deg)
+                self.tilt.setValue(tt.tilt.position_deg)
+                self.rotation.setRange(*tt.rotation.limits_deg)
+                self.rotation.setValue(tt.rotation.position_deg)
+                self.tilt.setPrefix(f"{tt.tilt.axis}  ")
+                self.rotation.setPrefix(f"{tt.rotation.axis}  ")
+            else:
+                self.tilt.setEnabled(False)
+                self.rotation.setEnabled(False)
             self.scene = Scene(self.plotter, a.robot, robroot(a.cell), a.meshes, gantry_offset(a.cell),
                                a.cell.robot_cad_pose_deg, make_gun(a.tool, a.gun_mesh))
             self._set_part(None)
@@ -205,12 +267,18 @@ class MainWindow(QMainWindow):
         if fn:
             self._set_part(fn)
 
-    def _set_part(self, step_file):
+    def _set_part(self, source):
+        """`source`: a STEP path, a built-in part name, or None (test block)."""
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            self._status("Reading part..." if step_file else "Building test block...")
-            self.part = load_part(step_file)
-            self.part_label.setText(Path(step_file).name if step_file else "test block (built in)")
+            self._status("Reading part...")
+            self.part = load_part(source)
+            builtin = source is None or not Path(str(source)).suffix
+            self.part_label.setText(f"{self.part[0]} (built in)" if builtin else Path(source).name)
+            if source == "test_tube":
+                self.mode.setCurrentIndex(self.mode.findData("revolve"))
+            elif builtin:
+                self.mode.setCurrentIndex(self.mode.findData("layers"))
         except Exception as e:  # bad or unreadable STEP file
             QApplication.restoreOverrideCursor()
             QMessageBox.warning(self, "Could not load part", str(e))
@@ -238,7 +306,8 @@ class MainWindow(QMainWindow):
             if tool.gun:
                 tool.gun.nozzle = self.nozzle.currentData()
             robot = Robot(a.robot.cfg, tool)
-            self.scene.set_gun(robot, make_gun(tool, a.gun_mesh))
+            gun = make_gun(tool, a.gun_mesh)
+            self.scene.set_gun(robot, gun)
 
             cell = a.cell.model_copy(deep=True)
             if cell.gantry:
@@ -246,14 +315,16 @@ class MainWindow(QMainWindow):
             self.scene.set_placement(robroot(cell), gantry_offset(cell))
 
             name, v, f = self.part
-            self._status("Slicing and planning...")
-            layers, path = plan_part(v, f, proc, name)
+            mode = self.mode.currentData()
+            self._status("Planning...")
+            summary, path = plan_part(v, f, proc, name, mode=mode, tilt_deg=self.tilt.value(),
+                                      rotation_deg=self.rotation.value(), coats=self.coats.value(), cell=cell)
             if not path.moves:
                 raise ValueError("No toolpath: the part gave no layers (is it thinner than one layer?)")
             self._status("Checking reach...")
-            plate = tuple(v[:, :2].max(axis=0) + 10)
-            joints = self.scene.set_path(path, base_in_robot(cell), part=(v, f), plate_size=plate,
-                                         step=2.0, home=cell.home_deg)
+            plate = tuple(v[:, :2].max(axis=0) + 10) if mode == "layers" else None
+            joints = self.scene.set_path(path, cell, part=(v, f), plate_size=plate, step=2.0,
+                                         home=cell.home_deg, angle_step=5.0)
             self.result = (path, proc, cell, robot)
         except Exception as e:
             QApplication.restoreOverrideCursor()
@@ -266,19 +337,80 @@ class MainWindow(QMainWindow):
         self.slider.setRange(0, self.scene.n_points - 1)
         self.slider.setValue(self.scene.first_reachable())
         self.slider.blockSignals(False)
-        bad = int(np.isnan(joints[:, 0]).sum())
-        minutes = estimate_time_s(path, proc) / 60
-        self.info.setText(
-            f"<b>{name}</b><br>{len(layers)} layers, {len(path.moves)} moves<br>"
-            f"Estimated spray time: {minutes:.1f} min<br>"
-            + (f"<span style='color:#d93025'>{bad} unreachable points</span>" if bad
-               else "<span style='color:green'>All points reachable</span>"))
-        self.save_krl_btn.setEnabled(bad == 0)
+        self.unreachable = int(np.isnan(joints[:, 0]).sum())
+        self.collision_text = "collision check off" if not self.check_box.isChecked() else "checking collisions..."
+        self.summary_head = (f"<b>{name}</b><br>{summary}, {len(path.moves)} moves<br>"
+                             f"Estimated time: {estimate_time_s(path, proc) / 60:.1f} min<br>")
+        self._update_info()
+        self.save_krl_btn.setEnabled(self.unreachable == 0)
         self.plotter.render()
         self._status(f"Generated in {time.time() - t0:.1f} s")
+        if self.check_box.isChecked() and a.meshes is not None:
+            self._start_collision_check(robot, gun, cell, (v, f), joints)
+
+    def _update_info(self):
+        reach = (f"<span style='color:#d93025'>{self.unreachable} unreachable points</span>" if self.unreachable
+                 else "<span style='color:green'>All points reachable</span>")
+        self.info.setText(self.summary_head + reach + "<br>" + self.collision_text)
+
+    # --- collision checking (background) -------------------------------------------
+    def _start_collision_check(self, robot, gun, cell, part, joints):
+        from coldspray.sim.collision import CollisionChecker
+
+        self.check_id += 1
+        job, a = self.check_id, self.assets
+        axes_at = self.scene.samples.axes_at
+        e1 = cell.gantry.position_mm if cell.gantry else None
+
+        def work():
+            if job != self.check_id:
+                return None                       # superseded by a newer Generate
+            if self.checker is None or self.checker_e1 != e1:
+                self.checker = CollisionChecker(robot, cell, a.meshes, gun, part, cell.robot_cad_pose_deg)
+                self.checker_e1 = e1
+            else:
+                self.checker.set_gun(robot, gun)
+                self.checker.set_part(part)
+                self.checker.cell = cell
+            return job, self.checker.check_path(joints, axes_at, every=CHECK_EVERY)
+
+        self.check_future = self.pool.submit(work)
+        self.poll_timer.start()
+
+    def _poll_check(self):
+        if self.check_future is None or not self.check_future.done():
+            return
+        self.poll_timer.stop()
+        future, self.check_future = self.check_future, None
+        try:
+            out = future.result()
+        except Exception as e:
+            self.collision_text = f"<span style='color:#d93025'>collision check failed: {e}</span>"
+            self._update_info()
+            return
+        if out is None or out[0] != self.check_id:
+            return
+        hits = out[1]
+        self.scene.set_collisions(hits)
+        self.plotter.render()
+        if hits:
+            pairs = sorted({p for h in hits for p in h.pairs})
+            shown = ", ".join(f"{a}/{b}" for a, b in pairs[:4]) + (" ..." if len(pairs) > 4 else "")
+            self.collision_text = (f"<span style='color:#c2185b'>{len(hits)} collision points</span> "
+                                   f"(magenta): {shown}")
+        else:
+            self.collision_text = "<span style='color:green'>No collisions found</span>"
+        self.collisions = hits
+        self._update_info()
 
     def _save_krl(self):
         path, proc, cell, robot = self.result
+        hits = getattr(self, "collisions", [])
+        if hits and QMessageBox.question(
+                self, "Collisions found",
+                f"The simulation found {len(hits)} collision points. Save the program anyway?") \
+                != QMessageBox.StandardButton.Yes:
+            return
         out = PROJECT_ROOT / "output"
         out.mkdir(exist_ok=True)
         fn, _ = QFileDialog.getSaveFileName(self, "Save KRL program", str(out / f"{path.name}.src"),
@@ -287,7 +419,7 @@ class MainWindow(QMainWindow):
             return
         try:
             Path(fn).write_text(to_krl(path, robot, cell, proc), newline="\r\n")
-        except KRLError as e:
+        except (KRLError, ValueError) as e:
             QMessageBox.warning(self, "Could not write program", str(e))
             return
         self._status(f"Saved {fn}")
@@ -324,6 +456,9 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self.play_timer.stop()
+        self.poll_timer.stop()
+        self.check_id += 1            # let a running check finish without effect
+        self.pool.shutdown(wait=False, cancel_futures=True)
         self.plotter.close()
         super().closeEvent(event)
 

@@ -18,9 +18,37 @@ gantry:
   position_mm: 2730.0         # used by programs for now: puts the robot over the turntable
 
 # Work base: top centre of the turntable faceplate (tilt and rotation at 0).
-# Toolpaths are written relative to this. BASE_DATA[base_number] must match.
+# Toolpaths are written relative to this; it moves with the turntable axes.
+# Controller backup: BASE_DATA[1] "turntable" = {X 1482.75, Y -661.14,
+# Z -1509.18, A 90.27} in KUKA WORLD - compare once $WORLD/$ROBROOT are known.
 base_number: 1
-base: {x: -885.0, y: -421.0, z: 1470.0, a: 0.0, b: 0.0, c: 0.0}
+base: {x: -884.56, y: -421.0, z: 1469.94, a: 0.0, b: 0.0, c: 0.0}
+
+# GTV KDT3000 tilting turntable, axes measured from the cell CAD:
+#  tilt axis along world Y through the tilt trunnions, which sits exactly at
+#  the tailstock centre height (z 1100) - so at 90 deg tilt the faceplate axis
+#  lines up with the tailstock; rotation axis = faceplate axis.
+# Axis numbers from the controller programs (E2 0..90 deg, E5 indexed 0/90/180/270).
+# CHECK on the robot: +E2 tilts the faceplate towards the tailstock (+X), and
+# which way +E5 turns (assumed counter-clockwise seen from above the faceplate).
+turntable:
+  tilt:
+    axis: E2
+    point: [-884.56, -421.0, 1100.0]
+    direction: [0.0, 1.0, 0.0]
+    limits_deg: [0.0, 90.0]
+    position_deg: 0.0
+  rotation:
+    axis: E5
+    point: [-884.56, -421.0, 1469.94]
+    direction: [0.0, 0.0, 1.0]
+    limits_deg: [-355.0, 355.0]
+    position_deg: 0.0
+    max_speed_deg_s: 156.0  # 2600 rpm motor / i = 100 (KDT3000 manual) - CHECK $VEL_AXIS_MA
+  # true if the controller couples the turntable mathematically to BASE_DATA[1]
+  # (positions then move with the faceplate); false writes positions in the
+  # fixed base and adds the axis values to every point.
+  coupled: false
 
 tool_number: 1        # TOOL_DATA index holding the spray gun TCP
 gun_output: 1         # $OUT number that switches the spray on

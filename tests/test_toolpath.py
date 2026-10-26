@@ -1,7 +1,7 @@
 import numpy as np
 
 from coldspray.models import load_process
-from coldspray.toolpath.model import spray_frame
+from coldspray.toolpath.model import Move, Toolpath, spray_frame
 from coldspray.toolpath.raster import plate_raster
 
 
@@ -29,7 +29,19 @@ def test_plate_raster_covers_plate():
 
 def test_sample_spacing():
     path = plate_raster(load_process(), 100, 10)
-    poses, gun, idx = path.sample(step=5)
-    gaps = np.linalg.norm(np.diff(poses[:, :3, 3], axis=0), axis=1)
+    s = path.sample(step=5)
+    gaps = np.linalg.norm(np.diff(s.poses[:, :3, 3], axis=0), axis=1)
     assert gaps.max() <= 5 + 1e-9
-    assert len(poses) == len(gun) == len(idx)
+    assert len(s.poses) == len(s.gun_on) == len(s.move_index)
+
+
+def test_sample_interpolates_external_axes():
+    p = spray_frame((0, 0, 30), (0, 0, -1), (1, 0, 0))
+    path = Toolpath("t", [Move(p, 100, axes={"E2": 0.0, "E5": 0.0}),
+                          Move(p, 100, axes={"E5": 90.0}),         # rotate in place
+                          Move(p, 100)])                           # E5 carried forward
+    s = path.sample(step=5, angle_step=2)
+    assert len(s) == 1 + 45 + 1
+    assert np.allclose(s.axes["E5"][[0, 45, -1]], [0, 90, 90])
+    assert np.allclose(s.axes["E2"], 0)
+    assert path.axis_values()[-1] == {"E2": 0.0, "E5": 90.0}

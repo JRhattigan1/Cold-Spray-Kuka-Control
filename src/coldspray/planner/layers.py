@@ -74,7 +74,9 @@ def _order(segments: list[np.ndarray], start) -> list[np.ndarray]:
     return out
 
 
-def plan_layers(layers: list[Layer], proc: ProcessConfig, name="part") -> Toolpath:
+def plan_layers(layers: list[Layer], proc: ProcessConfig, name="part", table_axes: dict | None = None) -> Toolpath:
+    """`table_axes` fixes the turntable for the whole program, e.g. {"E2": 30, "E5": 0};
+    the gun then sprays along the (tilted) faceplate normal."""
     path = Toolpath(name)
 
     def at(xy, z):
@@ -92,7 +94,8 @@ def plan_layers(layers: list[Layer], proc: ProcessConfig, name="part") -> Toolpa
 
         first = strokes[0][0]
         kind = "PTP" if not path.moves else "LIN"
-        path.moves.append(Move(at(first, z + proc.approach_height_mm), proc.rapid_speed_mm_s, kind=kind))
+        path.moves.append(Move(at(first, z + proc.approach_height_mm), proc.rapid_speed_mm_s, kind=kind,
+                               axes=dict(table_axes or {}) if kind == "PTP" else {}))
         path.moves.append(Move(at(first, z), proc.rapid_speed_mm_s))
         for stroke in strokes:
             here = path.moves[-1].pose[:2, 3]

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from coldspray.cell import base_in_robot, gantry_position, robroot
+from coldspray.cell import gantry_position, robroot
 from coldspray.kinematics.robot import Robot
 from coldspray.models import PROJECT_ROOT, CellConfig, ToolConfig, load_cell, load_robot, load_tool
 from coldspray.toolpath.model import Toolpath
@@ -57,11 +57,11 @@ def gantry_offset(cell: CellConfig) -> np.ndarray:
     return np.asarray(cell.gantry.direction) * gantry_position(cell) if cell.gantry else np.zeros(3)
 
 
-def show_toolpath(path: Toolpath, part=None, plate_size=None, step=5.0, screenshot=None):
+def show_toolpath(path: Toolpath, part=None, plate_size=None, step=5.0, screenshot=None, collisions=True):
     from coldspray.sim.viewer import show
 
     a = load_assets()
-    return show(a.robot, path, base_in_robot(a.cell), world_from_robot=robroot(a.cell), cell=a.meshes,
+    return show(a.robot, path, a.cell, world_from_robot=robroot(a.cell), cell=a.meshes,
                 gantry_offset=gantry_offset(a.cell), cad_pose=a.cell.robot_cad_pose_deg,
                 gun=make_gun(a.tool, a.gun_mesh), part=part, plate_size=plate_size, step=step,
-                home=a.cell.home_deg, screenshot=screenshot)
+                home=a.cell.home_deg, screenshot=screenshot, collisions=collisions)

@@ -1,8 +1,9 @@
-"""3D view of the cell, robot with spray gun, part and toolpath.
+"""3D view of the cell, robot with spray gun, turntable, part and toolpath.
 
 `Scene` draws into any PyVista plotter (a plain window or the Qt GUI). The
 cell is added once; path, gun and gantry position can be swapped afterwards.
-Everything is drawn in WORLD (cell CAD) coordinates.
+Everything is drawn in WORLD (cell CAD) coordinates; the part, plate and path
+are drawn in BASE coordinates and ride on the turntable.
 """
 
 from dataclasses import dataclass
@@ -10,14 +11,18 @@ from dataclasses import dataclass
 import numpy as np
 import pyvista as pv
 
+from coldspray.cell import base_world, turntable_motion
 from coldspray.kinematics.robot import HOME_DEG, Robot
+from coldspray.models import CellConfig
 from coldspray.sim.cell_model import OPTIONAL, CellMeshes
 from coldspray.toolpath.model import Toolpath
 
 SPRAY = "#f28c28"
 TRAVEL = "#9aa0a6"
 BAD = "#d93025"
+CRASH = "#c2185b"
 KUKA_ORANGE = "#ff6a13"
+TABLE = "#a7b4bd"
 
 
 @dataclass
@@ -52,15 +57,18 @@ class Scene:
                  cad_pose=HOME_DEG, gun: Gun | None = None):
         self.pl, self.robot = pl, robot
         self.world_from_robot = np.eye(4) if world_from_robot is None else world_from_robot
-        self.path_actors: list = []
+        self.path_actors: list = []      # move with the faceplate
         self.n_points = 0
         self.joints = np.zeros((0, 6))
         self.reachable = np.zeros(0, bool)
+        self.collisions: dict[int, set] = {}
+        self.cell_cfg: CellConfig | None = None
 
         pl.set_background("white")
         pl.enable_anti_aliasing("ssaa")
         self.link_actors, self.stick, self.carriage = [], None, None
         self.group_actors = {}
+        self.tilting_actors, self.rotating_actors = [], []
         if cell is not None:
             pl.add_mesh(cell.static, color="#c9cfd4", smooth_shading=True)
             for label, mesh in cell.groups.items():
@@ -69,6 +77,12 @@ class Scene:
                                     opacity=0.12 if walls else 1.0, smooth_shading=not walls)
                 actor.SetVisibility(OPTIONAL[label][1])
                 self.group_actors[label] = actor
+                if OPTIONAL[label][2] == "rotating":
+                    self.rotating_actors.append(actor)
+            if cell.tilting.n_cells:
+                self.tilting_actors.append(pl.add_mesh(cell.tilting, color=TABLE, smooth_shading=True))
+            if cell.rotating.n_cells:
+                self.rotating_actors.append(pl.add_mesh(cell.rotating, color="#8fa3b0", smooth_shading=True))
             self.carriage = pl.add_mesh(cell.carriage, color="#9fb3c1", smooth_shading=True)
             self.cad_frames = robot.link_frames(cad_pose)
             for k, mesh in enumerate(cell.robot):
@@ -118,52 +132,88 @@ class Scene:
         self.set_group_visible("Booth walls", visible)
 
     # --- toolpath -------------------------------------------------------------
-    def set_path(self, path: Toolpath, base_in_robot, part=None, plate_size=None, step=5.0, home=None):
+    def set_path(self, path: Toolpath, cell: CellConfig, part=None, plate_size=None, step=5.0, home=None,
+                 angle_step=2.0):
         """Draw a toolpath (and optional part mesh in BASE coordinates).
         Returns the joint angles for every sampled point (NaN = unreachable)."""
         for a in self.path_actors:
             self.pl.remove_actor(a)
         self.path_actors = []
-        world_from_base = self.world_from_robot @ base_in_robot
-        self.world_from_base = world_from_base
+        self.cell_cfg = cell
+        self.collisions = {}
 
-        poses, gun_on, _ = path.sample(step)
-        self.joints = self.robot.ik_path([base_in_robot @ p for p in poses], seed_deg=HOME_DEG if home is None else home)
+        s = path.sample(step, angle_step)
+        self.samples = s
+        robot_from_world = np.linalg.inv(self.world_from_robot)
+        self.base_frames = np.array([base_world(cell, s.axes_at(i)) for i in range(len(s))])
+        targets = [robot_from_world @ b @ p for b, p in zip(self.base_frames, s.poses)]
+        self.joints = self.robot.ik_path(targets, seed_deg=HOME_DEG if home is None else home)
         self.reachable = ~np.isnan(self.joints[:, 0])
-        self.world = np.array([world_from_base @ p for p in poses])
-        self.gun_on, self.path_name, self.n_points = gun_on, path.name, len(poses)
-        pts = self.world[:, :3, 3]
+        self.gun_on, self.path_name, self.n_points = s.gun_on, path.name, len(s)
+        pts = s.poses[:, :3, 3]           # BASE coordinates
 
         add = self.path_actors.append
         if plate_size is not None:
             w, l = plate_size
-            box = pv.Box(bounds=(0, w, 0, l, -10, 0)).transform(world_from_base, inplace=False)
-            add(self.pl.add_mesh(box, color="#b0bec5"))
+            add(self.pl.add_mesh(pv.Box(bounds=(0, w, 0, l, -10, 0)), color="#b0bec5"))
         if part is not None:
-            add(self.pl.add_mesh(_polydata(*part).transform(world_from_base, inplace=False),
-                                 color="#4f6d7a", opacity=0.4))
-        for mask, color, width in ((gun_on, SPRAY, 3), (~gun_on, TRAVEL, 1)):
+            add(self.pl.add_mesh(_polydata(*part), color="#4f6d7a", opacity=0.4))
+        for mask, color, width in ((s.gun_on, SPRAY, 3), (~s.gun_on, TRAVEL, 1)):
             segs = [i for i in range(1, len(pts)) if mask[i]]
             if segs:
                 lines = np.hstack([[2, i - 1, i] for i in segs])
                 add(self.pl.add_mesh(pv.PolyData(pts, lines=lines), color=color, line_width=width))
-        bad = int((~self.reachable).sum())
-        if bad:
+        if (~self.reachable).any():
             add(self.pl.add_points(pts[~self.reachable], color=BAD, point_size=10, render_points_as_spheres=True))
-        self.summary.SetText(3, f"{bad} unreachable points" if bad else "all points reachable")
-        self.summary.GetTextProperty().SetColor(pv.Color(BAD if bad else "green").float_rgb)
+        self.crash_actor = None
+        self._update_summary()
         self.show_point(self.first_reachable())
         return self.joints
+
+    def set_collisions(self, hits):
+        """Mark samples where the robot or gun collides (list of Collision)."""
+        self.collisions = {h.sample: h.pairs for h in hits}
+        if self.crash_actor is not None:
+            self.pl.remove_actor(self.crash_actor)
+            self.path_actors.remove(self.crash_actor)
+            self.crash_actor = None
+        if hits:
+            pts = self.samples.poses[[h.sample for h in hits], :3, 3]
+            self.crash_actor = self.pl.add_points(pts, color=CRASH, point_size=12, render_points_as_spheres=True)
+            self.path_actors.append(self.crash_actor)
+        self._update_summary()
+        self.show_point(self.current if hasattr(self, "current") else 0)
+
+    def _update_summary(self):
+        bad = int((~self.reachable).sum())
+        crashes = len(self.collisions)
+        parts = []
+        if bad:
+            parts.append(f"{bad} unreachable points")
+        if crashes:
+            parts.append(f"{crashes} collision points")
+        self.summary.SetText(3, "\n".join(parts) if parts else "all points reachable")
+        self.summary.GetTextProperty().SetColor(pv.Color(BAD if parts else "green").float_rgb)
 
     def first_reachable(self) -> int:
         return int(np.argmax(self.reachable)) if self.reachable.any() else 0
 
     def show_point(self, i: int):
-        i = int(np.clip(i, 0, max(self.n_points - 1, 0)))
         if not self.n_points:
             return
+        i = int(np.clip(i, 0, self.n_points - 1))
+        self.current = i
+        axes = self.samples.axes_at(i)
+        tilt, face = turntable_motion(self.cell_cfg, axes)
+        for a in self.tilting_actors:
+            a.user_matrix = tilt
+        for a in self.rotating_actors:
+            a.user_matrix = face
+        for a in self.path_actors:
+            a.user_matrix = self.base_frames[i]
+        table = "  ".join(f"{k} {v:.1f}" for k, v in axes.items())
         if not self.reachable[i]:
-            self.status.SetText(2, f"point {i}: UNREACHABLE")
+            self.status.SetText(2, f"point {i}: UNREACHABLE   {table}")
             return
         q = self.joints[i]
         if self.link_actors:
@@ -178,26 +228,32 @@ class Scene:
             m = self.world_from_robot @ self.robot.flange(q) @ self.gun.to_flange
             for a in self.gun_actors:
                 a.user_matrix = m
-        tcp = self.world[i]
+        tcp = self.base_frames[i] @ self.samples.poses[i]
         self.spray.points = np.array([tcp[:3, 3], tcp[:3, 3] + tcp[:3, 0] * 40])
         j = ", ".join(f"{v:.1f}" for v in q)
+        crash = self.collisions.get(i)
+        crash_text = ("\nCOLLISION: " + ", ".join(f"{a} / {b}" for a, b in sorted(crash))) if crash else ""
         self.status.SetText(2, f"{self.path_name}  point {i}/{self.n_points - 1}  "
-                               f"spray {'ON' if self.gun_on[i] else 'off'}\nA1..A6: {j}")
+                               f"spray {'ON' if self.gun_on[i] else 'off'}\nA1..A6: {j}   {table}{crash_text}")
 
     def focus_on_work(self):
-        target = self.world_from_base[:3, 3]
+        target = base_world(self.cell_cfg)[:3, 3] if self.cell_cfg else self.world_from_robot[:3, 3]
         self.pl.camera_position = [target + [-2600, -4200, 2600], target + [600, 300, 700], (0, 0, 1)]
 
 
-def show(robot: Robot, path: Toolpath, base_in_robot: np.ndarray, world_from_robot=None,
+def show(robot: Robot, path: Toolpath, cell_cfg: CellConfig, world_from_robot=None,
          cell: CellMeshes | None = None, gantry_offset=(0.0, 0.0, 0.0), cad_pose=HOME_DEG,
          gun: Gun | None = None, part=None, plate_size=None, step=5.0, home=None,
-         screenshot=None):
+         screenshot=None, collisions=False):
     """Standalone window: slider to move along the path, "p" to play,
     checkbox (bottom right) to show the booth walls."""
     pl = pv.Plotter(off_screen=screenshot is not None, window_size=(1400, 900))
     scene = Scene(pl, robot, world_from_robot, cell, gantry_offset, cad_pose, gun)
-    joints = scene.set_path(path, base_in_robot, part, plate_size, step, home)
+    joints = scene.set_path(path, cell_cfg, part, plate_size, step, home)
+    if collisions and cell is not None:
+        from coldspray.sim.collision import CollisionChecker
+        checker = CollisionChecker(robot, cell_cfg, cell, gun, part, cad_pose)
+        scene.set_collisions(checker.check_path(joints, scene.samples.axes_at, every=3))
 
     slider = pl.add_slider_widget(scene.show_point, [0, max(scene.n_points - 1, 1)],
                                   value=scene.first_reachable(), title="Path position",

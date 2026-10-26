@@ -26,14 +26,17 @@ ROBOT_PARTS = {
     "robot twist tool A6": 6,
 }
 CARRIAGE = ("__gantry_moveplate", "__mounting_plates_for_KUKA_robot_base")
-# label -> (assembly names in the cell CAD, shown by default)
+TILTING = ("__table_rotaryunit",)   # turntable body: moves with the tilt axis
+ROTATING = ("__tabletop",)          # faceplate: moves with tilt and rotation
+FIXED = ("__motorfortilt",)         # tilt drive sits on the fixed base frame
+# label -> (assembly names in the cell CAD, shown by default, moves with: None / "rotating")
 OPTIONAL = {
-    "Booth walls": (("__enclosure",), False),
-    "Table-top extensions": (("__tabletop_extensions",), True),
-    "Rear cabinets / water cooling": (("__rear_electronics_and_water_cooling",), True),
-    "Filtration unit": (("__filtration unit 2",), True),
-    "Hoppers": (("__hoppers",), True),
-    "Control arm": (("__LCD_screen",), True),
+    "Booth walls": (("__enclosure",), False, None),
+    "Table-top extensions": (("__tabletop_extensions",), True, "rotating"),
+    "Rear cabinets / water cooling": (("__rear_electronics_and_water_cooling",), True, None),
+    "Filtration unit": (("__filtration unit 2",), True, None),
+    "Hoppers": (("__hoppers",), True, None),
+    "Control arm": (("__LCD_screen",), True, None),
 }
 
 
@@ -41,6 +44,8 @@ OPTIONAL = {
 class CellMeshes:
     static: pv.PolyData
     carriage: pv.PolyData
+    tilting: pv.PolyData = field(default_factory=pv.PolyData)
+    rotating: pv.PolyData = field(default_factory=pv.PolyData)
     robot: list[pv.PolyData] = field(default_factory=list)
     groups: dict[str, pv.PolyData] = field(default_factory=dict)
 
@@ -64,7 +69,7 @@ def load_cell_meshes(cache: str) -> CellMeshes:
     index = json.loads(cache.with_suffix(".json").read_text())
     data = np.load(cache.with_suffix(".npz"))
 
-    static, carriage = [], []
+    static, carriage, tilting, rotating = [], [], [], []
     optional = {label: [] for label in OPTIONAL}
     robot: list[list] = [[] for _ in ROBOT_PARTS]
     for inst in index["instances"]:
@@ -76,10 +81,16 @@ def load_cell_meshes(cache: str) -> CellMeshes:
             robot[link].append((v, f))  # part coordinates are the robot root frame
             continue
         world = v @ m[:3, :3].T + m[:3, 3]
-        group = next((label for label, (assemblies, _) in OPTIONAL.items()
+        group = next((label for label, (assemblies, *_) in OPTIONAL.items()
                       if any(n in assemblies for n in names)), None)
         if any(n in CARRIAGE for n in names):
             carriage.append((world, f))
+        elif any(n in FIXED for n in names):
+            static.append((world, f))
+        elif any(n in TILTING for n in names):
+            tilting.append((world, f))
+        elif any(n in ROTATING for n in names):
+            rotating.append((world, f))
         elif group is not None:
             optional[group].append((world, f))
         else:
@@ -91,6 +102,8 @@ def load_cell_meshes(cache: str) -> CellMeshes:
     return CellMeshes(
         static=_merge(static),
         carriage=_merge(carriage),
+        tilting=_merge(tilting),
+        rotating=_merge(rotating),
         robot=[_merge(parts) for parts in robot],
         groups={label: _merge(chunks) for label, chunks in optional.items() if chunks},
     )

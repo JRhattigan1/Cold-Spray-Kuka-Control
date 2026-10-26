@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-sim = ["pyvista", "pyvistaqt", "PySide6"]
+sim = ["pyvista", "pyvistaqt", "PySide6", "trimesh", "python-fcl"]
 cad = ["cadquery-ocp", "trimesh", "shapely", "networkx", "rtree"]
 dev = ["pytest"]
 
@@ -30,3 +30,4 @@ coldspray = ["config/*.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning:vtkmodules.*"]

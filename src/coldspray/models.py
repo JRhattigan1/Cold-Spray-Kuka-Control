@@ -79,11 +79,27 @@ class GantryConfig(BaseModel):
     position_mm: float = 0.0
 
 
+class RotaryAxisConfig(BaseModel):
+    axis: str                                  # KRL external axis name, e.g. "E2"
+    point: tuple[float, float, float]          # a point on the axis, WORLD, all axes at 0
+    direction: tuple[float, float, float]      # positive rotation by the right-hand rule
+    limits_deg: tuple[float, float]
+    position_deg: float = 0.0
+    max_speed_deg_s: float | None = None
+
+
+class TurntableConfig(BaseModel):
+    tilt: RotaryAxisConfig
+    rotation: RotaryAxisConfig
+    coupled: bool = False
+
+
 class CellConfig(BaseModel):
     cad_cache: str | None = None
     robroot: XYZABC = XYZABC()
     robot_cad_pose_deg: list[float] = [0, -90, 90, 0, 0, 0]
     gantry: GantryConfig | None = None
+    turntable: TurntableConfig | None = None
     base_number: int
     base: XYZABC
     tool_number: int

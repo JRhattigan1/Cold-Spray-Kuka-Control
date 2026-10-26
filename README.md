@@ -18,8 +18,10 @@ C:\Users\qrb21117\.venvs\coldspray\Scripts\python.exe -m coldspray.cad.step_cach
 ```
 
 ## Run
-**Main window** - pick a STEP part, adjust process parameters, generate, check
-reach in 3D, save the KRL program:
+**Main window** - pick a STEP part, choose a strategy (Layers on the faceplate,
+or Revolve: coat a round part while the turntable spins), set process
+parameters, gantry and turntable positions, generate, check reach and
+collisions in 3D, save the KRL program:
 ```
 C:\Users\qrb21117\.venvs\coldspray\Scripts\python.exe -m coldspray.gui
 ```
@@ -35,12 +37,15 @@ Other entry points: `python -m coldspray.demo_part [part.step]` (command line),
 | `src/coldspray/planner/` | Contour + raster spray passes per layer |
 | `src/coldspray/toolpath/` | Toolpath format |
 | `src/coldspray/post/krl.py` | Toolpath → KRL `.src` |
-| `src/coldspray/sim/` | 3D scene (cell, robot, gun, path) |
+| `src/coldspray/sim/` | 3D scene (cell, robot, gun, turntable, path), collision checking |
 | `src/coldspray/gui.py` | Main window |
 
 ## Before running on the real robot
 - Gun TCP is computed from CAD: check `clock_deg` / nozzle length in `tool.yaml`, or paste the taught TOOL_DATA.
 - BASE_DATA must be taught at the turntable faceplate centre (`cell.yaml`).
 - Gantry: confirm E1 = 0 matches the CAD carriage position, and the travel limits.
+- Turntable: confirm +E2 tilts towards the tailstock and which way +E5 turns, the
+  axis limits and max speeds, and whether it is mathematically coupled to BASE 1
+  (`cell.yaml` → `turntable.coupled`).
 - Verify kinematics: compare pendant X/Y/Z/A/B/C with our FK at several joint positions.
 - First run in T1, spray off, well clear of the part.
