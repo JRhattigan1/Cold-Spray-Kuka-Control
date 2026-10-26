@@ -25,10 +25,18 @@ def test_tcp_from_gun_geometry():
 def test_nozzle_choice_moves_tcp():
     tool = load_tool()
     tool.gun.nozzle = "central_injector"
+    longer = tool.model_copy(deep=True)
+    longer.gun.nozzles["central_injector"].mount_x_mm += 50.0
+    d = tool_frame(longer)[:3, 3] - tool_frame(tool)[:3, 3]
+    assert np.isclose(np.linalg.norm(d), 50.0)
+
+
+def test_both_nozzles_seat_on_the_same_housing_face():
+    # same barrel and clamp housing, only the injector differs -> same TCP
+    tool = load_tool()
     radial = tool.model_copy(deep=True)
-    radial.gun.nozzle = "radial_injector"
-    d = tool_frame(tool)[:3, 3] - tool_frame(radial)[:3, 3]
-    assert np.isclose(np.linalg.norm(d), (404.0 - 30.0) - (209.7 - 30.0))
+    tool.gun.nozzle, radial.gun.nozzle = "central_injector", "radial_injector"
+    assert np.allclose(tool_frame(tool), tool_frame(radial))
 
 
 @pytest.mark.parametrize("key", ["central_injector", "radial_injector"])
