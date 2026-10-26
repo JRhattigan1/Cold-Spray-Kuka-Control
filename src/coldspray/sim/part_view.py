@@ -9,7 +9,7 @@ only visible bodies can be picked. Drawn in part-CAD coordinates.
 import numpy as np
 from vtkmodules.vtkRenderingCore import vtkCellPicker
 
-from coldspray.sim.viewer import BUILD_FACE, FIXTURE, PART, _polydata
+from coldspray.sim.viewer import BUILD_FACE, FIXTURE, PART, VIEW_DIRS, _aim, _bounds_centre, _polydata, _section_plane
 
 BASE_FACE = "#1a73e8"
 IGNORED = "#c9ccd1"
@@ -27,6 +27,8 @@ class PartView:
         self.highlights: dict = {}       # "start" / "base" -> actor
         self.highlighted: dict = {}      # "start" / "base" -> face id
         self._pick_cb = self._pick_obs = None
+        self.section_plane = None        # vtkPlane while the section is on
+        self.section_axis = "x"
         pl.set_background("white")
         pl.enable_anti_aliasing("msaa")
         pl.add_axes()
@@ -43,6 +45,8 @@ class PartView:
             self.triangles.append(tri)
             self.actors.append(self.pl.add_mesh(_polydata(part.vertices, part.faces[tri]), smooth_shading=False))
         self.set_roles(roles)
+        if self.section_plane is not None:         # a new part: a new plane through it
+            self.set_section(True)
         self.fit()
 
     def set_roles(self, roles: list[str]):
@@ -68,6 +72,49 @@ class PartView:
                                          bounds[:, 3].max(), bounds[:, 4].min(), bounds[:, 5].max()))
         self.pl.render()
 
+    def _shown_bounds(self):
+        shown = [a for a, v in zip(self.actors, self.visible) if v] or self.actors
+        return [a.GetBounds() for a in shown]
+
+    def view_preset(self, name: str):
+        """Camera preset in part-CAD coordinates: "fit" (keep the direction, zoom
+        to the visible bodies), "iso", "top", "front", "side" or "bottom"."""
+        if name == "fit":
+            self.fit()
+            return
+        if name not in VIEW_DIRS:
+            raise ValueError(f"unknown view {name!r}")
+        bounds = self._shown_bounds()
+        _aim(self.pl, name, _bounds_centre(bounds) if bounds else (0, 0, 0))
+        self.fit()
+
+    def set_section(self, on: bool, axis: str | None = None):
+        """Clip the bodies (and face highlights) with a plane through the middle of
+        the visible bodies across `axis` ("x", "y" or "z"; default: the last one),
+        keeping the half away from the camera."""
+        if axis is not None:
+            if axis not in "xyz" or len(axis) != 1:
+                raise ValueError(f"axis must be x, y or z, not {axis!r}")
+            self.section_axis = axis
+        for a in self.actors + list(self.highlights.values()):
+            a.mapper.RemoveAllClippingPlanes()
+        self.section_plane = None
+        bounds = self._shown_bounds()
+        if on and bounds:
+            self.section_plane = _section_plane(_bounds_centre(bounds), self.section_axis,
+                                                self.pl.camera.position)
+            self._apply_section()
+        self.pl.render()
+
+    def _apply_section(self):
+        if self.section_plane is None:
+            return
+        for a in self.actors + list(self.highlights.values()):
+            planes = a.mapper.GetClippingPlanes()
+            if planes is None or not any(planes.GetItemAsObject(k) is self.section_plane
+                                         for k in range(planes.GetNumberOfItems())):
+                a.mapper.AddClippingPlane(self.section_plane)
+
     def highlight(self, kind: str, face_id: int | None):
         """Show face `face_id` as the start face (green) or base face (blue); None clears it."""
         old = self.highlights.pop(kind, None)
@@ -83,6 +130,7 @@ class PartView:
             self.highlighted[kind] = face_id
             actor.SetVisibility(self.visible[self.part.body_of_face(face_id)])
             self.highlights[kind] = actor
+            self._apply_section()
         self.pl.render()
 
     # --- picking ----------------------------------------------------------------

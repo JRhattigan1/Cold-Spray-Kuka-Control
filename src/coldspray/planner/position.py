@@ -83,11 +83,16 @@ def _reach(robot, cell, world, roll, e1, seed) -> float:
     return float((~np.isnan(q[:, 0])).mean())
 
 
-def auto_position(plan, robot, cell: CellConfig, tilts, e1_now=None, e1_step=500.0, log=print) -> Position:
+def auto_position(plan, robot, cell: CellConfig, tilts, e1_now=None, e1_step=500.0, log=print,
+                  progress=None, cancel=None) -> Position:
     """`plan(tilt)` -> Toolpath in BASE (roll 0). For each tilt in order, find the
     gun roll and E1 that reach the whole path, preferring settings whose
     neighbours reach too (margin) and then E1 near `e1_now`. Returns the first
-    fully reachable setting, or the best partial one found."""
+    fully reachable setting, or the best partial one found.
+
+    `progress(fraction)`: called with rising values 0..1 during the search (1.0 at
+    the end). `cancel()`: polled often; when it returns True the search stops and
+    the best setting found so far is returned (reach -1 if none was tried)."""
     seed = cell.home_deg
     if cell.gantry:
         lo, hi = cell.gantry.limits_mm
@@ -96,20 +101,52 @@ def auto_position(plan, robot, cell: CellConfig, tilts, e1_now=None, e1_step=500
     else:
         e1s, e1_now = [None], 0.0
     best = Position(tilts[0], 0.0, e1_now if cell.gantry else None, -1.0)
-    for tilt in tilts:
+    n_fine = 4
+    per_tilt = len(ROLLS) * len(e1s) + n_fine + 1          # grid cells, final checks, planning
+    total, done = max(1, len(tilts) * per_tilt), 0
+
+    def tick(units=1):
+        nonlocal done
+        done += units
+        if progress is not None:
+            progress(min(done / total, 1.0))
+
+    def stop():
+        return cancel is not None and cancel()
+
+    if progress is not None:
+        progress(0.0)
+    for k, tilt in enumerate(tilts):
+        if stop():
+            return best
         log(f"Auto position: trying tilt {tilt:.0f}°...")
         path = plan(tilt)
+        tick()
         world = _spread(world_poses(path, cell), FINE_POINTS)
         coarse = _spread(world, COARSE_POINTS)
-        ok = np.array([[_reaches_all(robot, np.linalg.inv(robroot(cell, e1)) @ coarse @ frame(c=r), seed)
-                        for e1 in e1s] for r in ROLLS])
+        ok = np.zeros((len(ROLLS), len(e1s)), bool)
+        for r, roll in enumerate(ROLLS):
+            for e, e1 in enumerate(e1s):
+                if stop():
+                    return best
+                ok[r, e] = _reaches_all(robot, np.linalg.inv(robroot(cell, e1)) @ coarse @ frame(c=roll), seed)
+                tick()
         order = sorted(zip(*np.nonzero(ok)),
                        key=lambda rc: (-_margin(ok, *rc), abs((e1s[rc[1]] or 0.0) - e1_now), abs(ROLLS[rc[0]])))
-        for r, e in order[:4]:
+        for r, e in order[:n_fine]:
+            if stop():
+                return best
             reach = _reach(robot, cell, world, ROLLS[r], e1s[e], seed)
+            tick()
             cand = Position(tilt, float(ROLLS[r]), None if e1s[e] is None else float(e1s[e]), reach)
             if reach > best.reach:
                 best = cand
             if reach == 1.0:
+                if progress is not None:
+                    progress(1.0)
                 return cand
+        done = (k + 1) * per_tilt                           # skipped final checks count as done
+        tick(0)
+    if progress is not None:
+        progress(1.0)
     return best

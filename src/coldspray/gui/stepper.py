@@ -84,7 +84,6 @@ class StepBar(QWidget):
         self.chip_area.addWidget(self.file_chip)
         row.addLayout(self.chip_area)
         self.current = 0
-        self._style()
         self.set_current(0)
 
     def set_current(self, i: int):
@@ -105,15 +104,3 @@ class StepBar(QWidget):
 
     def set_chip_text(self, text: str):
         self.file_chip.set(text)
-
-    def _style(self):
-        self.setStyleSheet(
-            "#stepBar { background: palette(window); border-bottom: 1px solid palette(mid); }"
-            "#brand { font-weight: bold; font-size: 13px; }"
-            "#pillSep { color: palette(mid); }"
-            "#pill { border: 1px solid palette(mid); border-radius: 12px; background: palette(base); }"
-            "#pill[current=\"true\"] { border: 1px solid #e8590c; background: #fde8dc; }"
-            "#pill[current=\"true\"] #pillText { font-weight: bold; }"
-            "#pill[state=\"todo\"][current=\"false\"] #pillText { color: palette(dark); }"
-            "#pill[state=\"done\"] #pillMark { color: #1f8a4c; font-weight: bold; }"
-            "#pill[state=\"stale\"] #pillMark { color: #b7791f; font-size: 10px; }")

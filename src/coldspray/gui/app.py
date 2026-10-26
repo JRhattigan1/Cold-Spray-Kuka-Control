@@ -10,13 +10,15 @@ from concurrent.futures import ThreadPoolExecutor
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
-    QApplication, QHBoxLayout, QMainWindow, QPushButton, QScrollArea, QStackedWidget, QVBoxLayout, QWidget,
+    QApplication, QHBoxLayout, QMainWindow, QMenu, QPushButton, QScrollArea, QStackedWidget, QToolButton,
+    QVBoxLayout, QWidget,
 )
 from pyvistaqt import QtInteractor
 
 from coldspray.cad.part import Substrate
 from coldspray.cell import robroot, table_axis_names
-from coldspray.gui import theme, view_toolbar
+from coldspray.gui import icons, style, theme, view_toolbar
+from coldspray.gui.progress import JobProgress
 from coldspray.gui.stepper import EXPORT, PART, POSITION, SIMULATE, TOOLPATH, StepBar
 from coldspray.gui.steps import ExportStep, PartStep, PositionStep, SimulateStep, ToolpathStep
 from coldspray.gui.widgets import wrap_label
@@ -72,6 +74,15 @@ class MainWindow(QMainWindow, PartStep, PositionStep, ToolpathStep, SimulateStep
 
         self.stepbar = StepBar()
         self.stepbar.stepClicked.connect(self.go_to)
+        self.theme_btn = QToolButton()
+        self.theme_btn.setToolTip("Light, dark or follow Windows")
+        self.theme_btn.setPopupMode(QToolButton.InstantPopup)
+        menu = QMenu(self.theme_btn)
+        for mode in ("system", "light", "dark"):
+            menu.addAction({"system": "Follow Windows", "light": "Light", "dark": "Dark"}[mode],
+                           lambda m=mode: self.set_theme(m))
+        self.theme_btn.setMenu(menu)
+        self.stepbar.chip_area.addWidget(self.theme_btn)
 
         # Left: one scrolling panel per step (built in order: later panels use earlier widgets)
         self.panels = QStackedWidget()
@@ -104,6 +115,9 @@ class MainWindow(QMainWindow, PartStep, PositionStep, ToolpathStep, SimulateStep
         vbox.addWidget(self.stepbar)
         vbox.addWidget(body, 1)
         self.setCentralWidget(central)
+        self.job = JobProgress()          # progress + Cancel for slow jobs
+        self.statusBar().addPermanentWidget(self.job)
+        self.theme_choice = "system"
         self._refresh_steps()
         self.statusBar().showMessage("Starting...")
         QTimer.singleShot(50, self._startup)
@@ -185,6 +199,29 @@ class MainWindow(QMainWindow, PartStep, PositionStep, ToolpathStep, SimulateStep
         self._stale.clear()
         self._refresh_steps()
 
+    # --- theme ----------------------------------------------------------------
+    def set_theme(self, choice: str):
+        """"system", "light" or "dark" for the whole window and the 3D views."""
+        self.theme_choice = choice
+        theme.apply(QApplication.instance(), choice)
+        self._apply_view_theme()
+
+    def _apply_view_theme(self):
+        mode = style.current_mode()
+        self.theme_btn.setIcon(icons.icon("theme", mode))
+        self.job.refresh_icons(mode)
+        for plotter in (self.plotter, self.part_plotter):
+            plotter.set_background(style.view_background(mode))
+            plotter.render()
+        t = style.tokens(mode)
+        self.timeline.set_colours({"accent": t["accent"], "bad": t["bad"], "crash": t["crash"],
+                                   "steep": t["steep"], "track": t["soft"], "cursor": t["ink"],
+                                   "text": t["muted"]})
+        for name, btn in (("step_back", self.controls.prev_btn), ("step_fwd", self.controls.next_btn)):
+            btn.setText("")
+            btn.setIcon(icons.icon(name, mode))
+        view_toolbar.refresh_icons(self, mode)
+
     # --- startup --------------------------------------------------------------
     def _status(self, msg):
         self.statusBar().showMessage(msg)
@@ -228,6 +265,7 @@ class MainWindow(QMainWindow, PartStep, PositionStep, ToolpathStep, SimulateStep
                 self.sm_part.setVisible(True)
                 self.sm_timer.start()
             view_toolbar.install(self)
+            self._apply_view_theme()
         finally:
             QApplication.restoreOverrideCursor()
 

@@ -204,14 +204,35 @@ class CollisionChecker:
             pairs |= set(names)
         return pairs - self.allowed
 
-    def check_path(self, joints, axes_per_sample, every=1) -> list[Collision]:
-        """Check every `every`-th sample (and the last); unreachable samples are skipped."""
+    def check_path(self, joints, axes_per_sample, every=1, progress=None, cancel=None) -> list[Collision]:
+        """Check every `every`-th sample (and the last); unreachable samples are skipped.
+
+        `progress(fraction)`: called with rising values 0..1 (1.0 at the end).
+        `cancel()`: polled before each sample; True stops early and returns the hits
+        found so far. This usually runs on a worker thread, so both callbacks are
+        called from that thread: keep them trivial and thread-safe (store a float /
+        read a flag that the GUI polls with a QTimer, e.g. JobProgress.set_fraction
+        and JobProgress.is_cancelled) - never touch widgets from them."""
         n = len(joints)
         hits = []
-        for i in sorted(set(range(0, n, max(1, every))) | {n - 1}):
+        if n == 0:
+            if progress is not None:
+                progress(1.0)
+            return hits
+        samples = sorted(set(range(0, n, max(1, every))) | {n - 1})
+        report = max(1, len(samples) // 200)              # at most ~200 progress calls
+        if progress is not None:
+            progress(0.0)
+        for k, i in enumerate(samples):
+            if cancel is not None and cancel():
+                return hits
+            if progress is not None and k % report == 0:
+                progress(k / len(samples))
             if np.isnan(joints[i, 0]):
                 continue
             pairs = self.check(joints[i], axes_per_sample(i))
             if pairs:
                 hits.append(Collision(i, pairs))
+        if progress is not None:
+            progress(1.0)
         return hits

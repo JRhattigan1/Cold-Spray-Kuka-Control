@@ -1,6 +1,7 @@
 """Small shared widgets: a folding Section with a state chip, Chip, and field helpers.
 
-Styling lives in each class's `_style()` so the theme can restyle it in one place.
+Their look comes from the app stylesheet (gui/style.py), through object names and
+Qt properties: chip `kind`, section header `open`, button `primary`, label `note`.
 """
 
 from PySide6.QtCore import Qt, Signal
@@ -12,10 +13,14 @@ from PySide6.QtWidgets import (
 CHIP_KINDS = ("good", "bad", "warn", "crash", "neutral")
 
 
+def _repolish(widget):
+    """Re-apply stylesheet rules after a property change."""
+    widget.style().unpolish(widget)
+    widget.style().polish(widget)
+
+
 class Chip(QLabel):
     """A small rounded status label. `kind`: good | bad | warn | crash | neutral."""
-
-    COLORS = {"good": "#1f8a4c", "bad": "#c53030", "warn": "#b7791f", "crash": "#b8326b", "neutral": None}
 
     def __init__(self, text: str = "", kind: str = "neutral", parent=None):
         super().__init__(text, parent)
@@ -29,17 +34,13 @@ class Chip(QLabel):
             raise ValueError(f"chip kind must be one of {CHIP_KINDS}")
         self.kind = kind
         self.setProperty("kind", kind)
-        self._style()
+        _repolish(self)
 
     def set(self, text: str, kind: str = "neutral"):
         self.setText(text)
         self.set_kind(kind)
         self.setVisible(bool(text))
 
-    def _style(self):
-        color = self.COLORS[self.kind] or "palette(text)"
-        self.setStyleSheet(f"QLabel#chip {{ color: {color}; border: 1px solid {color}; border-radius: 8px;"
-                           " padding: 0px 7px; font-size: 11px; }")
 
 
 class Section(QWidget):
@@ -86,7 +87,6 @@ class Section(QWidget):
 
         self._open = None
         self.set_open(open)
-        self._style()
 
     def add(self, item):
         """Add a widget or a layout to the body; returns it."""
@@ -107,6 +107,8 @@ class Section(QWidget):
         self.toggle_btn.blockSignals(False)
         self.toggle_btn.setText(f"{'▾' if on else '▸'}  {self.title}")
         self.content.setVisible(on)
+        self.header.setProperty("open", on)
+        _repolish(self.header)
         if on != self._open:
             self._open = on
             self.toggled.emit(on)
@@ -114,13 +116,6 @@ class Section(QWidget):
     def is_open(self) -> bool:
         return bool(self._open)
 
-    def _style(self):
-        self.setStyleSheet(
-            "QFrame#sectionHeader { background: palette(midlight); border: 1px solid palette(mid);"
-            " border-top-left-radius: 5px; border-top-right-radius: 5px; }"
-            "QFrame#sectionBody { border: 1px solid palette(mid); border-top: none;"
-            " border-bottom-left-radius: 5px; border-bottom-right-radius: 5px; }"
-            "QPushButton#sectionToggle { border: none; background: transparent; text-align: left; padding: 2px; }")
 
 
 def primary_button(text: str, slot=None) -> QPushButton:
@@ -130,7 +125,6 @@ def primary_button(text: str, slot=None) -> QPushButton:
     font = QFont(btn.font())
     font.setBold(True)
     btn.setFont(font)
-    btn.setMinimumHeight(32)
     if slot is not None:
         btn.clicked.connect(slot)
     return btn

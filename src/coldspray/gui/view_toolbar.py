@@ -7,3 +7,7 @@
 
 def install(win):
     pass
+
+
+def refresh_icons(win, mode: str):
+    """Re-colour the toolbar icons after a theme change."""

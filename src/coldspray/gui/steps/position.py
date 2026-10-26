@@ -3,7 +3,6 @@
 import numpy as np
 from scipy.spatial.transform import Rotation
 from pydantic import ValidationError
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFormLayout, QGridLayout, QMessageBox, QPushButton, QVBoxLayout,
     QWidget,
@@ -208,14 +207,22 @@ class PositionStep:
             return plan_part(self.part, proc, mode=mode, tilt_deg=tilt, rotation_deg=self.rotation.value(),
                              coats=self.coats.value(), cell=cell, substrate=self.substrate)[1]
 
-        QApplication.setOverrideCursor(Qt.WaitCursor)
+        def progress(f):                     # runs here on the GUI thread: keep Cancel clickable
+            self.job.update(f)
+            QApplication.processEvents()
+
+        self.job.start("Auto position...")
         try:
-            pos = auto_position(plan, a.robot, cell, tilts, e1_now=self.e1.value(), log=self._status)
+            pos = auto_position(plan, a.robot, cell, tilts, e1_now=self.e1.value(), log=self._status,
+                                progress=progress, cancel=self.job.is_cancelled)
         except ValueError as e:              # placement not plannable yet
+            self.job.finish()
             self._status(f"Auto position skipped: {e}")
             return False
-        finally:
-            QApplication.restoreOverrideCursor()
+        cancelled = self.job.is_cancelled()
+        self.job.finish("Auto position cancelled" if cancelled else "")
+        if pos.reach < 0:                    # cancelled before anything was tried
+            return False
         for box, value in ((self.tilt, pos.tilt_deg), (self.roll, pos.roll_deg), (self.e1, pos.e1_mm)):
             if value is not None:
                 box.blockSignals(True)

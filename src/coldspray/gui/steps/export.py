@@ -1,11 +1,12 @@
-"""Step 5 Export: save the KRL program."""
+"""Step 5 Export: checklist before the robot, save the KRL program."""
 
 from pathlib import Path
 
-from PySide6.QtWidgets import QFileDialog, QMessageBox, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFileDialog, QFormLayout, QMessageBox, QVBoxLayout, QWidget
 
+from coldspray.gui.checks import CheckList, confirm_text, export_checks, open_items
 from coldspray.gui.stepper import EXPORT
-from coldspray.gui.widgets import Section, wrap_label
+from coldspray.gui.widgets import Section, primary_button, wrap_label
 from coldspray.models import PROJECT_ROOT
 from coldspray.post.krl import KRLError, to_krl
 
@@ -17,34 +18,55 @@ class ExportStep:
         layout.addWidget(self._toolpath_notice())
 
         program = self.program_section = Section("Program")
-        self.export_note = wrap_label("Save the toolpath as a KRL program (.src) for the robot controller. "
-                                      "Check the list under \"Before running on the real robot\" in the "
-                                      "README before the first run.")
-        program.add(self.export_note)
-        self.save_krl_btn = QPushButton("Save KRL program...")
-        self.save_krl_btn.clicked.connect(self._save_krl)
-        self.save_krl_btn.setEnabled(False)
-        program.add(self.save_krl_btn)
-        self.export_status = wrap_label()
-        program.add(self.export_status)
+        form = QFormLayout()
+        self.program_fields = {}
+        for key, text in (("name", "Name"), ("frames", "BASE / TOOL"), ("output", "Spray output"),
+                          ("table", "Turntable")):
+            self.program_fields[key] = wrap_label("–")
+            form.addRow(text, self.program_fields[key])
+        program.add(form)
+        self.export_note = wrap_label()      # kept for scripts; the checklist explains the rest
         layout.addWidget(program)
+
+        robot = self.robot_section = Section("Before the robot")
+        self.export_list = CheckList()
+        self.export_list.goTo.connect(lambda i: (self._goto(i), self.go_to_simulate()))
+        robot.add(self.export_list)
+        layout.addWidget(robot)
+
+        self.save_krl_btn = primary_button("Save KRL program...", self._save_krl)
+        self.save_krl_btn.setEnabled(False)
+        layout.addWidget(self.save_krl_btn)
+        self.export_status = wrap_label()
+        layout.addWidget(self.export_status)
+        note = wrap_label("Saving with open items asks once, listing them all.")
+        note.setProperty("note", True)
+        layout.addWidget(note)
         layout.addStretch(1)
         return inner
 
+    def go_to_simulate(self):
+        from coldspray.gui.stepper import SIMULATE
+        self.go_to(SIMULATE)
+
+    def _show_program(self):
+        """Program details for the current toolpath."""
+        if self.result is None:
+            return
+        path, _, cell, _ = self.result
+        f = self.program_fields
+        f["name"].setText(path.name)
+        f["frames"].setText(f"{cell.base_number} · {cell.tool_number}")
+        f["output"].setText(f"$OUT[{cell.gun_output}]")
+        tt = cell.turntable
+        f["table"].setText("none" if tt is None else
+                           "coupled to BASE" if tt.coupled else "fixed base, axes on every point")
+
     def _save_krl(self):
         path, proc, cell, robot = self.result
-        hits = self.collisions
-        if hits and QMessageBox.question(
-                self, "Collisions found",
-                f"The simulation found {len(hits)} collision points. Save the program anyway?") \
+        items = open_items(export_checks(self.scene, cell, self.assets.tool, self._collision_state()))
+        if items and QMessageBox.question(self, "Open items", confirm_text(items)) \
                 != QMessageBox.StandardButton.Yes:
-            return
-        steep, limit = int(self.scene.steep.sum()), cell.gun_max_down_deg
-        if steep and QMessageBox.question(
-                self, "Gun pointing down",
-                f"At {steep} points the gun points more than {limit:.0f}° below horizontal "
-                f"(down to {self.scene.gun_down.max():.0f}°), which is bad for the equipment. "
-                "Save the program anyway?") != QMessageBox.StandardButton.Yes:
             return
         out = PROJECT_ROOT / "output"
         out.mkdir(exist_ok=True)

@@ -20,6 +20,8 @@ from coldspray.pipeline import MODES, plan_part
 from coldspray.sim.scene import gantry_offset, make_gun
 
 UNITS = {"_mm_s": " mm/s", "_mm": " mm", "_deg": " °", "_s": " s"}
+# Always shown; the rest of ProcessConfig folds into "Advanced"
+BASIC = ("standoff_mm", "traverse_speed_mm_s", "step_over_mm", "layer_thickness_mm", "track_width_mm")
 
 
 def _label(field: str) -> tuple[str, str]:
@@ -63,9 +65,10 @@ class ToolpathStep:
         layout.addWidget(plan_box)
 
         proc_box = self.process_section = Section("Process")
-        self.process_form = form = QFormLayout()
+        self.advanced_section = Section("Advanced", open=False)
+        self.process_form, advanced_form = QFormLayout(), QFormLayout()
         self.fields = {}
-        proc = load_process()
+        self.process_defaults = proc = load_process()
         for name, info in ProcessConfig.model_fields.items():
             text, unit = _label(name)
             if info.annotation is int:
@@ -78,10 +81,14 @@ class ToolpathStep:
             box.setValue(getattr(proc, name))
             box.setSuffix(unit)
             box.setToolTip(info.description)
-            form.addRow(text, box)
+            box.setKeyboardTracking(False)
+            box.valueChanged.connect(self._process_changed)
+            (self.process_form if name in BASIC else advanced_form).addRow(text, box)
             self.fields[name] = box
-        proc_box.add(form)
+        proc_box.add(self.process_form)
+        self.advanced_section.add(advanced_form)
         layout.addWidget(proc_box)
+        layout.addWidget(self.advanced_section)
 
         self.generate_btn = primary_button("Generate toolpath", self.generate)
         self.save_settings_btn = QPushButton("Save as default")
@@ -103,6 +110,14 @@ class ToolpathStep:
         self.rotation.setEnabled(not revolve)
         self._show_placement()
         self._enter_setup()
+
+    def _process_changed(self, *_):
+        """Show how many advanced values differ from process.yaml; a toolpath is now out of date."""
+        changed = [n for n, box in self.fields.items()
+                   if n not in BASIC and not np.isclose(box.value(), getattr(self.process_defaults, n))]
+        self.advanced_section.set_chip(f"{len(changed)} changed" if changed else "", "warn")
+        if self.result is not None:
+            self._invalidate(TOOLPATH)
 
     def read_process(self) -> ProcessConfig:
         return ProcessConfig(**{name: box.value() for name, box in self.fields.items()})
@@ -161,7 +176,9 @@ class ToolpathStep:
         self.summary_head = (f"<b>{name}</b><br>{summary}, {len(path.moves)} moves<br>"
                              f"Estimated time: {minutes:.1f} min<br>")
         self.summary.setText(f"{summary} · {len(path.moves)} moves · ≈ {minutes:.1f} min")
+        self.times, self.collision_failed = None, None   # new samples: rebuild timeline and checks
         self._update_info()
+        self._show_program()
         self.save_krl_btn.setEnabled(self.unreachable == 0)
         self.plotter.render()
         self._status(f"Generated in {time.time() - t0:.1f} s")
@@ -179,4 +196,6 @@ class ToolpathStep:
             QMessageBox.warning(self, "Invalid parameter", str(e))
             return
         save_process(proc)
+        self.process_defaults = proc
+        self._process_changed()
         self._status("Saved process settings to config/process.yaml")

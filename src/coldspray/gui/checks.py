@@ -1,0 +1,214 @@
+"""Simulate / Export checks: pure logic building a list of Check rows, and CheckList to show them.
+
+collision_state (what the window knows about the background collision check):
+  "off"        the Check collisions box is off
+  "running"    the check is still running (or about to start)
+  "failed: …"  the check raised (text after "failed:" is shown)
+  a result     scene.collisions ({sample: pairs}) or the list of Collision hits
+"""
+
+from collections import Counter
+from dataclasses import dataclass
+
+import numpy as np
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import QGridLayout, QLabel, QSizePolicy, QToolButton, QVBoxLayout, QWidget
+
+from coldspray.gui.widgets import Chip
+
+STATES = ("ok", "bad", "warn", "crash", "todo")
+CHIP_KIND = {"ok": "good", "bad": "bad", "warn": "warn", "crash": "crash", "todo": "neutral"}
+
+
+@dataclass
+class Check:
+    key: str
+    state: str                      # ok | bad | warn | crash | todo
+    title: str
+    detail: str = ""
+    sample: int | None = None       # first problem sample, for "Go to"
+    count: int | None = None        # shown in the chip for bad / warn / crash
+
+    def __post_init__(self):
+        if self.state not in STATES:
+            raise ValueError(f"check state must be one of {STATES}")
+
+    @property
+    def chip_text(self) -> str:
+        if self.state == "ok":
+            return "✓"
+        if self.state == "todo":
+            return "?"
+        if self.count is not None:
+            return f"{self.count}"
+        return "!"
+
+
+def _first(mask) -> int | None:
+    idx = np.flatnonzero(mask)
+    return int(idx[0]) if len(idx) else None
+
+
+def _hits(collision_state) -> dict[int, set]:
+    if isinstance(collision_state, dict):
+        return {int(k): set(v) for k, v in collision_state.items()}
+    return {int(h.sample): set(h.pairs) for h in collision_state}      # list of Collision
+
+
+def pair_summary(hits: dict[int, set], top: int = 3) -> str:
+    """Most frequent colliding pairs, e.g. "A2 / Filtration unit, A3 / Filtration unit"."""
+    counts = Counter(p for pairs in hits.values() for p in pairs)
+    pairs = [p for p, _ in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))]
+    text = ", ".join(f"{a} / {b}" for a, b in pairs[:top])
+    return text + (f" and {len(pairs) - top} more" if len(pairs) > top else "")
+
+
+def simulate_checks(scene, cell, collision_state) -> list[Check]:
+    """Reach, gun angle and collision rows for the toolpath shown in `scene`."""
+    if not getattr(scene, "n_points", 0):
+        return [Check("toolpath", "todo", "No toolpath yet", "Generate a toolpath in step 3")]
+    out = []
+    bad = ~np.asarray(scene.reachable, bool)
+    n_bad = int(bad.sum())
+    out.append(Check("reach", "ok", "All points reachable") if not n_bad else
+               Check("reach", "bad", f"{n_bad} unreachable points",
+                     "The robot cannot reach these (red): move the part, gantry or table", _first(bad), n_bad))
+
+    limit = cell.gun_max_down_deg
+    steep = np.asarray(scene.steep, bool)
+    n_steep = int(steep.sum())
+    worst = max(float(np.max(scene.gun_down)), 0.0)
+    out.append(Check("gun", "ok", f"Gun ≤ {limit:.0f}° down (max {worst:.0f}°)") if not n_steep else
+               Check("gun", "warn", f"Gun more than {limit:.0f}° down at {n_steep} points",
+                     f"Down to {worst:.0f}° below horizontal (yellow), bad for the equipment",
+                     _first(steep), n_steep))
+
+    if isinstance(collision_state, str):
+        if collision_state == "off":
+            out.append(Check("collisions", "warn", "Collision check off",
+                             "Turn on Check collisions and generate again to check the cell"))
+        elif collision_state == "running":
+            out.append(Check("collisions", "todo", "Collision check running…",
+                             "Robot, gun and table against the cell and the part"))
+        elif collision_state.startswith("failed"):
+            msg = collision_state.partition(":")[2].strip()
+            out.append(Check("collisions", "warn", "Collision check failed", msg))
+        else:
+            raise ValueError(f"unknown collision state {collision_state!r}")
+    else:
+        hits = _hits(collision_state)
+        if hits:
+            out.append(Check("collisions", "crash", f"{len(hits)} collision points", pair_summary(hits),
+                             min(hits), len(hits)))
+        else:
+            out.append(Check("collisions", "ok", "No collisions found"))
+    return out
+
+
+def robot_checks(cell, tool) -> list[Check]:
+    """Items not yet confirmed on the real robot (tool.yaml, cell.yaml, README list)."""
+    out = []
+    if tool.verified:
+        out.append(Check("tcp", "ok", "Gun TCP verified on the robot"))
+    else:
+        how = ("Taught TOOL_DATA values from tool.yaml (tcp)" if tool.tcp is not None else
+               "Computed from the gun + nozzle CAD: check clock_deg and nozzle length, or paste the taught "
+               "TOOL_DATA")
+        out.append(Check("tcp", "todo", "Gun TCP not verified on the robot",
+                         how + "; set verified: true in tool.yaml once checked"))
+    b = cell.base_number
+    if cell.turntable is not None:
+        mode = ("coupled: positions move with the faceplate" if cell.turntable.coupled else
+                "fixed base: axis values added to every point")
+        out.append(Check("coupling", "todo", f"Turntable coupling to BASE {b} not confirmed",
+                         f"Assumed {mode} (cell.yaml turntable.coupled)"))
+    out.append(Check("base", "todo", f"BASE_DATA[{b}] taught at the faceplate centre",
+                     "Programs are written relative to the turntable faceplate top centre"))
+    if cell.gantry is not None:
+        out.append(Check("e1_zero", "todo", f"{cell.gantry.axis} = 0 matches the CAD carriage position",
+                         "And the gantry travel limits"))
+    if cell.turntable is not None:
+        t = cell.turntable
+        out.append(Check("table_dirs", "todo", f"Turntable directions: +{t.tilt.axis} and +{t.rotation.axis}",
+                         f"+{t.tilt.axis} tilts towards the tailstock, which way +{t.rotation.axis} turns, "
+                         "axis limits and max speeds"))
+    out.append(Check("kinematics", "todo", "Kinematics checked against the pendant",
+                     "Compare pendant X/Y/Z/A/B/C with our FK at several joint positions"))
+    out.append(Check("first_run", "todo", "First run in T1, spray off",
+                     "Well clear of the part"))
+    return out
+
+
+def export_checks(scene, cell, tool, collision_state) -> list[Check]:
+    """The simulate checks plus the robot-side items for the "Before the robot" list."""
+    return simulate_checks(scene, cell, collision_state) + robot_checks(cell, tool)
+
+
+def open_items(checks) -> list[Check]:
+    return [c for c in checks if c.state != "ok"]
+
+
+def confirm_text(items) -> str:
+    """One confirmation listing every open item ("" if there are none)."""
+    if not items:
+        return ""
+    lines = [f"• {c.title}" + (f" - {c.detail}" if c.detail else "") for c in items]
+    n = len(items)
+    return (f"{n} open item{'s' if n != 1 else ''} before running on the robot:\n\n" + "\n".join(lines)
+            + "\n\nSave the program anyway?")
+
+
+class CheckList(QWidget):
+    """Rows of chip, title, muted detail and an optional "Go to" button."""
+
+    goTo = Signal(int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self.grid_host = None
+        self.checks: list[Check] = []
+        self.rows: list[dict] = []
+
+    def set_checks(self, checks):
+        self.checks = list(checks)
+        if self.grid_host is not None:
+            self.layout().removeWidget(self.grid_host)
+            self.grid_host.deleteLater()
+        self.grid_host = QWidget()
+        grid = QGridLayout(self.grid_host)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(2)
+        grid.setColumnStretch(1, 1)
+        self.rows = []
+        for r, c in enumerate(self.checks):
+            chip = Chip(c.chip_text, CHIP_KIND[c.state])
+            chip.setToolTip(c.state)
+            title = QLabel(c.title)
+            title.setWordWrap(True)
+            detail = QLabel(c.detail)
+            detail.setWordWrap(True)
+            detail.setProperty("note", "true")
+            detail.setVisible(bool(c.detail))
+            text = QWidget()
+            tl = QVBoxLayout(text)
+            tl.setContentsMargins(0, 0, 0, 4)
+            tl.setSpacing(0)
+            tl.addWidget(title)
+            tl.addWidget(detail)
+            text.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+            grid.addWidget(chip, r, 0, Qt.AlignTop | Qt.AlignHCenter)
+            grid.addWidget(text, r, 1)
+            btn = None
+            if c.sample is not None:
+                btn = QToolButton(text="Go to")
+                btn.setToolTip(f"Jump to point {c.sample}")
+                btn.clicked.connect(lambda _=False, i=c.sample: self.goTo.emit(i))
+                grid.addWidget(btn, r, 2, Qt.AlignTop)
+            self.rows.append({"check": c, "chip": chip, "title": title, "detail": detail, "goto": btn})
+        self.layout().addWidget(self.grid_host)
+
+    def open_count(self) -> int:
+        return len(open_items(self.checks))

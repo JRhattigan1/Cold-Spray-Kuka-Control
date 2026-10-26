@@ -88,6 +88,15 @@ class Scene:
         self.steep = np.zeros(0, bool)    # ... beyond the allowed limit
         self.cell_cfg: CellConfig | None = None
         self.mode = "preview"
+        # view toolbar state: layer filter, section plane, follow the tool
+        self.line_actors: list = []      # spray / travel lines (part of path_actors)
+        self.layer_of = np.zeros(0, int) # layer index per sample
+        self.n_layers = 0
+        self.layer_filter = ("all", None)
+        self.section_plane = None        # vtkPlane while the section is on
+        self.section_axis = "x"
+        self.follow = False
+        self.static_actor = None
 
         # setup mode: part (drawn in part-CAD coordinates), build face, substrate, drag handles
         self.part = None
@@ -104,7 +113,7 @@ class Scene:
         self.group_actors = {}
         self.tilting_actors, self.rotating_actors = [], []
         if cell is not None:
-            pl.add_mesh(cell.static, color="#c9cfd4", smooth_shading=True)
+            self.static_actor = pl.add_mesh(cell.static, color="#c9cfd4", smooth_shading=True)
             for label, mesh in cell.groups.items():
                 walls = label == "Booth walls"
                 actor = pl.add_mesh(mesh, color="#dfe6ea" if walls else "#c9cfd4",
@@ -210,6 +219,7 @@ class Scene:
             self.set_part_placement()
             if self.mode == "setup":
                 self._make_widget()
+            self._apply_section()
 
     def set_substrate(self, mesh):
         """Substrate plate (vertices, faces) in BASE, or None."""
@@ -221,6 +231,7 @@ class Scene:
             self.substrate_actor.SetPickable(False)
             self.substrate_actor.user_matrix = self.setup_frame
             self.substrate_actor.SetVisibility(self.mode == "setup")
+            self._apply_section()
 
     def set_part_placement(self):
         """Redraw the part (and handles) after part.placement changed."""
@@ -254,6 +265,7 @@ class Scene:
         self.face_actor.SetPickable(False)
         self.face_actor.SetVisibility(self.mode == "setup")
         self.face_actor.user_matrix = self.setup_frame @ self.part.placement
+        self._apply_section()
 
     def set_constrained(self, on: bool):
         """Build face on the plate: only offer the XY arrows and the yaw ring."""
@@ -335,17 +347,23 @@ class Scene:
         for a in self.path_actors:
             self.pl.remove_actor(a)
         self.path_actors, self.crash_actor = [], None
+        self.line_actors = []
         self.n_points = 0
+        self.n_layers = 0
+        self.layer_of = np.zeros(0, int)
         self.collisions = {}
 
     def set_path(self, path: Toolpath, cell: CellConfig, part=None, plate_size=None, step=5.0, home=None,
-                 angle_step=2.0, substrate=None, gun_limit_deg=None, fixture=None):
+                 angle_step=2.0, substrate=None, gun_limit_deg=None, fixture=None,
+                 build_dir=None, layer_mm=None):
         """Preview mode: draw a toolpath, with optional part (build body), fixture
         (the other bodies) and substrate meshes (vertices, faces) in BASE
         coordinates (`plate_size` (w, l): an old-style
         plate when no substrate is given). Returns the joint angles for every
         sampled point (NaN = unreachable). Points where the gun points more than
-        `gun_limit_deg` below horizontal are marked."""
+        `gun_limit_deg` below horizontal are marked. `build_dir` (BASE vector,
+        default +Z: the build frame's z axis) and `layer_mm` (layer thickness)
+        number the layers for set_layer_filter; without `layer_mm` there are none."""
         self._clear_path()
         self.mode = "preview"
         self._show_widget(False)
@@ -376,17 +394,19 @@ class Scene:
             add(self.pl.add_mesh(_polydata(*part), color=PART, opacity=0.4))
         if fixture is not None:
             add(self.pl.add_mesh(_polydata(*fixture), color=FIXTURE))
-        for mask, color, width in ((s.gun_on, SPRAY, 3), (~s.gun_on, TRAVEL, 1)):
-            segs = [i for i in range(1, len(pts)) if mask[i]]
-            if segs:
-                lines = np.hstack([[2, i - 1, i] for i in segs])
-                add(self.pl.add_mesh(pv.PolyData(pts, lines=lines), color=color, line_width=width))
+        self.build_dir = np.array([0.0, 0.0, 1.0]) if build_dir is None else np.asarray(build_dir, float)
+        self.layer_mm = layer_mm
+        self.layer_of = self._layer_index()
+        self.n_layers = int(self.layer_of.max()) + 1 if len(self.layer_of) else 0
+        self.layer_filter = ("all", None)
+        self._draw_lines()
         if self.steep.any():
             add(self.pl.add_points(pts[self.steep], color=STEEP, point_size=7, render_points_as_spheres=True))
         if (~self.reachable).any():
             add(self.pl.add_points(pts[~self.reachable], color=BAD, point_size=10, render_points_as_spheres=True))
         for a in self.path_actors:
             a.SetPickable(False)
+        self._apply_section()
         self._update_summary()
         self.show_point(self.first_reachable())
         return self.joints
@@ -436,6 +456,7 @@ class Scene:
         table = "  ".join(f"{k} {v:.1f}" for k, v in axes.items())
         if not self.reachable[i]:
             self.status.SetText(2, f"point {i}: UNREACHABLE   {table}")
+            self._follow_tool(i)
             return
         q = self.joints[i]
         self.set_robot_pose(q)
@@ -447,6 +468,7 @@ class Scene:
         self.status.SetText(2, f"{self.path_name}  point {i}/{self.n_points - 1}  "
                                f"spray {'ON' if self.gun_on[i] else 'off'}   gun {round(self.gun_down[i])}° down"
                                f"{'  TOO STEEP' if self.steep[i] else ''}\nA1..A6: {j}   {table}{crash_text}")
+        self._follow_tool(i)
 
     def focus_on_work(self):
         target = base_world(self.cell_cfg)[:3, 3] if self.cell_cfg else self.world_from_robot[:3, 3]
@@ -462,6 +484,196 @@ class Scene:
         away = away / np.linalg.norm(away) if np.linalg.norm(away) > 1e-6 else np.cross(normal, [0, 1, 0])
         view = normal * 1.2 + away
         self.pl.camera_position = [target + view / np.linalg.norm(view) * distance, target, normal]
+
+    # --- view toolbar ---------------------------------------------------------
+    def work_centre(self) -> np.ndarray:
+        """BASE origin with the table at its CAD pose (or the robot root without a cell)."""
+        return base_world(self.cell_cfg)[:3, 3] if self.cell_cfg else self.world_from_robot[:3, 3].copy()
+
+    def view_preset(self, name: str):
+        """Camera preset in WORLD (cell) coordinates: "fit" (the whole cell),
+        "part" (close-up of the faceplate), "iso", "top", "front", "side"
+        (centred on the work area, framing it and the robot)."""
+        if name == "part":
+            self.focus_on_part()
+            return
+        if name not in VIEW_DIRS:
+            raise ValueError(f"unknown view {name!r}")
+        if name == "fit":
+            _aim(self.pl, "iso", self.work_centre())
+            self.pl.reset_camera()
+            return
+        target = self.work_centre()
+        robot = self.world_from_robot[:3, 3]
+        pts = np.vstack([target - 1500, target + 1500, robot])
+        lo, hi = pts.min(axis=0), pts.max(axis=0)
+        _aim(self.pl, name, (lo + hi) / 2)
+        self.pl.reset_camera(bounds=(lo[0], hi[0], lo[1], hi[1], lo[2], hi[2]))
+
+    def _section_targets(self) -> list:
+        actors = [self.static_actor, self.carriage, self.part_actor, self.face_actor, self.substrate_actor,
+                  *self.group_actors.values(), *self.tilting_actors, *self.rotating_actors, *self.path_actors]
+        return [a for a in actors if a is not None]
+
+    def _section_origin(self) -> np.ndarray:
+        """Centre of the part (setup) or of the toolpath (preview), else the BASE origin."""
+        if self.mode == "setup" and self.part_actor is not None:
+            return self._part_centre()
+        if self.mode == "preview" and self.line_actors:
+            return _bounds_centre([a.GetBounds() for a in self.line_actors])
+        if self.mode == "preview" and self.n_points:
+            return self.base_frames[getattr(self, "current", 0)][:3, 3].copy()
+        return self.setup_frame[:3, 3].copy()
+
+    def set_section(self, on: bool, axis: str | None = None):
+        """Clip the cell, table, part, substrate and path with a plane through the
+        part across WORLD `axis` ("x", "y" or "z"; default: the last one), keeping
+        the half away from the camera."""
+        if axis is not None:
+            if axis not in "xyz" or len(axis) != 1:
+                raise ValueError(f"axis must be x, y or z, not {axis!r}")
+            self.section_axis = axis
+        for a in self._section_targets():
+            a.mapper.RemoveAllClippingPlanes()
+        self.section_plane = None
+        if on:
+            self.section_plane = _section_plane(self._section_origin(), self.section_axis,
+                                                self.pl.camera.position)
+            self._apply_section()
+
+    def _apply_section(self):
+        """(Re)apply the section plane to every clipped actor (after actors are added)."""
+        plane = getattr(self, "section_plane", None)
+        if plane is None:
+            return
+        for a in self._section_targets():
+            mapper = a.mapper
+            planes = mapper.GetClippingPlanes()
+            if planes is None or not any(planes.GetItemAsObject(k) is plane
+                                         for k in range(planes.GetNumberOfItems())):
+                mapper.AddClippingPlane(plane)
+
+    def set_follow(self, on: bool):
+        """Keep the camera on the TCP as show_point moves along the path."""
+        self.follow = bool(on)
+        if on and self.n_points:
+            self._follow_tool(getattr(self, "current", 0))
+
+    def _follow_tool(self, i: int):
+        if not self.follow or not self.n_points:
+            return
+        tcp = (self.base_frames[i] @ self.samples.poses[i])[:3, 3]
+        cam = self.pl.camera
+        shift = tcp - np.asarray(cam.focal_point)
+        cam.position = np.asarray(cam.position) + shift
+        cam.focal_point = tcp
+        self.pl.reset_camera_clipping_range()
+
+    def _layer_index(self) -> np.ndarray:
+        """Layer number per sample: each spray run is binned by its height along
+        build_dir in steps of layer_mm; travel belongs to the next layer. Empty
+        without layer_mm or spray."""
+        on = np.asarray(self.samples.gun_on, bool)
+        if not self.layer_mm or not on.any():
+            return np.zeros(0, int)
+        d = self.build_dir / np.linalg.norm(self.build_dir)
+        h = self.samples.poses[:, :3, 3] @ d
+        edges = np.diff(np.r_[0, on.astype(int), 0])
+        starts, ends = np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)
+        run_h = np.array([h[a:b].min() for a, b in zip(starts, ends)])
+        run_layer = np.round((run_h - run_h.min()) / self.layer_mm).astype(int)
+        # renumber 0..n-1 (skips nothing visible, keeps order by height)
+        _, run_layer = np.unique(run_layer, return_inverse=True)
+        # the run a sample is in, or the next one (travel); trailing travel -> the last run
+        run = np.minimum(np.searchsorted(ends, np.arange(len(on)), side="right"), len(ends) - 1)
+        return run_layer[run]
+
+    def _draw_lines(self):
+        """(Re)draw the spray and travel lines for the current layer filter."""
+        for a in self.line_actors:
+            self.pl.remove_actor(a)
+            if a in self.path_actors:
+                self.path_actors.remove(a)
+        self.line_actors = []
+        s = self.samples
+        pts = s.poses[:, :3, 3]
+        mode, n = self.layer_filter
+        keep = np.ones(len(pts), bool)
+        if mode != "all" and self.n_layers:
+            keep = self.layer_of <= n if mode == "upto" else self.layer_of == n
+        for mask, color, width in ((s.gun_on, SPRAY, 3), (~s.gun_on, TRAVEL, 1)):
+            segs = [i for i in range(1, len(pts)) if mask[i] and keep[i]]
+            if segs:
+                lines = np.hstack([[2, i - 1, i] for i in segs])
+                actor = self.pl.add_mesh(pv.PolyData(pts, lines=lines), color=color, line_width=width)
+                actor.SetPickable(False)
+                if hasattr(self, "current"):
+                    actor.user_matrix = self.base_frames[min(self.current, len(pts) - 1)]
+                self.line_actors.append(actor)
+                self.path_actors.append(actor)
+
+    def set_layer_filter(self, mode: str = "all", n: int | None = None) -> bool:
+        """Preview only: draw "all" layers, layers 0..n ("upto") or layer n only
+        ("only"). Returns False (and changes nothing) when there are no layers."""
+        if mode not in ("all", "upto", "only"):
+            raise ValueError(f"unknown layer filter {mode!r}")
+        if self.mode != "preview" or not self.n_points or not self.n_layers:
+            return False
+        n = int(np.clip(0 if n is None else n, 0, self.n_layers - 1))
+        self.layer_filter = (mode, None if mode == "all" else n)
+        self._draw_lines()
+        self._apply_section()
+        return True
+
+    def current_layer(self) -> int | None:
+        """Layer of the shown sample (None without layers)."""
+        if not self.n_layers:
+            return None
+        return int(self.layer_of[getattr(self, "current", 0)])
+
+    def cell_groups(self) -> list[tuple[str, bool]]:
+        """The optional cell groups (OPTIONAL in cell_model) and whether each is shown."""
+        return [(label, bool(a.GetVisibility())) for label, a in self.group_actors.items()]
+
+
+# Camera presets: (direction from the target to the camera, view up)
+VIEW_DIRS = {
+    "fit": ((-0.45, -0.73, 0.52), (0, 0, 1)),
+    "iso": ((-0.45, -0.73, 0.52), (0, 0, 1)),
+    "top": ((0, 0, 1), (0, 1, 0)),
+    "bottom": ((0, 0, -1), (0, 1, 0)),
+    "front": ((0, -1, 0), (0, 0, 1)),
+    "side": ((-1, 0, 0), (0, 0, 1)),
+}
+
+
+def _aim(pl, name: str, target, distance=1000.0):
+    """Point the camera at `target` from preset direction `name` (reset_camera then sets the distance)."""
+    d, up = VIEW_DIRS[name]
+    d = np.asarray(d, float) / np.linalg.norm(d)
+    target = np.asarray(target, float)
+    pl.camera_position = [target + d * distance, target, up]
+
+
+def _bounds_centre(bounds) -> np.ndarray:
+    b = np.asarray(bounds, float)
+    return np.array([(b[:, 0].min() + b[:, 1].max()) / 2, (b[:, 2].min() + b[:, 3].max()) / 2,
+                     (b[:, 4].min() + b[:, 5].max()) / 2])
+
+
+def _section_plane(origin, axis: str, camera_position):
+    """vtkPlane through `origin` across WORLD `axis`; its normal (the kept side)
+    points away from the camera, so the near half is cut away."""
+    from vtkmodules.vtkCommonDataModel import vtkPlane
+
+    normal = np.zeros(3)
+    normal["xyz".index(axis)] = 1.0
+    if np.dot(normal, np.asarray(camera_position) - origin) > 0:
+        normal = -normal
+    plane = vtkPlane()
+    plane.SetOrigin(*map(float, origin))
+    plane.SetNormal(*normal)
+    return plane
 
 
 def camera_axes(pl) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
