@@ -17,3 +17,9 @@ venv/
 
 # Logs
 *.log
+
+# Python build / test artefacts
+*.egg-info/
+.pytest_cache/
+build/
+dist/
