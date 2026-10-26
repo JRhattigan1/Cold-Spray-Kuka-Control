@@ -1,0 +1,9 @@
+# Cold spray process parameters (example values - set for your powder / gun).
+standoff_mm: 30.0           # nozzle exit to surface
+traverse_speed_mm_s: 100.0  # gun speed while spraying
+step_over_mm: 2.0           # spacing between neighbouring passes
+overrun_mm: 20.0            # pass extends this far past the part edge
+approach_height_mm: 100.0   # clearance above the start / end point
+rapid_speed_mm_s: 250.0     # LIN speed for non-spray moves
+spray_settle_s: 2.0         # dwell after switching spray on, before moving
+approx_distance_mm: 1.0     # $APO.CDIS corner blending

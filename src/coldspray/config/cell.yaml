@@ -1,0 +1,13 @@
+# Cell layout. All frames relative to the robot root (robot base on the floor).
+# PLACEHOLDER values until the real cell is measured / taught.
+
+# Work base (BASE_DATA[base_number] on the controller). Toolpaths are written
+# relative to this frame. Here: a table top 1600 mm in front of the robot.
+base_number: 1
+base: {x: 1600.0, y: -50.0, z: 800.0, a: 0.0, b: 0.0, c: 0.0}
+
+tool_number: 1        # TOOL_DATA index holding the spray gun TCP
+gun_output: 1         # $OUT number that switches the spray on
+ptp_velocity_pct: 20  # PTP speed override in generated programs
+
+home_deg: [0, -90, 90, 0, 0, 0]

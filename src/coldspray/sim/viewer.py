@@ -1,0 +1,91 @@
+"""3D viewer: robot, work plate and toolpath, with a slider to scrub along it.
+
+Keys: drag the slider to move along the path, press "p" to play.
+"""
+
+import numpy as np
+import pyvista as pv
+
+from coldspray.kinematics.robot import HOME_DEG, Robot
+from coldspray.toolpath.model import Toolpath
+
+SPRAY = "#f28c28"
+TRAVEL = "#9aa0a6"
+BAD = "#d93025"
+
+
+def _polyline(points) -> pv.PolyData:
+    line = pv.PolyData(np.asarray(points, float))
+    line.lines = np.hstack([[len(points)], np.arange(len(points))])
+    return line
+
+
+def show(robot: Robot, path: Toolpath, base: np.ndarray, plate_size=(100.0, 100.0),
+         step=5.0, home=None, screenshot=None):
+    poses, gun, _ = path.sample(step)
+    world = np.array([base @ p for p in poses])
+    joints = robot.ik_path(world, seed_deg=HOME_DEG if home is None else home)
+    reachable = ~np.isnan(joints[:, 0])
+
+    pl = pv.Plotter(off_screen=screenshot is not None, window_size=(1400, 900))
+    pl.set_background("white")
+    pl.add_mesh(pv.Plane(center=(1000, 0, 0), i_size=4500, j_size=4000), color="#eeeeee")
+    pl.add_mesh(pv.Cylinder(center=(0, 0, 150), direction=(0, 0, 1), radius=300, height=300), color="#555555")
+
+    # Plate on the work base (top surface at BASE z = 0)
+    w, l = plate_size
+    plate = pv.Box(bounds=(0, w, 0, l, -10, 0)).transform(base, inplace=False)
+    pl.add_mesh(plate, color="#b0bec5")
+
+    pts = world[:, :3, 3]
+    for mask, color, width in ((gun, SPRAY, 3), (~gun, TRAVEL, 1)):
+        segs = [i for i in range(1, len(pts)) if mask[i]]
+        if segs:
+            lines = np.hstack([[2, i - 1, i] for i in segs])
+            pl.add_mesh(pv.PolyData(pts, lines=lines), color=color, line_width=width)
+    if (~reachable).any():
+        pl.add_points(pts[~reachable], color=BAD, point_size=10, render_points_as_spheres=True)
+
+    first = int(np.argmax(reachable)) if reachable.any() else 0
+    arm = _polyline(robot.link_points(joints[first]))
+    pl.add_mesh(arm, color=SPRAY, line_width=14, render_lines_as_tubes=True)
+    spray = _polyline([pts[first], pts[first]])
+    pl.add_mesh(spray, color="#1a73e8", line_width=4)
+    status = pl.add_text("", position="upper_left", font_size=10, color="black")
+
+    def update(value):
+        i = int(round(value))
+        if reachable[i]:
+            arm.points = robot.link_points(joints[i])
+            tcp = world[i]
+            spray.points = np.array([tcp[:3, 3], tcp[:3, 3] + tcp[:3, 0] * 40])
+            j = ", ".join(f"{v:.1f}" for v in joints[i])
+            status.SetText(2, f"{path.name}  point {i}/{len(pts) - 1}  spray {'ON' if gun[i] else 'off'}\nA1..A6: {j}")
+        else:
+            status.SetText(2, f"point {i}: UNREACHABLE")
+
+    slider = pl.add_slider_widget(update, [0, len(pts) - 1], value=first, title="Path position",
+                                  pointa=(0.25, 0.08), pointb=(0.75, 0.08), fmt="%.0f")
+
+    def play():
+        state = {"i": int(slider.GetRepresentation().GetValue())}
+
+        def tick(_step):
+            state["i"] = (state["i"] + 1) % len(pts)
+            slider.GetRepresentation().SetValue(state["i"])
+            update(state["i"])
+
+        pl.add_timer_event(max_steps=len(pts), duration=30, callback=tick)
+
+    pl.add_key_event("p", play)
+    unreachable = int((~reachable).sum())
+    pl.add_text(f"{unreachable} unreachable points" if unreachable else "all points reachable",
+                position="upper_right", font_size=10, color=BAD if unreachable else "green")
+    pl.camera_position = [(3500, -3500, 2800), (1200, 0, 800), (0, 0, 1)]
+
+    if screenshot:
+        update(first)
+        pl.show(screenshot=screenshot)
+    else:
+        pl.show()
+    return joints

@@ -42,9 +42,41 @@ class ToolConfig(BaseModel):
     tcp: XYZABC
 
 
-def load_robot(path: Path = CONFIG_DIR / "robot.yaml") -> RobotConfig:
-    return RobotConfig.model_validate(yaml.safe_load(path.read_text()))
+class CellConfig(BaseModel):
+    base_number: int
+    base: XYZABC
+    tool_number: int
+    gun_output: int
+    ptp_velocity_pct: int
+    home_deg: list[float]
 
 
-def load_tool(path: Path = CONFIG_DIR / "tool.yaml") -> ToolConfig:
-    return ToolConfig.model_validate(yaml.safe_load(path.read_text()))
+class ProcessConfig(BaseModel):
+    standoff_mm: float
+    traverse_speed_mm_s: float
+    step_over_mm: float
+    overrun_mm: float
+    approach_height_mm: float
+    rapid_speed_mm_s: float
+    spray_settle_s: float
+    approx_distance_mm: float
+
+
+def _load(model, name, path):
+    return model.model_validate(yaml.safe_load(Path(path or CONFIG_DIR / name).read_text()))
+
+
+def load_robot(path=None) -> RobotConfig:
+    return _load(RobotConfig, "robot.yaml", path)
+
+
+def load_tool(path=None) -> ToolConfig:
+    return _load(ToolConfig, "tool.yaml", path)
+
+
+def load_cell(path=None) -> CellConfig:
+    return _load(CellConfig, "cell.yaml", path)
+
+
+def load_process(path=None) -> ProcessConfig:
+    return _load(ProcessConfig, "process.yaml", path)

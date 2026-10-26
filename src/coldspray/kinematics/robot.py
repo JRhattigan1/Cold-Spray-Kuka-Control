@@ -57,6 +57,32 @@ class Robot:
         candidates.sort(key=lambda v: np.max(np.abs(v - seed)))
         return candidates
 
+    def ik_path(self, poses, seed_deg=HOME_DEG) -> np.ndarray:
+        """Joint angles for a sequence of TCP poses, each solved from the
+        previous one so the arm configuration stays continuous.
+        Unreachable poses give a row of NaN.
+        """
+        out = np.full((len(poses), 6), np.nan)
+        seed = np.asarray(seed_deg, dtype=float)
+        for i, pose in enumerate(poses):
+            sols = self.ik(pose, seed)
+            if sols:
+                out[i] = seed = sols[0]
+        return out
+
+    def link_points(self, joints_deg) -> np.ndarray:
+        """Key points along the arm (robot frame) for drawing:
+        root, A1 top, A2, A3, wrist centre, flange, TCP."""
+        p = self.params
+        q = np.radians(joints_deg) * p.signs + p.offsets
+        rot1 = np.array([[np.cos(q[0]), -np.sin(q[0]), 0], [np.sin(q[0]), np.cos(q[0]), 0], [0, 0, 1]])
+        a2 = rot1 @ [p.a1, p.b, p.c1]
+        a3 = a2 + rot1 @ [p.c2 * np.sin(q[1]), 0, p.c2 * np.cos(q[1])]
+        flange = self.flange(joints_deg)
+        wrist = flange[:3, 3] - p.c4 * flange[:3, 0]  # KUKA flange X is the A6 axis
+        tcp = (flange @ self.tool)[:3, 3]
+        return np.array([[0, 0, 0], [0, 0, p.c1], a2, a3, wrist, flange[:3, 3], tcp])
+
     def within_limits(self, joints_deg) -> bool:
         q = np.asarray(joints_deg)
         return bool(np.all(q >= self.limits[:, 0]) and np.all(q <= self.limits[:, 1]))
