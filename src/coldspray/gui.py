@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
+from scipy.spatial.transform import Rotation
 from pydantic import ValidationError
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
@@ -29,6 +30,7 @@ from coldspray.planner.position import auto_position, layer_tilts
 from coldspray.post.krl import KRLError, to_krl
 from coldspray.sim.cell_model import OPTIONAL
 from coldspray.sim.scene import gantry_offset, load_assets, make_gun
+from coldspray.sim.spacemouse import SpaceMouse
 from coldspray.sim.viewer import Scene
 from coldspray.transforms import frame, xyzabc
 
@@ -86,6 +88,12 @@ class MainWindow(QMainWindow):
         self.check_future = None
         self.check_id = 0
         self.poll_timer = QTimer(self, interval=200, timeout=self._poll_check)
+
+        # SpaceMouse (if one is plugged in): flies the camera, or moves the part in setup
+        self.spacemouse = None
+        self.sm_timer = QTimer(self, interval=20, timeout=self._spacemouse_tick)
+        self.sm_last = time.time()
+        self.sm_moved_part = False
 
         self.plotter = QtInteractor(self)
         panel = self._build_panel()
@@ -163,6 +171,12 @@ class MainWindow(QMainWindow):
         self.face_label = QLabel("Build face: none")
         self.face_label.setWordWrap(True)
         vbox.addWidget(self.face_label)
+        self.sm_part = QCheckBox("SpaceMouse moves the part")
+        self.sm_part.setToolTip("Off: the SpaceMouse flies the camera. On (setup only): it moves the part,\n"
+                                "kept flat on the plate once a build face is set.\n"
+                                "Left SpaceMouse button toggles this; right button shows the part.")
+        self.sm_part.setVisible(False)
+        vbox.addWidget(self.sm_part)
         layout.addWidget(place_box)
 
         sub_box = QGroupBox("Substrate plate")
@@ -336,6 +350,11 @@ class MainWindow(QMainWindow):
             self.scene.set_substrate(self.substrate.mesh())
             self._set_part(None)
             self.scene.focus_on_work()
+            self.spacemouse = SpaceMouse.open()
+            if self.spacemouse:
+                self.sm_part.setText(f"{self.spacemouse.name} moves the part")
+                self.sm_part.setVisible(True)
+                self.sm_timer.start()
         finally:
             QApplication.restoreOverrideCursor()
 
@@ -741,9 +760,57 @@ class MainWindow(QMainWindow):
             return
         self.slider.setValue(i)
 
+    # --- SpaceMouse ------------------------------------------------------------
+    def _spacemouse_tick(self):
+        now = time.time()
+        dt, self.sm_last = min(now - self.sm_last, 0.1), now
+        pressed = self.spacemouse.poll()
+        if 0 in pressed:
+            self.sm_part.toggle()
+        if 1 in pressed:
+            (self.scene.focus_on_part if self.scene.mode == "setup" else self.scene.focus_on_work)()
+            self.plotter.render()
+        t, r = self.spacemouse.motion()
+        if not (t.any() or r.any()):
+            if self.sm_moved_part:           # finished moving: settle like a drag release
+                self.sm_moved_part = False
+                self._set_placement(self.part.placement, redraw=False)
+            return
+        if self.sm_part.isChecked() and self.scene.mode == "setup" and self.part is not None:
+            self._spacemouse_part(t, r, dt)
+        else:
+            self.scene.fly(t, r, dt)
+        self.plotter.render()
+
+    def _spacemouse_part(self, t, r, dt, speed=120.0, turn_rate=60.0):
+        """Move the part with the view: right / away (along the plate) / up, tilt and twist
+        about the part centre. mm/s and deg/s at full deflection."""
+        f = self.scene.setup_frame
+        n = f[:3, 2]                          # faceplate normal
+        right, fwd, _ = self.scene.camera_axes()
+        along = fwd - fwd @ n * n
+        along = along / np.linalg.norm(along) if np.linalg.norm(along) > 1e-3 else np.cross(n, right)
+        side = np.cross(along, n)
+        move = (t[0] * side + t[1] * along + t[2] * n) * speed * dt
+        spin = (-r[0] * side + r[1] * along + r[2] * n) * np.radians(turn_rate) * dt
+        to_base = f[:3, :3].T
+        rot = Rotation.from_rotvec(to_base @ spin).as_matrix()
+        v = placed_vertices(self.part)
+        centre = (v.min(axis=0) + v.max(axis=0)) / 2
+        step = np.eye(4)
+        step[:3, :3] = rot
+        step[:3, 3] = centre - rot @ centre + to_base @ move
+        self.part.placement = constrain(self.part, step @ self.part.placement, self.substrate.top)
+        self.scene.set_part_placement()
+        self._show_placement()
+        self.sm_moved_part = True
+
     def closeEvent(self, event):
         self.play_timer.stop()
         self.poll_timer.stop()
+        self.sm_timer.stop()
+        if self.spacemouse:
+            self.spacemouse.close()
         self.check_id += 1            # let a running check finish without effect
         self.pool.shutdown(wait=False, cancel_futures=True)
         self.plotter.close()
