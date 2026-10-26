@@ -29,4 +29,5 @@ output/
 
 # Licensed / confidential material - local only, never commit
 assets/cad/
-docs/          # manuals, controller backups
+# manuals and controller backups
+docs/
