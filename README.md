@@ -18,7 +18,9 @@ C:\Users\qrb21117\.venvs\coldspray\Scripts\python.exe -m coldspray.cad.step_cach
 ```
 
 ## Run
-**Main window** - pick a STEP part, choose a strategy (Layers on the faceplate,
+**Main window** - pick a STEP part and set it up on the substrate plate (drag
+handles or X/Y/Z/A/B/C boxes; "Pick build face" + "Snap face to plate" lays a
+flat face on the plate and layers build up from it), choose a strategy (Layers,
 or Revolve: coat a round part while the turntable spins), set process
 parameters, gantry and turntable positions, generate, check reach and
 collisions in 3D, save the KRL program:

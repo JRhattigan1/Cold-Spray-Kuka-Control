@@ -3,6 +3,7 @@ import numpy as np
 from coldspray.models import load_process
 from coldspray.toolpath.model import Move, Toolpath, spray_frame
 from coldspray.toolpath.raster import plate_raster
+from coldspray.transforms import frame
 
 
 def test_spray_frame_axes():
@@ -45,3 +46,15 @@ def test_sample_interpolates_external_axes():
     assert np.allclose(s.axes["E5"][[0, 45, -1]], [0, 90, 90])
     assert np.allclose(s.axes["E2"], 0)
     assert path.axis_values()[-1] == {"E2": 0.0, "E5": 90.0}
+
+
+def test_toolpath_transformed():
+    p = spray_frame((1, 2, 3), (0, 0, -1), (1, 0, 0))
+    path = Toolpath("t", [Move(p, 100, kind="PTP", axes={"E2": 5.0}), Move(p, 20, gun_on=True)])
+    t = frame(10, 0, 4, a=90)
+    moved = path.transformed(t)
+    assert moved.name == "t" and len(moved.moves) == 2
+    assert np.allclose(moved.moves[0].pose, t @ p) and np.allclose(path.moves[0].pose, p)
+    assert [(m.speed, m.gun_on, m.kind, m.axes) for m in moved.moves] == \
+        [(m.speed, m.gun_on, m.kind, m.axes) for m in path.moves]
+    assert moved.moves[0].axes is not path.moves[0].axes

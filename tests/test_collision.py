@@ -45,14 +45,58 @@ def test_check_path_reports_samples(checker):
     assert [h.sample for h in hits] == [2]
 
 
-def test_contact_with_part_never_ignored():
-    """A part placed so the arm touches it in the CAD pose must still be reported."""
-    robot, cell = Robot(load_robot()), load_cell()
+def _block_at_wrist(robot, cell, axes=None, size=300):
+    """A box (vertices, faces in BASE) overlapping the wrist at home, gantry at 0, table at `axes`."""
     wrist = robroot(cell, 0.0) @ robot.link_frames(HOME_DEG)[4][:, 3]
-    centre = (np.linalg.inv(base_world(cell)) @ np.r_[wrist[:3] + OFFSET, 1])[:3]
-    block = pv.Cube(center=centre, x_length=300, y_length=300, z_length=300).triangulate()
-    part = (np.asarray(block.points), block.faces.reshape(-1, 4)[:, 1:])
-    meshes = CellMeshes(static=pv.PolyData(), carriage=pv.PolyData(), robot=_links(robot))
-    checker = CollisionChecker(robot, cell, meshes, part=part, reach_mm=1e5)
+    centre = (np.linalg.inv(base_world(cell, axes)) @ np.r_[wrist[:3] + OFFSET, 1])[:3]
+    block = pv.Cube(center=centre, x_length=size, y_length=size, z_length=size).triangulate()
+    return np.asarray(block.points), block.faces.reshape(-1, 4)[:, 1:]
+
+
+def _bare_meshes(robot):
+    return CellMeshes(static=pv.PolyData(), carriage=pv.PolyData(), robot=_links(robot))
+
+
+@pytest.mark.parametrize("name", ["part", "substrate"])
+def test_contact_with_workpiece_never_ignored(name):
+    """A part or substrate placed so the arm touches it in the CAD pose must still be reported."""
+    robot, cell = Robot(load_robot()), load_cell()
+    block = _block_at_wrist(robot, cell)
+    checker = CollisionChecker(robot, cell, _bare_meshes(robot), reach_mm=1e5, **{name: block})
+    assert not any(name in p for p in checker.allowed)
+    checker.set_placement(robroot(cell, 0.0))
+    assert ("A5", name) in checker.check(np.array(HOME_DEG, float), {})
+
+
+def test_part_positional_argument():
+    robot, cell = Robot(load_robot()), load_cell()
+    checker = CollisionChecker(robot, cell, _bare_meshes(robot), None, _block_at_wrist(robot, cell),
+                               HOME_DEG, 1e5)
     checker.set_placement(robroot(cell, 0.0))
     assert ("A5", "part") in checker.check(np.array(HOME_DEG, float), {})
+
+
+def test_set_workpiece_none_removes_both():
+    robot, cell = Robot(load_robot()), load_cell()
+    block = _block_at_wrist(robot, cell)
+    checker = CollisionChecker(robot, cell, _bare_meshes(robot), part=block, substrate=block,
+                               reach_mm=1e5)
+    checker.set_placement(robroot(cell, 0.0))
+    home = np.array(HOME_DEG, float)
+    assert {("A5", "part"), ("A5", "substrate")} <= checker.check(home, {})
+    checker.set_workpiece(None, None)
+    assert "part" not in checker.env._objs and "substrate" not in checker.env._objs
+    assert checker.check(home, {}) == set()
+
+
+@pytest.mark.parametrize("axes", [{"E5": 180.0}, {"E2": 90.0}])
+def test_workpiece_follows_turntable(axes):
+    """Bodies placed at the wrist with the table moved are hit only with the table moved."""
+    robot, cell = Robot(load_robot()), load_cell()
+    block = _block_at_wrist(robot, cell, axes)
+    checker = CollisionChecker(robot, cell, _bare_meshes(robot), reach_mm=1e5)
+    checker.set_placement(robroot(cell, 0.0))
+    checker.set_workpiece(block, block)
+    home = np.array(HOME_DEG, float)
+    assert {("A5", "part"), ("A5", "substrate")} <= checker.check(home, axes)
+    assert checker.check(home, {}) == set()

@@ -18,14 +18,18 @@ from PySide6.QtWidgets import (
 )
 from pyvistaqt import QtInteractor
 
-from coldspray.cell import robroot
+from coldspray.cad.part import (
+    Substrate, centre_on_faceplate, constrain, drop_on_plate, placed_vertices, snap_face_down,
+)
+from coldspray.cell import robroot, table_axis_names
 from coldspray.kinematics.robot import Robot
 from coldspray.models import PROJECT_ROOT, ProcessConfig, load_process, save_process
-from coldspray.pipeline import MODES, load_part, plan_part
+from coldspray.pipeline import MODES, check_placement, load_part, plan_part
 from coldspray.post.krl import KRLError, to_krl
 from coldspray.sim.cell_model import OPTIONAL
 from coldspray.sim.scene import gantry_offset, load_assets, make_gun
 from coldspray.sim.viewer import Scene
+from coldspray.transforms import frame, xyzabc
 
 UNITS = {"_mm_s": " mm/s", "_mm": " mm", "_deg": " °", "_s": " s"}
 CHECK_EVERY = 3        # collision-check every 3rd sampled point (~6 mm of travel)
@@ -67,7 +71,10 @@ class MainWindow(QMainWindow):
         self.resize(1600, 950)
         self.assets = None
         self.scene = None
-        self.part = None        # (name, vertices, faces)
+        self.part = None        # coldspray.cad.part.Part
+        self.substrate = Substrate()
+        self.picked_face = None # flat face picked, not yet snapped to the plate
+        self.collisions = []
         self.result = None      # (path, proc, cell, robot)
         self.play_timer = QTimer(self, interval=30, timeout=self._tick)
 
@@ -116,6 +123,61 @@ class MainWindow(QMainWindow):
         pl.addLayout(row)
         layout.addWidget(part_box)
 
+        place_box = QGroupBox("Placement on the faceplate")
+        vbox = QVBoxLayout(place_box)
+        grid = QFormLayout()
+        self.place = {}
+        for key, lo, hi, unit, tip in (
+                ("X", -500, 500, " mm", "Along the faceplate X axis"),
+                ("Y", -500, 500, " mm", "Along the faceplate Y axis"),
+                ("Z", -500, 1000, " mm", "Height above the faceplate (locked once a face is on the plate)"),
+                ("A", -180, 180, " °", "Turn about the faceplate Z axis"),
+                ("B", -90, 90, " °", "Turn about Y (locked once a face is on the plate)"),
+                ("C", -180, 180, " °", "Turn about X (locked once a face is on the plate)")):
+            box = _spin(lo, hi, 0, unit, tip=tip)
+            box.setKeyboardTracking(False)
+            box.valueChanged.connect(self._placement_typed)
+            grid.addRow(key, box)
+            self.place[key] = box
+        vbox.addLayout(grid)
+        self.pick_btn = QPushButton("Pick build face")
+        self.pick_btn.setCheckable(True)
+        self.pick_btn.setToolTip("Click a flat face of the part: the face the build starts from")
+        self.pick_btn.toggled.connect(self._pick_toggled)
+        self.snap_btn = QPushButton("Snap face to plate")
+        self.snap_btn.setToolTip("Turn the part so the picked face lies on the substrate plate")
+        self.snap_btn.clicked.connect(self._snap_face)
+        self.snap_btn.setEnabled(False)
+        centre_btn = QPushButton("Centre on faceplate")
+        centre_btn.setToolTip("Move the part onto the table axis (needed for Revolve)")
+        centre_btn.clicked.connect(lambda: self.part and self._set_placement(centre_on_faceplate(self.part)))
+        reset_btn = QPushButton("Reset")
+        reset_btn.setToolTip("Back to the CAD orientation, lying on the plate, centred; clears the build face")
+        reset_btn.clicked.connect(self._reset_placement)
+        for pair in ((self.pick_btn, self.snap_btn), (centre_btn, reset_btn)):
+            row = QHBoxLayout()
+            for btn in pair:
+                row.addWidget(btn)
+            vbox.addLayout(row)
+        self.face_label = QLabel("Build face: none")
+        self.face_label.setWordWrap(True)
+        vbox.addWidget(self.face_label)
+        layout.addWidget(place_box)
+
+        sub_box = QGroupBox("Substrate plate")
+        sform = QFormLayout(sub_box)
+        s = self.substrate
+        self.sub_fields = {
+            "length": _spin(10, 1000, s.length, " mm", tip="Along the faceplate X axis"),
+            "width": _spin(10, 1000, s.width, " mm", tip="Along the faceplate Y axis"),
+            "thickness": _spin(1, 200, s.thickness, " mm", tip="The part is built on its top surface"),
+        }
+        for key, box in self.sub_fields.items():
+            box.setKeyboardTracking(False)
+            box.valueChanged.connect(self._substrate_changed)
+            sform.addRow(key.capitalize(), box)
+        layout.addWidget(sub_box)
+
         plan_box = QGroupBox("Strategy")
         pform = QFormLayout(plan_box)
         self.mode = QComboBox()
@@ -162,6 +224,10 @@ class MainWindow(QMainWindow):
         cform.addRow("Gantry E1", self.e1)
         cform.addRow("Table tilt", self.tilt)
         cform.addRow("Table rotation", self.rotation)
+        for box in (self.e1, self.tilt, self.rotation):
+            box.setKeyboardTracking(False)
+            box.valueChanged.connect(self._enter_setup)
+        self.nozzle.currentIndexChanged.connect(self._enter_setup)
         self.check_box = QCheckBox("Check collisions")
         self.check_box.setChecked(True)
         cform.addRow(self.check_box)
@@ -216,6 +282,8 @@ class MainWindow(QMainWindow):
         revolve = self.mode.currentData() == "revolve"
         self.coats.setEnabled(revolve)
         self.rotation.setEnabled(not revolve)
+        self._show_placement()
+        self._enter_setup()
 
     def _show_group(self, label, on):
         if self.scene:
@@ -255,6 +323,8 @@ class MainWindow(QMainWindow):
                 self.rotation.setEnabled(False)
             self.scene = Scene(self.plotter, a.robot, robroot(a.cell), a.meshes, gantry_offset(a.cell),
                                a.cell.robot_cad_pose_deg, make_gun(a.tool, a.gun_mesh))
+            self.scene.on_part_moved = self._part_dragged
+            self.scene.set_substrate(self.substrate.mesh())
             self._set_part(None)
             self.scene.focus_on_work()
         finally:
@@ -272,9 +342,11 @@ class MainWindow(QMainWindow):
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             self._status("Reading part...")
-            self.part = load_part(source)
+            part = load_part(source)
+            part.placement = drop_on_plate(part, self.substrate.top)
+            self.part = part
             builtin = source is None or not Path(str(source)).suffix
-            self.part_label.setText(f"{self.part[0]} (built in)" if builtin else Path(source).name)
+            self.part_label.setText(f"{part.name} (built in)" if builtin else Path(source).name)
             if source == "test_tube":
                 self.mode.setCurrentIndex(self.mode.findData("revolve"))
             elif builtin:
@@ -285,7 +357,156 @@ class MainWindow(QMainWindow):
             return
         finally:
             QApplication.restoreOverrideCursor()
-        self.generate()
+        self.pick_btn.setChecked(False)
+        self.picked_face = None
+        self.snap_btn.setEnabled(False)
+        self.scene.set_part(self.part)
+        self.scene.set_constrained(False)
+        self._enter_setup()
+        self._show_placement()
+        self.scene.focus_on_part()
+        self.plotter.render()
+        self._status(f"Loaded {self.part.name}: set it up, then Generate")
+
+    # --- part setup -----------------------------------------------------------
+    def _work_cell(self):
+        """Cell config with the gantry at the chosen E1."""
+        cell = self.assets.cell.model_copy(deep=True)
+        if cell.gantry:
+            cell.gantry.position_mm = self.e1.value()
+        return cell
+
+    def _table_axes(self, cell) -> dict:
+        names = table_axis_names(cell)
+        return dict(zip(names, (self.tilt.value(), self.rotation.value())))
+
+    def _enter_setup(self, *_):
+        """Show the part set-up for the current settings; any toolpath is out of date."""
+        if self.scene is None:
+            return
+        self.play_timer.stop()
+        self.play_btn.setText("Play")
+        self.check_id += 1                 # a running collision check no longer applies
+        self.poll_timer.stop()
+        self.result, self.collisions = None, []
+        self.save_krl_btn.setEnabled(False)
+        cell = self._work_cell()
+        self.scene.set_placement(robroot(cell), gantry_offset(cell))
+        self.scene.enter_setup(cell, self._table_axes(cell), home=cell.home_deg)
+        self.slider.blockSignals(True)
+        self.slider.setRange(0, 0)
+        self.slider.blockSignals(False)
+        if self.part is not None:
+            self.info.setText(f"<b>{self.part.name}</b><br>"
+                              "<span style='color:#e37400'>Toolpath out of date: press Generate</span>")
+        self.plotter.render()
+
+    def _set_placement(self, placement, redraw=True):
+        """New part placement (kept on the plate if a build face is set); refresh view and boxes."""
+        if self.part is None:
+            return
+        self.part.placement = constrain(self.part, np.asarray(placement, float), self.substrate.top)
+        if redraw:
+            self.scene.set_part_placement()
+        self._show_placement()
+        self._enter_setup()
+
+    def _show_placement(self, placement=None):
+        """Fill the X..C boxes and the build-face label."""
+        if self.part is None:
+            return
+        values = xyzabc(self.part.placement if placement is None else placement)
+        locked = self.part.build_face is not None
+        for (key, box), v in zip(self.place.items(), values):
+            box.blockSignals(True)
+            box.setValue(float(v))
+            box.blockSignals(False)
+            box.setEnabled(not (locked and key in "ZBC"))
+        if self.part.build_face is not None:
+            face = self.part.planar[self.part.build_face]
+            text = f"Build face {self.part.build_face} ({face.area:,.0f} mm²) flat on the plate ✓"
+        elif self.picked_face is not None:
+            face = self.part.planar[self.picked_face]
+            text = f"Picked face {self.picked_face} ({face.area:,.0f} mm²): press Snap face to plate"
+        else:
+            text = "Build face: none (pick a flat face)"
+        try:
+            check_placement(placed_vertices(self.part), self.substrate, self.mode.currentData())
+        except ValueError as e:
+            text += f"<br><span style='color:#d93025'>{e}</span>"
+        self.face_label.setText(text)
+
+    def _placement_typed(self, *_):
+        if self.part is not None:
+            self._set_placement(frame(*(box.value() for box in self.place.values())))
+
+    def _part_dragged(self, placement, final):
+        if final:
+            self._set_placement(placement)
+        else:
+            self._show_placement(placement)
+
+    def _pick_toggled(self, on):
+        if self.scene is None:
+            return
+        if not on:
+            self.scene.cancel_face_pick()
+            self.plotter.render()
+            return
+        if self.scene.mode != "setup":
+            self._enter_setup()
+        if not self.scene.start_face_pick(self._face_picked):
+            self.pick_btn.setChecked(False)
+            return
+        self._status("Click a flat face of the part (the build-start face)")
+        self.plotter.render()
+
+    def _face_picked(self, face_id):
+        if face_id not in self.part.planar:
+            self._status("Not a flat face: pick a flat face")
+            self.scene.start_face_pick(self._face_picked)   # keep picking
+            return
+        self.pick_btn.blockSignals(True)
+        self.pick_btn.setChecked(False)
+        self.pick_btn.blockSignals(False)
+        self.picked_face = face_id
+        self.scene.highlight_face(face_id)
+        self.snap_btn.setEnabled(True)
+        self._show_placement()
+        self._status(f"Picked face {face_id}")
+        self.plotter.render()
+
+    def _snap_face(self):
+        if self.part is None or self.picked_face is None:
+            return
+        placement = snap_face_down(self.part, self.picked_face, self.substrate.top)
+        self.part.build_face, self.picked_face = self.picked_face, None
+        self.snap_btn.setEnabled(False)
+        self.scene.set_constrained(True)
+        self._set_placement(placement)
+
+    def _reset_placement(self):
+        if self.part is None:
+            return
+        self.pick_btn.setChecked(False)
+        self.part.build_face = self.picked_face = None
+        self.part.placement = np.eye(4)
+        self.snap_btn.setEnabled(False)
+        self.scene.highlight_face(None)
+        self.scene.set_constrained(False)
+        self._set_placement(drop_on_plate(self.part, self.substrate.top))
+
+    def _substrate_changed(self, *_):
+        old = self.substrate.top
+        self.substrate = Substrate(**{k: box.value() for k, box in self.sub_fields.items()})
+        if self.scene:
+            self.scene.set_substrate(self.substrate.mesh())
+        if self.part is not None:
+            placement = self.part.placement.copy()
+            placement[2, 3] += self.substrate.top - old     # the part stays on the plate
+            self._set_placement(placement)
+        else:
+            self._enter_setup()
 
     def read_process(self) -> ProcessConfig:
         return ProcessConfig(**{name: box.value() for name, box in self.fields.items()})
@@ -309,21 +530,21 @@ class MainWindow(QMainWindow):
             gun = make_gun(tool, a.gun_mesh)
             self.scene.set_gun(robot, gun)
 
-            cell = a.cell.model_copy(deep=True)
-            if cell.gantry:
-                cell.gantry.position_mm = self.e1.value()
+            cell = self._work_cell()
             self.scene.set_placement(robroot(cell), gantry_offset(cell))
 
-            name, v, f = self.part
-            mode = self.mode.currentData()
+            self.pick_btn.setChecked(False)
+            name, mode = self.part.name, self.mode.currentData()
             self._status("Planning...")
-            summary, path = plan_part(v, f, proc, name, mode=mode, tilt_deg=self.tilt.value(),
-                                      rotation_deg=self.rotation.value(), coats=self.coats.value(), cell=cell)
+            summary, path = plan_part(self.part, proc, mode=mode, tilt_deg=self.tilt.value(),
+                                      rotation_deg=self.rotation.value(), coats=self.coats.value(), cell=cell,
+                                      substrate=self.substrate)
             if not path.moves:
                 raise ValueError("No toolpath: the part gave no layers (is it thinner than one layer?)")
             self._status("Checking reach...")
-            plate = tuple(v[:, :2].max(axis=0) + 10) if mode == "layers" else None
-            joints = self.scene.set_path(path, cell, part=(v, f), plate_size=plate, step=2.0,
+            part_mesh = (placed_vertices(self.part), self.part.faces)
+            substrate_mesh = self.substrate.mesh()
+            joints = self.scene.set_path(path, cell, part=part_mesh, substrate=substrate_mesh, step=2.0,
                                          home=cell.home_deg, angle_step=5.0)
             self.result = (path, proc, cell, robot)
         except Exception as e:
@@ -346,7 +567,7 @@ class MainWindow(QMainWindow):
         self.plotter.render()
         self._status(f"Generated in {time.time() - t0:.1f} s")
         if self.check_box.isChecked() and a.meshes is not None:
-            self._start_collision_check(robot, gun, cell, (v, f), joints)
+            self._start_collision_check(robot, gun, cell, part_mesh, substrate_mesh, joints)
 
     def _update_info(self):
         reach = (f"<span style='color:#d93025'>{self.unreachable} unreachable points</span>" if self.unreachable
@@ -354,7 +575,7 @@ class MainWindow(QMainWindow):
         self.info.setText(self.summary_head + reach + "<br>" + self.collision_text)
 
     # --- collision checking (background) -------------------------------------------
-    def _start_collision_check(self, robot, gun, cell, part, joints):
+    def _start_collision_check(self, robot, gun, cell, part, substrate, joints):
         from coldspray.sim.collision import CollisionChecker
 
         self.check_id += 1
@@ -366,11 +587,12 @@ class MainWindow(QMainWindow):
             if job != self.check_id:
                 return None                       # superseded by a newer Generate
             if self.checker is None or self.checker_e1 != e1:
-                self.checker = CollisionChecker(robot, cell, a.meshes, gun, part, cell.robot_cad_pose_deg)
+                self.checker = CollisionChecker(robot, cell, a.meshes, gun, part, cell.robot_cad_pose_deg,
+                                                substrate=substrate)
                 self.checker_e1 = e1
             else:
                 self.checker.set_gun(robot, gun)
-                self.checker.set_part(part)
+                self.checker.set_workpiece(part, substrate)
                 self.checker.cell = cell
             return job, self.checker.check_path(joints, axes_at, every=CHECK_EVERY)
 
@@ -405,7 +627,7 @@ class MainWindow(QMainWindow):
 
     def _save_krl(self):
         path, proc, cell, robot = self.result
-        hits = getattr(self, "collisions", [])
+        hits = self.collisions
         if hits and QMessageBox.question(
                 self, "Collisions found",
                 f"The simulation found {len(hits)} collision points. Save the program anyway?") \
@@ -435,7 +657,7 @@ class MainWindow(QMainWindow):
 
     # --- playback -------------------------------------------------------------
     def _on_slider(self, i):
-        if self.scene:
+        if self.scene and self.scene.mode == "preview":
             self.scene.show_point(i)
             self.plotter.render()
 

@@ -7,7 +7,7 @@ from OCP.STEPControl import STEPControl_AsIs, STEPControl_Writer
 from shapely.geometry import LineString, Point
 
 from coldspray.cad.slicer import place_on_plate, slice_mesh
-from coldspray.cad.step_io import load_step, tessellate
+from coldspray.cad.step_io import load_step, tessellate, tessellate_with_ids
 from coldspray.models import load_process
 from coldspray.planner.layers import plan_layers, raster_segments
 
@@ -29,6 +29,16 @@ def block_step(tmp_path_factory):
 def layers(block_step):
     v, f = tessellate(load_step(block_step), deflection=0.01)
     return slice_mesh(place_on_plate(v), f, layer_thickness=0.5)
+
+
+def test_step_face_ids(block_step):
+    shape = load_step(block_step)
+    v, f = tessellate(shape, deflection=0.01)
+    v2, f2, ids, planar = tessellate_with_ids(shape, deflection=0.01)
+    assert np.array_equal(v, v2) and np.array_equal(f, f2) and len(ids) == len(f)
+    assert len(planar) == 6 and len(set(ids)) == 7
+    bottom = next(p for p in planar.values() if np.allclose(p.normal, [0, 0, -1]))
+    assert np.isclose(bottom.point[2], 10) and np.isclose(bottom.area, W * D - np.pi * R**2)
 
 
 def test_layer_count_and_heights(layers):

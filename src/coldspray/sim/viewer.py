@@ -2,14 +2,21 @@
 
 `Scene` draws into any PyVista plotter (a plain window or the Qt GUI). The
 cell is added once; path, gun and gantry position can be swapped afterwards.
-Everything is drawn in WORLD (cell CAD) coordinates; the part, plate and path
-are drawn in BASE coordinates and ride on the turntable.
+Everything is drawn in WORLD (cell CAD) coordinates; the part, substrate and
+path are drawn in BASE coordinates and ride on the turntable.
+
+Two modes:
+  setup   - table at a chosen tilt / rotation, part and substrate with drag
+            handles (enter_setup); no path.
+  preview - a planned path (set_path); part and substrate ride on the table
+            from sample to sample.
 """
 
 from dataclasses import dataclass
 
 import numpy as np
 import pyvista as pv
+from vtkmodules.vtkRenderingCore import vtkCellPicker
 
 from coldspray.cell import base_world, turntable_motion
 from coldspray.kinematics.robot import HOME_DEG, Robot
@@ -23,6 +30,10 @@ BAD = "#d93025"
 CRASH = "#c2185b"
 KUKA_ORANGE = "#ff6a13"
 TABLE = "#a7b4bd"
+PART = "#4f6d7a"
+SUBSTRATE = "#b0bec5"
+BUILD_FACE = "#2bb673"
+OUT_OF_DATE = "#e37400"
 
 
 @dataclass
@@ -51,6 +62,13 @@ def _shift(offset) -> np.ndarray:
     return m
 
 
+def plate_box(plate_size) -> tuple[np.ndarray, np.ndarray]:
+    """Old-style plate (width, length) under BASE x, y > 0, as (vertices, faces)."""
+    w, l = plate_size
+    box = pv.Box(bounds=(0, w, 0, l, -10, 0)).triangulate()
+    return np.asarray(box.points), box.faces.reshape(-1, 4)[:, 1:]
+
+
 class Scene:
     def __init__(self, pl: pv.Plotter, robot: Robot, world_from_robot=None,
                  cell: CellMeshes | None = None, gantry_offset=(0.0, 0.0, 0.0),
@@ -58,11 +76,23 @@ class Scene:
         self.pl, self.robot = pl, robot
         self.world_from_robot = np.eye(4) if world_from_robot is None else world_from_robot
         self.path_actors: list = []      # move with the faceplate
+        self.crash_actor = None
         self.n_points = 0
         self.joints = np.zeros((0, 6))
         self.reachable = np.zeros(0, bool)
         self.collisions: dict[int, set] = {}
         self.cell_cfg: CellConfig | None = None
+        self.mode = "preview"
+
+        # setup mode: part (drawn in part-CAD coordinates), build face, substrate, drag handles
+        self.part = None
+        self.part_actor = self.face_actor = self.substrate_actor = None
+        self.setup_frame = np.eye(4)     # BASE in WORLD with the table at the setup axes
+        self.widget = None
+        self._widget_on = False
+        self._constrained = False
+        self.on_part_moved = None        # callback(placement, final) while / after dragging
+        self._pick_cb = self._pick_obs = None
 
         pl.set_background("white")
         pl.enable_anti_aliasing("ssaa")
@@ -98,7 +128,10 @@ class Scene:
         self.set_gun(robot, gun)
         self.set_placement(self.world_from_robot, gantry_offset)
         self.spray = _polyline([[0, 0, 0], [0, 0, 1]])
-        pl.add_mesh(self.spray, color="#1a73e8", line_width=4)
+        self.spray_actor = pl.add_mesh(self.spray, color="#1a73e8", line_width=4)
+        # only the part and the drag handles are pickable (keeps hover picking fast)
+        for a in pl.renderer.actors.values():
+            a.SetPickable(False)
         self.status = pl.add_text("", position="upper_left", font_size=10, color="black")
         self.summary = pl.add_text("", position="upper_right", font_size=10, color="green")
 
@@ -123,6 +156,8 @@ class Scene:
                 nozzle = pv.Cylinder(center=(0, gun.nozzle_length / 2, 0), direction=(0, 1, 0),
                                      radius=14, height=gun.nozzle_length)
             self.gun_actors = [body, self.pl.add_mesh(nozzle, color="#5f6b77", smooth_shading=True)]
+            for a in self.gun_actors:
+                a.SetPickable(False)
 
     def set_group_visible(self, label: str, visible: bool):
         if label in self.group_actors:
@@ -131,16 +166,222 @@ class Scene:
     def show_walls(self, visible: bool):
         self.set_group_visible("Booth walls", visible)
 
+    def set_robot_pose(self, q):
+        """Draw the robot and gun at joint angles `q` (degrees)."""
+        if self.link_actors:
+            frames = self.robot.link_frames(q)
+            for k in range(1, 7):
+                self.link_actors[k].user_matrix = (self.world_from_robot @ frames[k - 1]
+                                                   @ np.linalg.inv(self.cad_frames[k - 1]))
+        else:
+            p = self.robot.link_points(q)
+            self.stick.points = (self.world_from_robot @ np.c_[p, np.ones(7)].T).T[:, :3]
+        if self.gun_actors:
+            m = self.world_from_robot @ self.robot.flange(q) @ self.gun.to_flange
+            for a in self.gun_actors:
+                a.user_matrix = m
+
+    def _set_table(self, axes):
+        tilt, face = turntable_motion(self.cell_cfg, axes)
+        for a in self.tilting_actors:
+            a.user_matrix = tilt
+        for a in self.rotating_actors:
+            a.user_matrix = face
+
+    # --- part setup -----------------------------------------------------------
+    def set_part(self, part):
+        """Part to set up (a coldspray.cad.part.Part, or None): drawn in part-CAD
+        coordinates at part.placement, with drag handles in setup mode."""
+        self.cancel_face_pick()
+        self._remove_widget()
+        for a in (self.part_actor, self.face_actor):
+            if a is not None:
+                self.pl.remove_actor(a)
+        self.part, self.part_actor, self.face_actor = part, None, None
+        if part is not None:
+            self.part_actor = self.pl.add_mesh(_polydata(part.vertices, part.faces), color=PART)
+            self.part_actor.SetVisibility(self.mode == "setup")
+            self.set_part_placement()
+            if self.mode == "setup":
+                self._make_widget()
+
+    def set_substrate(self, mesh):
+        """Substrate plate (vertices, faces) in BASE, or None."""
+        if self.substrate_actor is not None:
+            self.pl.remove_actor(self.substrate_actor)
+            self.substrate_actor = None
+        if mesh is not None:
+            self.substrate_actor = self.pl.add_mesh(_polydata(*mesh), color=SUBSTRATE)
+            self.substrate_actor.SetPickable(False)
+            self.substrate_actor.user_matrix = self.setup_frame
+            self.substrate_actor.SetVisibility(self.mode == "setup")
+
+    def set_part_placement(self):
+        """Redraw the part (and handles) after part.placement changed."""
+        if self.part_actor is None:
+            return
+        m = self.setup_frame @ self.part.placement
+        for a in (self.part_actor, self.face_actor):
+            if a is not None:
+                a.user_matrix = m
+        if self.widget is not None:
+            self.widget._cached_matrix = m            # the widget starts its next drag from here
+            self.widget.origin = self._part_centre()
+
+    def _part_centre(self) -> np.ndarray:
+        v = self.part.vertices
+        c = (v.min(axis=0) + v.max(axis=0)) / 2
+        m = self.setup_frame @ self.part.placement
+        return m[:3, :3] @ c + m[:3, 3]
+
+    def highlight_face(self, face_id: int | None):
+        """Colour the triangles of CAD face `face_id` (None: no highlight)."""
+        if self.face_actor is not None:
+            self.pl.remove_actor(self.face_actor)
+            self.face_actor = None
+        if face_id is None or self.part is None:
+            return
+        faces = self.part.faces[self.part.face_ids == face_id]
+        self.face_actor = self.pl.add_mesh(_polydata(self.part.vertices, faces), color=BUILD_FACE)
+        self.face_actor.mapper.SetResolveCoincidentTopologyToPolygonOffset()
+        self.face_actor.mapper.SetRelativeCoincidentTopologyPolygonOffsetParameters(-2, -20)
+        self.face_actor.SetPickable(False)
+        self.face_actor.SetVisibility(self.mode == "setup")
+        self.face_actor.user_matrix = self.setup_frame @ self.part.placement
+
+    def set_constrained(self, on: bool):
+        """Build face on the plate: only offer the XY arrows and the yaw ring."""
+        self._constrained = on
+        self._show_widget(self.mode == "setup")
+
+    def enter_setup(self, cell: CellConfig, axes=None, home=None):
+        """Setup mode: no path, table at `axes`, part and substrate on the faceplate
+        with drag handles, robot at `home`."""
+        self.cancel_face_pick()
+        self._clear_path()
+        self.cell_cfg = cell
+        self.mode = "setup"
+        frame = base_world(cell, axes)
+        moved = not np.allclose(frame, self.setup_frame)
+        self.setup_frame = frame
+        self._set_table(axes)
+        if home is not None:
+            self.set_robot_pose(home)
+        if self.substrate_actor is not None:
+            self.substrate_actor.user_matrix = frame
+        for a in (self.part_actor, self.face_actor, self.substrate_actor):
+            if a is not None:
+                a.SetVisibility(True)
+        self.spray_actor.SetVisibility(False)
+        self.set_part_placement()
+        if self.part_actor is not None and (self.widget is None or moved):
+            self._make_widget()
+        self._show_widget(True)
+        table = "  ".join(f"{k} {v:.1f}" for k, v in (axes or {}).items())
+        self.status.SetText(2, f"SETUP   {table}\nDrag the handles or type a placement, then Generate")
+        self.summary.SetText(3, "toolpath out of date")
+        self.summary.GetTextProperty().SetColor(pv.Color(OUT_OF_DATE).float_rgb)
+
+    # --- drag handles ---------------------------------------------------------
+    def _make_widget(self):
+        """Affine widget on the part, aligned with the BASE axes, pivoting about the part centre."""
+        self._remove_widget()
+        if self.part_actor is None or getattr(self.pl, "iren", None) is None:
+            return
+        size = self.part_actor.GetLength()
+        self.widget = self.pl.add_affine_transform_widget(
+            self.part_actor, origin=tuple(self._part_centre()), start=False,
+            scale=max(0.45, 70.0 / size), axes=self.setup_frame[:3, :3].T,
+            interact_callback=lambda m: self._dragged(m, False),
+            release_callback=lambda m: self._dragged(m, True))
+        self._widget_on = False
+        self._show_widget(self.mode == "setup")
+
+    def _remove_widget(self):
+        if self.widget is not None:
+            if not self._widget_on:
+                self.widget.enable()    # remove() disables, which needs it enabled
+            self.widget.remove()
+        self.widget, self._widget_on = None, False
+
+    def _show_widget(self, on: bool):
+        w = self.widget
+        if w is None:
+            return
+        if on != self._widget_on:
+            (w.enable if on else w.disable)()
+            self._widget_on = on
+        locked = [w._circles[0], w._circles[1], w._arrows[2]] if self._constrained else []
+        for a in w._arrows + w._circles:
+            visible = on and not any(a is b for b in locked)
+            a.SetVisibility(visible)
+            a.SetPickable(visible)
+
+    def _dragged(self, world_matrix, final: bool):
+        if self.part is None or self.mode != "setup" or self.on_part_moved is None:
+            return
+        placement = np.linalg.inv(self.setup_frame) @ np.asarray(world_matrix)
+        if final and np.allclose(placement, self.part.placement):
+            return                       # a click (e.g. turning the view), not a drag
+        self.on_part_moved(placement, final)
+
+    # --- face picking ---------------------------------------------------------
+    def start_face_pick(self, callback) -> bool:
+        """The next left click on the part calls `callback(face_id)` once; clicks
+        beside the part still turn the view. False if there is nothing to pick."""
+        self.cancel_face_pick()
+        if self.part_actor is None or getattr(self.pl, "iren", None) is None:
+            return False
+        self._pick_cb = callback
+        self._show_widget(False)
+        self._pick_obs = self.pl.iren.add_observer("LeftButtonPressEvent", self._pick_click)
+        return True
+
+    def cancel_face_pick(self):
+        if self._pick_obs is not None:
+            self.pl.iren.remove_observer(self._pick_obs)
+            self._show_widget(self.mode == "setup")
+        self._pick_cb = self._pick_obs = None
+
+    def _pick_click(self, iren, _event):
+        x, y = iren.GetEventPosition()
+        picker = vtkCellPicker()
+        picker.SetTolerance(0.0005)
+        picker.PickFromListOn()
+        picker.AddPickList(self.part_actor)
+        if picker.Pick(x, y, 0, self.pl.renderer) and picker.GetCellId() >= 0:
+            self.pick_triangle(picker.GetCellId())
+
+    def pick_triangle(self, tri: int):
+        """Report the CAD face of part triangle `tri` to the pick callback and stop picking."""
+        callback = self._pick_cb
+        self.cancel_face_pick()
+        if callback is not None and self.part is not None:
+            callback(int(self.part.face_ids[tri]))
+
     # --- toolpath -------------------------------------------------------------
-    def set_path(self, path: Toolpath, cell: CellConfig, part=None, plate_size=None, step=5.0, home=None,
-                 angle_step=2.0):
-        """Draw a toolpath (and optional part mesh in BASE coordinates).
-        Returns the joint angles for every sampled point (NaN = unreachable)."""
+    def _clear_path(self):
         for a in self.path_actors:
             self.pl.remove_actor(a)
-        self.path_actors = []
-        self.cell_cfg = cell
+        self.path_actors, self.crash_actor = [], None
+        self.n_points = 0
         self.collisions = {}
+
+    def set_path(self, path: Toolpath, cell: CellConfig, part=None, plate_size=None, step=5.0, home=None,
+                 angle_step=2.0, substrate=None):
+        """Preview mode: draw a toolpath, with optional part and substrate meshes
+        (vertices, faces) in BASE coordinates (`plate_size` (w, l): an old-style
+        plate when no substrate is given). Returns the joint angles for every
+        sampled point (NaN = unreachable)."""
+        self.cancel_face_pick()
+        self._clear_path()
+        self.mode = "preview"
+        self._show_widget(False)
+        for a in (self.part_actor, self.face_actor, self.substrate_actor):
+            if a is not None:
+                a.SetVisibility(False)
+        self.spray_actor.SetVisibility(True)
+        self.cell_cfg = cell
 
         s = path.sample(step, angle_step)
         self.samples = s
@@ -153,11 +394,12 @@ class Scene:
         pts = s.poses[:, :3, 3]           # BASE coordinates
 
         add = self.path_actors.append
-        if plate_size is not None:
-            w, l = plate_size
-            add(self.pl.add_mesh(pv.Box(bounds=(0, w, 0, l, -10, 0)), color="#b0bec5"))
+        if substrate is None and plate_size is not None:
+            substrate = plate_box(plate_size)
+        if substrate is not None:
+            add(self.pl.add_mesh(_polydata(*substrate), color=SUBSTRATE))
         if part is not None:
-            add(self.pl.add_mesh(_polydata(*part), color="#4f6d7a", opacity=0.4))
+            add(self.pl.add_mesh(_polydata(*part), color=PART, opacity=0.4))
         for mask, color, width in ((s.gun_on, SPRAY, 3), (~s.gun_on, TRAVEL, 1)):
             segs = [i for i in range(1, len(pts)) if mask[i]]
             if segs:
@@ -165,13 +407,16 @@ class Scene:
                 add(self.pl.add_mesh(pv.PolyData(pts, lines=lines), color=color, line_width=width))
         if (~self.reachable).any():
             add(self.pl.add_points(pts[~self.reachable], color=BAD, point_size=10, render_points_as_spheres=True))
-        self.crash_actor = None
+        for a in self.path_actors:
+            a.SetPickable(False)
         self._update_summary()
         self.show_point(self.first_reachable())
         return self.joints
 
     def set_collisions(self, hits):
         """Mark samples where the robot or gun collides (list of Collision)."""
+        if self.mode != "preview":
+            return
         self.collisions = {h.sample: h.pairs for h in hits}
         if self.crash_actor is not None:
             self.pl.remove_actor(self.crash_actor)
@@ -180,6 +425,7 @@ class Scene:
         if hits:
             pts = self.samples.poses[[h.sample for h in hits], :3, 3]
             self.crash_actor = self.pl.add_points(pts, color=CRASH, point_size=12, render_points_as_spheres=True)
+            self.crash_actor.SetPickable(False)
             self.path_actors.append(self.crash_actor)
         self._update_summary()
         self.show_point(self.current if hasattr(self, "current") else 0)
@@ -204,11 +450,7 @@ class Scene:
         i = int(np.clip(i, 0, self.n_points - 1))
         self.current = i
         axes = self.samples.axes_at(i)
-        tilt, face = turntable_motion(self.cell_cfg, axes)
-        for a in self.tilting_actors:
-            a.user_matrix = tilt
-        for a in self.rotating_actors:
-            a.user_matrix = face
+        self._set_table(axes)
         for a in self.path_actors:
             a.user_matrix = self.base_frames[i]
         table = "  ".join(f"{k} {v:.1f}" for k, v in axes.items())
@@ -216,18 +458,7 @@ class Scene:
             self.status.SetText(2, f"point {i}: UNREACHABLE   {table}")
             return
         q = self.joints[i]
-        if self.link_actors:
-            frames = self.robot.link_frames(q)
-            for k in range(1, 7):
-                self.link_actors[k].user_matrix = (self.world_from_robot @ frames[k - 1]
-                                                   @ np.linalg.inv(self.cad_frames[k - 1]))
-        else:
-            p = self.robot.link_points(q)
-            self.stick.points = (self.world_from_robot @ np.c_[p, np.ones(7)].T).T[:, :3]
-        if self.gun_actors:
-            m = self.world_from_robot @ self.robot.flange(q) @ self.gun.to_flange
-            for a in self.gun_actors:
-                a.user_matrix = m
+        self.set_robot_pose(q)
         tcp = self.base_frames[i] @ self.samples.poses[i]
         self.spray.points = np.array([tcp[:3, 3], tcp[:3, 3] + tcp[:3, 0] * 40])
         j = ", ".join(f"{v:.1f}" for v in q)
@@ -240,19 +471,31 @@ class Scene:
         target = base_world(self.cell_cfg)[:3, 3] if self.cell_cfg else self.world_from_robot[:3, 3]
         self.pl.camera_position = [target + [-2600, -4200, 2600], target + [600, 300, 700], (0, 0, 1)]
 
+    def focus_on_part(self, distance=900.0):
+        """Close-up of the faceplate for setting up the part: down the faceplate
+        normal, from the side away from the robot (so the arm is behind the part)."""
+        normal = self.setup_frame[:3, 2]
+        target = self.setup_frame[:3, 3] + normal * 60
+        away = target - self.world_from_robot[:3, 3]
+        away -= np.dot(away, normal) * normal
+        away = away / np.linalg.norm(away) if np.linalg.norm(away) > 1e-6 else np.cross(normal, [0, 1, 0])
+        view = normal * 1.2 + away
+        self.pl.camera_position = [target + view / np.linalg.norm(view) * distance, target, normal]
+
 
 def show(robot: Robot, path: Toolpath, cell_cfg: CellConfig, world_from_robot=None,
          cell: CellMeshes | None = None, gantry_offset=(0.0, 0.0, 0.0), cad_pose=HOME_DEG,
          gun: Gun | None = None, part=None, plate_size=None, step=5.0, home=None,
-         screenshot=None, collisions=False):
+         screenshot=None, collisions=False, substrate=None):
     """Standalone window: slider to move along the path, "p" to play,
-    checkbox (bottom right) to show the booth walls."""
+    checkbox (bottom right) to show the booth walls. `part` and `substrate`
+    are (vertices, faces) in BASE."""
     pl = pv.Plotter(off_screen=screenshot is not None, window_size=(1400, 900))
     scene = Scene(pl, robot, world_from_robot, cell, gantry_offset, cad_pose, gun)
-    joints = scene.set_path(path, cell_cfg, part, plate_size, step, home)
+    joints = scene.set_path(path, cell_cfg, part, plate_size, step, home, substrate=substrate)
     if collisions and cell is not None:
         from coldspray.sim.collision import CollisionChecker
-        checker = CollisionChecker(robot, cell_cfg, cell, gun, part, cad_pose)
+        checker = CollisionChecker(robot, cell_cfg, cell, gun, part, cad_pose, substrate=substrate)
         scene.set_collisions(checker.check_path(joints, scene.samples.axes_at, every=3))
 
     slider = pl.add_slider_widget(scene.show_point, [0, max(scene.n_points - 1, 1)],

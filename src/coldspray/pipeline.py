@@ -1,11 +1,21 @@
-"""STEP part -> placed mesh -> layers -> toolpath."""
+"""STEP part -> placed on the substrate plate -> layers -> toolpath.
+
+The part is built up on a substrate plate lying on the faceplate; planning is
+done relative to the plate top and the toolpath moved up into BASE.
+"""
 
 from pathlib import Path
 
-from coldspray.cad.slicer import place_on_plate, slice_mesh
+import numpy as np
+
+from coldspray.cad.part import Part, Substrate, drop_on_plate, placed_vertices
+from coldspray.cad.slicer import slice_mesh
 from coldspray.models import CellConfig, ProcessConfig
 from coldspray.planner.layers import plan_layers
 from coldspray.planner.revolve import plan_revolve
+from coldspray.transforms import frame
+
+FACEPLATE_RADIUS = 500.0  # mm
 
 
 def test_block():
@@ -40,37 +50,58 @@ def test_tube():
 BUILT_IN = {"test_block": test_block, "test_tube": test_tube}
 
 
-def load_part(step_file=None, deflection=0.05):
-    """(name, vertices, faces) with the part's lowest point at z = 0.
-    `step_file` is a STEP path or the name of a built-in test part
+def load_part(source=None, deflection=0.05) -> Part:
+    """A Part dropped onto the default substrate plate, centred on the table.
+    `source` is a STEP path or the name of a built-in test part
     (default: the test block)."""
-    from coldspray.cad.step_io import load_step, tessellate
+    from coldspray.cad.step_io import load_step, tessellate_with_ids
 
-    step_file = step_file or "test_block"
-    builtin = BUILT_IN.get(step_file)
-    shape = builtin() if builtin else load_step(step_file)
-    v, f = tessellate(shape, deflection=deflection)
-    name = program_name(step_file if builtin else Path(step_file).stem)
-    return name, place_on_plate(v), f
+    source = source or "test_block"
+    builtin = BUILT_IN.get(source)
+    shape = builtin() if builtin else load_step(source)
+    v, f, ids, planar = tessellate_with_ids(shape, deflection=deflection)
+    part = Part(program_name(source if builtin else Path(source).stem), v, f, ids, planar)
+    part.placement = drop_on_plate(part, Substrate().top)
+    return part
 
 
 MODES = {
-    "layers": "Layers (build up on the faceplate)",
+    "layers": "Layers (build up on the substrate plate)",
     "revolve": "Revolve (coat the outside, table spinning)",
 }
 
 
-def plan_part(vertices, faces, proc: ProcessConfig, name="part", mode="layers",
-              tilt_deg=0.0, rotation_deg=0.0, coats=1, cell: CellConfig | None = None):
-    """Returns (summary, toolpath). `summary` is a short description for the user."""
+def check_placement(vertices, substrate: Substrate, mode="layers"):
+    """Raises ValueError (with a message for the user) if the placed part can't be sprayed."""
+    zmin = vertices[:, 2].min()
+    if zmin < substrate.top - 0.1:
+        raise ValueError(f"Part goes into the substrate plate by {substrate.top - zmin:.1f} mm"
+                         " — snap a face to the plate or raise it")
+    if mode == "layers" and zmin > substrate.top + 0.1:
+        raise ValueError(f"Part floats {zmin - substrate.top:.1f} mm above the substrate plate"
+                         " — snap a face to the plate to start the build")
+    reach = np.linalg.norm(vertices[:, :2], axis=1).max()
+    if reach > FACEPLATE_RADIUS:
+        raise ValueError(f"Part reaches {reach:.0f} mm from the table axis, beyond the"
+                         f" {FACEPLATE_RADIUS:.0f} mm faceplate — move it towards the centre")
+
+
+def plan_part(part: Part, proc: ProcessConfig, mode="layers", tilt_deg=0.0, rotation_deg=0.0,
+              coats=1, cell: CellConfig | None = None, substrate=Substrate()):
+    """Returns (summary, toolpath in BASE). `summary` is a short description for the user."""
+    v = placed_vertices(part)
+    check_placement(v, substrate, mode)
+    v = v - [0.0, 0.0, substrate.top]  # plan relative to the plate top
+    up = frame(z=substrate.top)
     tt = cell.turntable if cell else None
     tilt_axis, rot_axis = (tt.tilt.axis, tt.rotation.axis) if tt else ("E2", "E5")
     if mode == "revolve":
-        path = plan_revolve(vertices, faces, proc, name, coats=coats, tilt_deg=tilt_deg,
-                            tilt_axis=tilt_axis, rotation_axis=rot_axis)
+        path = plan_revolve(v, part.faces, proc, part.name, coats=coats, tilt_deg=tilt_deg,
+                            tilt_axis=tilt_axis, rotation_axis=rot_axis).transformed(up)
         passes = sum(1 for a, b in zip(path.moves, path.moves[1:]) if b.gun_on and a.gun_on
                      and abs(b.pose[2, 3] - a.pose[2, 3]) > 1e-9)
         return f"{coats} coat(s), {passes + coats} passes", path
-    layers = slice_mesh(vertices, faces, proc.layer_thickness_mm)
+    layers = slice_mesh(v, part.faces, proc.layer_thickness_mm)
     table = {tilt_axis: tilt_deg, rot_axis: rotation_deg} if tt else {}
-    return f"{len(layers)} layers", plan_layers(layers, proc, name, table_axes=table)
+    path = plan_layers(layers, proc, part.name, table_axes=table).transformed(up)
+    return f"{len(layers)} layers", path

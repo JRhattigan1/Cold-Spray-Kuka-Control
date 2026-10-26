@@ -1,9 +1,9 @@
 """Toolpath: the format shared by planners, the simulator and post-processors.
 
-Poses are 4x4 TCP frames in the work BASE frame (mm), i.e. relative to the
-part on the faceplate. The tool X axis is the spray direction; tool Y follows
-the travel direction. A move may also set external axes (turntable tilt and
-rotation, degrees); axes it doesn't mention keep their previous value.
+Poses are 4x4 TCP frames in the work BASE frame (mm): the turntable faceplate,
+origin at its top centre. The tool X axis is the spray direction; tool Y
+follows the travel direction. A move may also set external axes (turntable
+tilt and rotation, degrees); axes it doesn't mention keep their previous value.
 """
 
 from dataclasses import dataclass, field
@@ -48,6 +48,11 @@ class Toolpath:
             state = state | m.axes
             out.append(dict(state))
         return out
+
+    def transformed(self, t: np.ndarray) -> "Toolpath":
+        """Copy with every pose replaced by `t @ pose` (speeds, spray state and axes kept)."""
+        return Toolpath(self.name, [Move(t @ m.pose, m.speed, m.gun_on, m.kind, dict(m.axes))
+                                    for m in self.moves])
 
     def sample(self, step: float = 5.0, angle_step: float = 2.0) -> Samples:
         """Points every ~`step` mm (and every ~`angle_step` degrees of external

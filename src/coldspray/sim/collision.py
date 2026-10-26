@@ -3,13 +3,14 @@
 Moving bodies: robot links A1..A6, spray gun and nozzle.
 Checked against: the fixed cell (cropped to the robot's working volume at the
 configured gantry position), the turntable body and faceplate (moving with
-E2/E5), the part, and - for the gun and nozzle only - the robot's own base
-and arm.
+E2/E5), the workpiece - part and the substrate plate it sits on, both clamped
+to the faceplate - and, for the gun and nozzle only, the robot's own base and
+arm. The part touching the substrate is not checked (both are environment).
 
 Contacts that exist in the CAD as drawn (robot at its CAD pose and gantry
 position, turntable at 0 - parts that touch by design, e.g. the robot base
-on its mounting) are learned once and ignored; contacts with the part and the
-turntable are never ignored.
+on its mounting) are learned once and ignored; contacts with the part,
+substrate and turntable are never ignored.
 
 Limits: meshes are simplified (robot links decimated, large cell meshes
 merged to ~SIMPLIFY_MM), so near misses of a few mm may be reported either
@@ -31,7 +32,7 @@ from coldspray.models import CellConfig
 from coldspray.sim.cell_model import OPTIONAL, CellMeshes
 
 LINK_NAMES = ["A1", "A2", "A3", "A4", "A5", "A6"]
-NEVER_ALLOWED = {"part", "faceplate", "turntable"}
+NEVER_ALLOWED = {"part", "substrate", "faceplate", "turntable"}
 SIMPLIFY_MM = 10.0          # merge cell-mesh points closer than this
 SIMPLIFY_ABOVE = 50_000     # ... for meshes with more triangles than this
 
@@ -90,7 +91,7 @@ def _cell_mesh(poly: pv.PolyData, centre, half_size) -> trimesh.Trimesh | None:
 
 class CollisionChecker:
     def __init__(self, robot: Robot, cell: CellConfig, meshes: CellMeshes, gun=None, part=None,
-                 cad_pose=HOME_DEG, reach_mm=3600.0):
+                 cad_pose=HOME_DEG, reach_mm=3600.0, substrate=None):
         self.robot, self.cell = robot, cell
         self.world_from_robot = robroot(cell)
         self.cad_frames = robot.link_frames(cad_pose)
@@ -98,7 +99,7 @@ class CollisionChecker:
 
         self.arm = _Manager()      # A1..A6
         self.tool = _Manager()     # gun + nozzle
-        self.env = _Manager()      # cell, table, part
+        self.env = _Manager()      # cell, table, part, substrate
         self.own = _Manager()      # robot base + A1..A5, for the tool
         for k, name in enumerate(LINK_NAMES, start=1):
             mesh = _trimesh(meshes.robot[k], 0.85)
@@ -126,7 +127,7 @@ class CollisionChecker:
         for label, poly in (("turntable", meshes.tilting), ("faceplate", rotating)):
             if poly.n_cells:
                 self.env.add_object(label, _trimesh(poly))
-        self.set_part(part)
+        self.set_workpiece(part, substrate)
 
         # Learn contacts that exist in the CAD as drawn
         self.allowed: set[tuple[str, str]] = set()
@@ -159,12 +160,14 @@ class CollisionChecker:
             if gun.nozzle is not None:
                 self.tool.add_object("nozzle", trimesh.Trimesh(*gun.nozzle, process=False))
 
-    def set_part(self, part):
-        """Replace the part mesh (vertices, faces in BASE coordinates), or remove it with None."""
-        if "part" in self.env._objs:
-            self.env.remove_object("part")
-        if part is not None:
-            self.env.add_object("part", trimesh.Trimesh(*part, process=False))
+    def set_workpiece(self, part_mesh=None, substrate_mesh=None):
+        """Replace the part and substrate meshes (vertices, faces in BASE coordinates);
+        None removes that body."""
+        for name, mesh in (("part", part_mesh), ("substrate", substrate_mesh)):
+            if name in self.env._objs:
+                self.env.remove_object(name)
+            if mesh is not None:
+                self.env.add_object(name, trimesh.Trimesh(*mesh, process=False))
 
     def _place(self, q, axes):
         """Move robot, gun and turntable bodies to joints `q` / table `axes`."""
@@ -180,7 +183,8 @@ class CollisionChecker:
                 if name in self.tool._objs:
                     self.tool.set_transform(name, g)
         tilt, face = turntable_motion(self.cell, axes)
-        for name, m in (("turntable", tilt), ("faceplate", face), ("part", base_world(self.cell, axes))):
+        base = base_world(self.cell, axes)
+        for name, m in (("turntable", tilt), ("faceplate", face), ("part", base), ("substrate", base)):
             if name in self.env._objs:
                 self.env.set_transform(name, m)
 
