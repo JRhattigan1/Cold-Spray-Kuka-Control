@@ -12,10 +12,11 @@ def test_robroot_matches_cad_placement():
     assert np.allclose(root[:3, 2], [0, -1, 0])  # A1 axis points along world -Y
 
 
-def test_gantry_moves_robot_along_x():
+def test_positive_e1_moves_robot_towards_table():
     cell = load_cell()
-    d = robroot(cell, -1000.0)[:3, 3] - robroot(cell, 0.0)[:3, 3]
+    d = robroot(cell, 1000.0)[:3, 3] - robroot(cell, 0.0)[:3, 3]
     assert np.allclose(d, [-1000, 0, 0])
+    assert cell.base.x < cell.robroot.x  # the turntable is on the -X side
 
 
 def test_gantry_limits_enforced():

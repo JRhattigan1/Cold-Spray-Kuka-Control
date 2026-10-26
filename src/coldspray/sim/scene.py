@@ -1,34 +1,59 @@
-"""Open the viewer for a toolpath with everything taken from the config files."""
+"""Load everything the 3D view needs from the config files."""
+
+from dataclasses import dataclass
 
 import numpy as np
 
 from coldspray.cell import base_in_robot, gantry_position, robroot
 from coldspray.kinematics.robot import Robot
-from coldspray.models import PROJECT_ROOT, load_cell, load_robot, load_tool
+from coldspray.models import PROJECT_ROOT, CellConfig, ToolConfig, load_cell, load_robot, load_tool
 from coldspray.toolpath.model import Toolpath
 
 
-def show_toolpath(path: Toolpath, part=None, plate_size=None, step=5.0, screenshot=None):
+@dataclass
+class Assets:
+    cell: CellConfig
+    tool: ToolConfig
+    robot: Robot
+    meshes: object = None          # CellMeshes, or None without the cell CAD
+    gun_mesh: tuple | None = None  # (vertices, faces) of the gun CAD
+
+
+def load_assets(log=print) -> Assets:
     from coldspray.cad.mesh_cache import cached_mesh
     from coldspray.sim.cell_model import load_cell_meshes
-    from coldspray.sim.viewer import Gun, show
-    from coldspray.tool import gun_to_flange
 
     cell, tool = load_cell(), load_tool()
-    robot = Robot(load_robot(), tool)
-
-    meshes = None
+    assets = Assets(cell, tool, Robot(load_robot(), tool))
     if cell.cad_cache and (PROJECT_ROOT / cell.cad_cache).with_suffix(".json").exists():
-        meshes = load_cell_meshes(cell.cad_cache)
+        log("Loading cell CAD...")
+        assets.meshes = load_cell_meshes(cell.cad_cache)
     else:
-        print("No cell CAD cache found - drawing a simple robot. Make one with coldspray.cad.step_cache.")
-
-    gun = None
+        log("No cell CAD cache found - drawing a simple robot. Make one with coldspray.cad.step_cache.")
     if tool.gun is not None and (PROJECT_ROOT / tool.gun.step_file).exists():
-        v, f = cached_mesh(tool.gun.step_file, deflection=0.5)
-        gun = Gun(v, f, gun_to_flange(tool.gun), tool.gun.nozzle_length)
+        log("Loading spray gun CAD...")
+        assets.gun_mesh = cached_mesh(tool.gun.step_file, deflection=0.5)
+    return assets
 
-    offset = np.asarray(cell.gantry.direction) * gantry_position(cell) if cell.gantry else np.zeros(3)
-    return show(robot, path, base_in_robot(cell), world_from_robot=robroot(cell), cell=meshes,
-                gantry_offset=offset, cad_pose=cell.robot_cad_pose_deg, gun=gun, part=part,
-                plate_size=plate_size, step=step, home=cell.home_deg, screenshot=screenshot)
+
+def make_gun(tool: ToolConfig, gun_mesh):
+    from coldspray.sim.viewer import Gun
+    from coldspray.tool import gun_to_flange
+
+    if tool.gun is None or gun_mesh is None:
+        return None
+    return Gun(*gun_mesh, gun_to_flange(tool.gun), tool.gun.nozzle_length)
+
+
+def gantry_offset(cell: CellConfig) -> np.ndarray:
+    return np.asarray(cell.gantry.direction) * gantry_position(cell) if cell.gantry else np.zeros(3)
+
+
+def show_toolpath(path: Toolpath, part=None, plate_size=None, step=5.0, screenshot=None):
+    from coldspray.sim.viewer import show
+
+    a = load_assets()
+    return show(a.robot, path, base_in_robot(a.cell), world_from_robot=robroot(a.cell), cell=a.meshes,
+                gantry_offset=gantry_offset(a.cell), cad_pose=a.cell.robot_cad_pose_deg,
+                gun=make_gun(a.tool, a.gun_mesh), part=part, plate_size=plate_size, step=step,
+                home=a.cell.home_deg, screenshot=screenshot)

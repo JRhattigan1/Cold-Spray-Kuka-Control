@@ -9,12 +9,13 @@ robroot: {x: 1845.75, y: 1069.0, z: 3196.33, a: -90.0, b: 90.0, c: 0.0}
 robot_cad_pose_deg: [0, -90, 90, 0, 0, 0]   # pose the robot is drawn in, in the CAD
 
 # Gantry (E1) traverses along world X and carries the robot.
-# CHECK on the robot: which direction is +E1, and the true travel limits.
+# +E1 moves the robot towards the turntable (world -X) - confirmed on the robot.
+# CHECK: that E1 = 0 is where the CAD shows the carriage, and the travel limits.
 gantry:
   axis: E1
-  direction: [1.0, 0.0, 0.0]
-  limits_mm: [-5500.0, 0.0]   # 5500 mm stroke (KIEHNE manual); CAD carriage sits near the +X end
-  position_mm: -2730.0        # used by programs for now: puts the robot over the turntable
+  direction: [-1.0, 0.0, 0.0]
+  limits_mm: [0.0, 5500.0]    # 5500 mm stroke (KIEHNE manual); CAD carriage sits near the +X end
+  position_mm: 2730.0         # used by programs for now: puts the robot over the turntable
 
 # Work base: top centre of the turntable faceplate (tilt and rotation at 0).
 # Toolpaths are written relative to this. BASE_DATA[base_number] must match.

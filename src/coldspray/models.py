@@ -3,7 +3,7 @@
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 CONFIG_DIR = Path(__file__).parent / "config"
 PROJECT_ROOT = Path(__file__).parents[2]
@@ -77,19 +77,22 @@ class CellConfig(BaseModel):
 
 
 class ProcessConfig(BaseModel):
-    standoff_mm: float
-    traverse_speed_mm_s: float
-    step_over_mm: float
-    overrun_mm: float
-    approach_height_mm: float
-    rapid_speed_mm_s: float
-    spray_settle_s: float
-    approx_distance_mm: float
-    layer_thickness_mm: float
-    track_width_mm: float
-    raster_angle_step_deg: float
-    contour_passes: int
-    jump_height_mm: float
+    """Cold spray process parameters. Descriptions double as GUI tooltips and
+    as the comments written by save_process()."""
+
+    standoff_mm: float = Field(gt=0, description="nozzle exit to surface")
+    traverse_speed_mm_s: float = Field(gt=0, description="gun speed while spraying")
+    step_over_mm: float = Field(gt=0, description="spacing between neighbouring passes")
+    overrun_mm: float = Field(ge=0, description="plate raster: pass extends this far past the edge")
+    approach_height_mm: float = Field(ge=0, description="clearance above the start / end point")
+    rapid_speed_mm_s: float = Field(gt=0, description="LIN speed for non-spray moves")
+    spray_settle_s: float = Field(ge=0, description="dwell after switching spray on, before moving")
+    approx_distance_mm: float = Field(ge=0, description="$APO.CDIS corner blending")
+    layer_thickness_mm: float = Field(gt=0, description="deposit height from one full layer of passes")
+    track_width_mm: float = Field(gt=0, description="width of a single spray track (nozzle footprint)")
+    raster_angle_step_deg: float = Field(description="raster direction rotates by this each layer")
+    contour_passes: int = Field(ge=0, description="perimeter passes around each layer before infill")
+    jump_height_mm: float = Field(ge=0, description="long moves between areas lift the gun this much (spray stays on)")
 
 
 def _load(model, name, path):
@@ -110,3 +113,11 @@ def load_cell(path=None) -> CellConfig:
 
 def load_process(path=None) -> ProcessConfig:
     return _load(ProcessConfig, "process.yaml", path)
+
+
+def save_process(proc: ProcessConfig, path=None):
+    """Write process parameters as YAML, one commented line per field."""
+    lines = ["# Cold spray process parameters (saved by coldspray)"]
+    for name, info in ProcessConfig.model_fields.items():
+        lines.append(f"{name + ':':28s}{getattr(proc, name)!r:<10} # {info.description}")
+    Path(path or CONFIG_DIR / "process.yaml").write_text("\n".join(lines) + "\n")

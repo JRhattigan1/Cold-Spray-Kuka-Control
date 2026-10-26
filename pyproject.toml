@@ -19,6 +19,9 @@ sim = ["pyvista", "pyvistaqt", "PySide6"]
 cad = ["cadquery-ocp", "trimesh", "shapely", "networkx", "rtree"]
 dev = ["pytest"]
 
+[project.scripts]
+coldspray-gui = "coldspray.gui:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
