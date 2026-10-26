@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from coldspray.cell import base_world, robroot
+from coldspray.cell import base_world, robroot, table_axis_names
 from coldspray.models import CellConfig
 from coldspray.transforms import frame
 
@@ -34,12 +34,23 @@ def gun_down_deg(world_poses) -> np.ndarray:
     return np.degrees(np.arcsin(np.clip(-np.asarray(world_poses)[:, 2, 0], -1.0, 1.0)))
 
 
-def layer_tilts(cell: CellConfig) -> list[float]:
-    """Table tilts to try for Layers, most level gun first, within the tilt
-    limits and the gun angle limit."""
-    lo, hi = cell.turntable.tilt.limits_deg if cell.turntable else (0.0, 0.0)
-    tilts = [t for t in (90.0, 75.0, 60.0, 45.0) if lo <= t <= hi and 90.0 - t <= cell.gun_max_down_deg]
-    return tilts or [hi]
+def layer_tilts(cell: CellConfig, gun_dir=(0.0, 0.0, -1.0), rotation_deg=0.0, step=15.0) -> list[float]:
+    """Table tilts to try for Layers, most level gun first, keeping the gun
+    within the angle limit. `gun_dir`: spray direction in BASE (default:
+    straight down onto the faceplate)."""
+    if not cell.turntable:
+        return [0.0]
+    lo, hi = cell.turntable.tilt.limits_deg
+    tilt_axis, rot_axis = table_axis_names(cell)
+    tilts = sorted({*np.arange(lo, hi + 1e-9, step), hi})
+
+    def down(t):
+        d = base_world(cell, {tilt_axis: t, rot_axis: rotation_deg})[:3, :3] @ np.asarray(gun_dir, float)
+        return float(np.degrees(np.arcsin(np.clip(-d[2], -1.0, 1.0))))
+
+    level = sorted(tilts, key=lambda t: (round(abs(down(t)), 6), t))
+    allowed = [float(t) for t in level if down(t) <= cell.gun_max_down_deg + 1e-6]
+    return allowed or [float(level[0])]
 
 
 def world_poses(path, cell: CellConfig) -> np.ndarray:

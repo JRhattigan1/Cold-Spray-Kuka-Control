@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
 
-from coldspray.cad.part import (Part, Substrate, build_mesh, centre_on_faceplate, constrain, drop_on_plate, other_mesh,
+from coldspray.cad.part import (Part, Substrate, build_frame, build_mesh, centre_on_faceplate, constrain, drop_on_plate, other_mesh,
                                 placed_vertices, rotation_between, snap_face_down)
 from coldspray.models import load_process
 from coldspray.pipeline import load_part, plan_part
@@ -188,3 +188,45 @@ def test_snap_any_body_face_stands_assembly_on_floor(repair):
     v = part.vertices @ t[:3, :3].T + t[:3, 3]
     assert np.allclose(t[:3, :3] @ part.planar[side].normal, [0, 0, -1])
     assert v[:, 2].min() == pytest.approx(0.0)
+
+
+def test_without_drops_a_body(repair):
+    part = Part(repair.name, repair.vertices, repair.faces, repair.face_ids, repair.planar,
+                body_ids=repair.body_ids, build_body=1)
+    part.start_face = face_with_normal_on(part, (0, 0, -1), body=1)
+    part.base_face = face_with_normal_on(part, (0, 0, -1), body=0)
+    alone = part.without([0])
+    assert alone.n_bodies == 1 and alone.body_ids is None and alone.build_body == 0
+    assert len(alone.planar) == 6 and alone.start_face == part.start_face and alone.base_face is None
+    assert np.allclose(np.ptp(alone.vertices, axis=0), [40, 20, 6])
+    assert part.without([]).n_bodies == 2
+    with pytest.raises(ValueError):
+        part.without([1])
+
+
+def face_with_normal_on(part, n, body):
+    return next(i for i, f in part.planar.items()
+                if np.allclose(f.normal, n, atol=1e-9) and part.body_of_face(i) == body)
+
+
+def test_patch_on_a_side_wall_builds_sideways(repair):
+    """Assembly turned so the patch sticks out sideways (-Y): with the patch's
+    underside as start face the layers stack along -Y, starting on the wall."""
+    proc = load_process()
+    part = Part(repair.name, repair.vertices, repair.faces, repair.face_ids, repair.planar,
+                body_ids=repair.body_ids, build_body=1)
+    part.start_face = face_with_normal_on(part, (0, 0, -1), body=1)
+    part.placement = frame(c=90)
+    part.placement = drop_on_plate(part, 0.0)
+    to_base = build_frame(part)
+    assert np.allclose(to_base[:3, 2], [0, -1, 0])                 # build direction
+    summary, path = plan_part(part, proc, substrate=None)
+    assert summary.startswith(f"{round(6 / proc.layer_thickness_mm)} layers")
+    spray = [m.pose for m in path.moves if m.gun_on and m.speed == proc.traverse_speed_mm_s]
+    height = np.array([(p[:3, 3] - to_base[:3, 3]) @ to_base[:3, 2] for p in spray])
+    assert height.min() == pytest.approx(proc.standoff_mm)          # first layer: standoff off the wall
+    assert np.allclose([p[:3, 0] for p in spray], [0, 1, 0])        # gun sprays towards the wall
+
+
+def test_build_frame_without_start_face(block):
+    assert np.allclose(build_frame(block), frame(z=TOP))

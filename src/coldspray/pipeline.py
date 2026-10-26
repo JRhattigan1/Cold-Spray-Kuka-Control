@@ -10,7 +10,7 @@ from pathlib import Path
 
 import numpy as np
 
-from coldspray.cad.part import Part, Substrate, build_mesh, drop_on_plate, placed_vertices
+from coldspray.cad.part import Part, Substrate, build_frame, build_mesh, drop_on_plate, placed_vertices
 from coldspray.cad.slicer import slice_mesh
 from coldspray.models import CellConfig, ProcessConfig
 from coldspray.planner.layers import plan_layers
@@ -122,20 +122,22 @@ def plan_part(part: Part, proc: ProcessConfig, mode="layers", tilt_deg=0.0, rota
     (for reach; the spray is unchanged)."""
     check_placement(placed_vertices(part), substrate, mode)
     v, faces = build_mesh(part)
-    # Layers start at the bottom of the build body (on the plate, or on the
-    # component a repair patch sits on); revolve works from the floor
-    base = v[:, 2].min() if mode == "layers" else (substrate.top if substrate else 0.0)
-    v = v - [0.0, 0.0, base]
-    up = frame(z=base)
     tt = cell.turntable if cell else None
     tilt_axis, rot_axis = (tt.tilt.axis, tt.rotation.axis) if tt else ("E2", "E5")
-    if mode == "revolve":
+    if mode == "revolve":                       # works from the floor
+        floor = substrate.top if substrate else 0.0
+        v = v - [0.0, 0.0, floor]
+        up = frame(z=floor)
         path = plan_revolve(v, faces, proc, part.name, coats=coats, tilt_deg=tilt_deg,
                             tilt_axis=tilt_axis, rotation_axis=rot_axis).transformed(up).rolled(roll_deg)
         passes = sum(1 for a, b in zip(path.moves, path.moves[1:]) if b.gun_on and a.gun_on
                      and abs(b.pose[2, 3] - a.pose[2, 3]) > 1e-9)
         return f"{coats} coat(s), {passes + coats} passes", path
-    layers = slice_mesh(v, faces, proc.layer_thickness_mm)
+    # Layers grow away from the start face, or up from the bottom of the build
+    # body (on the plate, or on the component a repair patch sits on)
+    to_base = build_frame(part)
+    layers = slice_mesh((v - to_base[:3, 3]) @ to_base[:3, :3], faces, proc.layer_thickness_mm)
     table = {tilt_axis: tilt_deg, rot_axis: rotation_deg} if tt else {}
-    path = plan_layers(layers, proc, part.name, table_axes=table).transformed(up).rolled(roll_deg)
-    return f"{len(layers)} layers", path
+    path = plan_layers(layers, proc, part.name, table_axes=table).transformed(to_base).rolled(roll_deg)
+    start = f" from start face {part.start_face}" if part.start_face is not None else ""
+    return f"{len(layers)} layers{start}", path

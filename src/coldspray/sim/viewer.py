@@ -17,7 +17,6 @@ from dataclasses import dataclass
 import numpy as np
 import pyvista as pv
 from scipy.spatial.transform import Rotation
-from vtkmodules.vtkRenderingCore import vtkCellPicker
 
 from coldspray.cell import base_world, turntable_motion
 from coldspray.kinematics.robot import HOME_DEG, Robot
@@ -98,7 +97,6 @@ class Scene:
         self._widget_on = False
         self._constrained = False
         self.on_part_moved = None        # callback(placement, final) while / after dragging
-        self._pick_cb = self._pick_obs = None
 
         pl.set_background("white")
         pl.enable_anti_aliasing("msaa")   # not ssaa: its render pass breaks the hardware picker the drag handles use
@@ -198,7 +196,6 @@ class Scene:
     def set_part(self, part):
         """Part to set up (a coldspray.cad.part.Part, or None): drawn in part-CAD
         coordinates at part.placement, with drag handles in setup mode."""
-        self.cancel_face_pick()
         self._remove_widget()
         for a in (self.part_actor, self.face_actor):
             if a is not None:
@@ -213,13 +210,6 @@ class Scene:
             self.set_part_placement()
             if self.mode == "setup":
                 self._make_widget()
-
-    def show_build_body(self):
-        """Recolour after part.build_body changed."""
-        if self.part_actor is not None:
-            mesh = self.part_actor.mapper.dataset
-            mesh.cell_data["build"] = self.part.in_build().astype(float)
-            mesh.Modified()
 
     def set_substrate(self, mesh):
         """Substrate plate (vertices, faces) in BASE, or None."""
@@ -273,7 +263,6 @@ class Scene:
     def enter_setup(self, cell: CellConfig, axes=None, home=None):
         """Setup mode: no path, table at `axes`, part and substrate on the faceplate
         with drag handles, robot at `home`."""
-        self.cancel_face_pick()
         self._clear_path()
         self.cell_cfg = cell
         self.mode = "setup"
@@ -341,40 +330,6 @@ class Scene:
             return                       # a click (e.g. turning the view), not a drag
         self.on_part_moved(placement, final)
 
-    # --- face picking ---------------------------------------------------------
-    def start_face_pick(self, callback) -> bool:
-        """The next left click on the part calls `callback(face_id)` once; clicks
-        beside the part still turn the view. False if there is nothing to pick."""
-        self.cancel_face_pick()
-        if self.part_actor is None or getattr(self.pl, "iren", None) is None:
-            return False
-        self._pick_cb = callback
-        self._show_widget(False)
-        self._pick_obs = self.pl.iren.add_observer("LeftButtonPressEvent", self._pick_click)
-        return True
-
-    def cancel_face_pick(self):
-        if self._pick_obs is not None:
-            self.pl.iren.remove_observer(self._pick_obs)
-            self._show_widget(self.mode == "setup")
-        self._pick_cb = self._pick_obs = None
-
-    def _pick_click(self, iren, _event):
-        x, y = iren.GetEventPosition()
-        picker = vtkCellPicker()
-        picker.SetTolerance(0.0005)
-        picker.PickFromListOn()
-        picker.AddPickList(self.part_actor)
-        if picker.Pick(x, y, 0, self.pl.renderer) and picker.GetCellId() >= 0:
-            self.pick_triangle(picker.GetCellId())
-
-    def pick_triangle(self, tri: int):
-        """Report the CAD face of part triangle `tri` to the pick callback and stop picking."""
-        callback = self._pick_cb
-        self.cancel_face_pick()
-        if callback is not None and self.part is not None:
-            callback(int(self.part.face_ids[tri]))
-
     # --- toolpath -------------------------------------------------------------
     def _clear_path(self):
         for a in self.path_actors:
@@ -391,7 +346,6 @@ class Scene:
         plate when no substrate is given). Returns the joint angles for every
         sampled point (NaN = unreachable). Points where the gun points more than
         `gun_limit_deg` below horizontal are marked."""
-        self.cancel_face_pick()
         self._clear_path()
         self.mode = "preview"
         self._show_widget(False)
@@ -498,37 +452,6 @@ class Scene:
         target = base_world(self.cell_cfg)[:3, 3] if self.cell_cfg else self.world_from_robot[:3, 3]
         self.pl.camera_position = [target + [-2600, -4200, 2600], target + [600, 300, 700], (0, 0, 1)]
 
-    def camera_axes(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """(right, forward, up) unit vectors of the view, in WORLD."""
-        cam = self.pl.camera
-        fwd = np.subtract(cam.focal_point, cam.position)
-        fwd /= np.linalg.norm(fwd)
-        right = np.cross(fwd, cam.up)
-        right /= np.linalg.norm(right)
-        return right, fwd, np.cross(right, fwd)
-
-    def fly(self, t, r, dt: float):
-        """SpaceMouse camera move (object mode: the scene goes the way the cap is
-        pushed). t = (right, away, up), r = (tilt away, tilt right, twist
-        anticlockwise), each -1..1; the horizon stays level."""
-        cam = self.pl.camera
-        pos, foc = np.array(cam.position), np.array(cam.focal_point)
-        dist = np.linalg.norm(foc - pos)
-        right, fwd, up = self.camera_axes()
-        shift = -(t[0] * right + t[2] * up) * dist * 0.8 * dt
-        pos += shift - fwd * t[1] * dist * 0.7 * dt         # push away: scene moves away
-        foc += shift
-        rate = np.radians(90.0) * dt
-        turn = Rotation.from_rotvec(-r[2] * rate * np.array([0.0, 0.0, 1.0]))   # about the vertical
-        tip = Rotation.from_rotvec(r[0] * rate * right)
-        tipped = foc + (turn * tip).apply(pos - foc)
-        if abs((foc - tipped)[2]) < 0.995 * dist:          # don't go over the top
-            pos = tipped
-        else:
-            pos = foc + turn.apply(pos - foc)
-        cam.position, cam.focal_point, cam.up = pos, foc, (0.0, 0.0, 1.0)
-        self.pl.reset_camera_clipping_range()
-
     def focus_on_part(self, distance=900.0):
         """Close-up of the faceplate for setting up the part: down the faceplate
         normal, from the side away from the robot (so the arm is behind the part)."""
@@ -539,6 +462,39 @@ class Scene:
         away = away / np.linalg.norm(away) if np.linalg.norm(away) > 1e-6 else np.cross(normal, [0, 1, 0])
         view = normal * 1.2 + away
         self.pl.camera_position = [target + view / np.linalg.norm(view) * distance, target, normal]
+
+
+def camera_axes(pl) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """(right, forward, up) unit vectors of a plotter's view, in WORLD."""
+    cam = pl.camera
+    fwd = np.subtract(cam.focal_point, cam.position)
+    fwd /= np.linalg.norm(fwd)
+    right = np.cross(fwd, cam.up)
+    right /= np.linalg.norm(right)
+    return right, fwd, np.cross(right, fwd)
+
+
+def fly(pl, t, r, dt: float):
+    """SpaceMouse camera move (object mode: the scene goes the way the cap is
+    pushed). t = (right, away, up), r = (tilt away, tilt right, twist
+    anticlockwise), each -1..1; the horizon stays level."""
+    cam = pl.camera
+    pos, foc = np.array(cam.position), np.array(cam.focal_point)
+    dist = np.linalg.norm(foc - pos)
+    right, fwd, up = camera_axes(pl)
+    shift = -(t[0] * right + t[2] * up) * dist * 0.8 * dt
+    pos += shift - fwd * t[1] * dist * 0.7 * dt         # push away: scene moves away
+    foc += shift
+    rate = np.radians(90.0) * dt
+    turn = Rotation.from_rotvec(-r[2] * rate * np.array([0.0, 0.0, 1.0]))   # about the vertical
+    tip = Rotation.from_rotvec(r[0] * rate * right)
+    tipped = foc + (turn * tip).apply(pos - foc)
+    if abs((foc - tipped)[2]) < 0.995 * dist:          # don't go over the top
+        pos = tipped
+    else:
+        pos = foc + turn.apply(pos - foc)
+    cam.position, cam.focal_point, cam.up = pos, foc, (0.0, 0.0, 1.0)
+    pl.reset_camera_clipping_range()
 
 
 def show(robot: Robot, path: Toolpath, cell_cfg: CellConfig, world_from_robot=None,

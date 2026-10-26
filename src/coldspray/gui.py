@@ -1,4 +1,10 @@
-"""Cold spray toolpath window: parameters on the left, 3D cell view on the right.
+"""Cold spray toolpath window, in two tabs:
+
+  1 Part - the part or assembly on its own: body roles (build / fixture /
+           ignore), hide bodies to reach hidden faces, pick the start face the
+           layers grow from and the base face it stands on.
+  2 Cell - position it on the faceplate, gun and table settings, generate and
+           simulate the toolpath, save the KRL program.
 
 Run with:  python -m coldspray.gui
 """
@@ -13,15 +19,15 @@ from scipy.spatial.transform import Rotation
 from pydantic import ValidationError
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout, QGroupBox,
+    QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout, QGridLayout, QGroupBox,
     QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton, QScrollArea, QSlider, QSpinBox,
-    QVBoxLayout, QWidget,
+    QTabWidget, QVBoxLayout, QWidget,
 )
 from pyvistaqt import QtInteractor
 
 from coldspray.cad.part import (
-    Substrate, build_mesh, centre_on_faceplate, constrain, drop_on_plate, other_mesh, placed_vertices,
-    snap_face_down,
+    Substrate, build_frame, build_mesh, centre_on_faceplate, constrain, drop_on_plate, other_mesh,
+    placed_vertices, snap_face_down,
 )
 from coldspray.cell import robroot, table_axis_names
 from coldspray.kinematics.robot import Robot
@@ -31,8 +37,9 @@ from coldspray.planner.position import auto_position, layer_tilts
 from coldspray.post.krl import KRLError, to_krl
 from coldspray.sim.cell_model import OPTIONAL
 from coldspray.sim.scene import gantry_offset, load_assets, make_gun
+from coldspray.sim.part_view import ROLES, PartView
 from coldspray.sim.spacemouse import SpaceMouse
-from coldspray.sim.viewer import Scene
+from coldspray.sim.viewer import Scene, camera_axes, fly
 from coldspray.transforms import frame, xyzabc
 
 UNITS = {"_mm_s": " mm/s", "_mm": " mm", "_deg": " °", "_s": " s"}
@@ -75,9 +82,11 @@ class MainWindow(QMainWindow):
         self.resize(1600, 950)
         self.assets = None
         self.scene = None
-        self.part = None        # coldspray.cad.part.Part
+        self.source = None      # the part as loaded, with the choices made in the Part tab
+        self.roles: list[str] = []       # per body: "build", "fixture" or "ignore"
+        self.part = None        # working part in the cell: ignored bodies left out, placed
+        self.cell_key = None    # Part tab choices the cell's part was made from
         self.substrate = Substrate()     # None: no plate, the part stands on the faceplate
-        self.picked_face = None # flat face picked, not yet snapped to the plate
         self.collisions = []
         self.result = None      # (path, proc, cell, robot)
         self.play_timer = QTimer(self, interval=30, timeout=self._tick)
@@ -96,24 +105,38 @@ class MainWindow(QMainWindow):
         self.sm_last = time.time()
         self.sm_moved_part = False
 
+        self.part_plotter = QtInteractor(self)
+        self.part_view = PartView(self.part_plotter)
         self.plotter = QtInteractor(self)
-        panel = self._build_panel()
         view = QWidget()
         vbox = QVBoxLayout(view)
         vbox.setContentsMargins(0, 0, 0, 0)
         vbox.addWidget(self.plotter.interactor, 1)
         vbox.addLayout(self._build_playback())
 
-        root = QWidget()
-        hbox = QHBoxLayout(root)
-        hbox.addWidget(panel)
-        hbox.addWidget(view, 1)
-        self.setCentralWidget(root)
+        self.tabs = QTabWidget()
+        for title, panel, widget in (("1  Part", self._build_part_panel(), self.part_plotter.interactor),
+                                     ("2  Cell", self._build_panel(), view)):
+            page = QWidget()
+            hbox = QHBoxLayout(page)
+            hbox.addWidget(panel)
+            hbox.addWidget(widget, 1)
+            self.tabs.addTab(page, title)
+        self.tabs.currentChanged.connect(self._tab_changed)
+        self.setCentralWidget(self.tabs)
         self.statusBar().showMessage("Starting...")
         QTimer.singleShot(50, self._startup)
 
     # --- layout ---------------------------------------------------------------
-    def _build_panel(self) -> QWidget:
+    @staticmethod
+    def _scroll(inner) -> QScrollArea:
+        scroll = QScrollArea()
+        scroll.setWidget(inner)
+        scroll.setWidgetResizable(True)
+        scroll.setFixedWidth(380)
+        return scroll
+
+    def _build_part_panel(self) -> QWidget:
         inner = QWidget()
         layout = QVBoxLayout(inner)
 
@@ -132,18 +155,64 @@ class MainWindow(QMainWindow):
         pl.addWidget(self.part_label)
         pl.addWidget(open_btn)
         pl.addLayout(row)
-        self.body_row = QWidget()
-        brow = QHBoxLayout(self.body_row)
-        brow.setContentsMargins(0, 0, 0, 0)
-        self.body_box = QComboBox()
-        self.body_box.setToolTip("The body that is sliced and sprayed. The other bodies (the component\n"
-                                 "being repaired, fixtures) are only checked for collisions.")
-        self.body_box.currentIndexChanged.connect(self._build_body_changed)
-        brow.addWidget(QLabel("Build body"))
-        brow.addWidget(self.body_box, 1)
-        self.body_row.setVisible(False)
-        pl.addWidget(self.body_row)
         layout.addWidget(part_box)
+
+        body_box = QGroupBox("Bodies")
+        bl = QVBoxLayout(body_box)
+        self.body_grid = QGridLayout()
+        self.body_rows: list[tuple[QCheckBox, QComboBox]] = []
+        bl.addLayout(self.body_grid)
+        row = QHBoxLayout()
+        isolate = QPushButton("Isolate build body")
+        isolate.setToolTip("Hide the other bodies, e.g. to reach the underside of a repair patch")
+        isolate.clicked.connect(lambda: self._show_bodies(only_build=True))
+        show_all = QPushButton("Show all")
+        show_all.clicked.connect(lambda: self._show_bodies(only_build=False))
+        row.addWidget(isolate)
+        row.addWidget(show_all)
+        bl.addLayout(row)
+        roles_help = QLabel("<small>Build: sliced and sprayed. Fixture: the component being repaired, "
+                            "clamps - checked for collisions. Ignore: left out.</small>")
+        roles_help.setWordWrap(True)
+        bl.addWidget(roles_help)
+        layout.addWidget(body_box)
+
+        face_box = QGroupBox("Faces")
+        fl = QVBoxLayout(face_box)
+        self.start_btn = QPushButton("Pick start face")
+        self.start_btn.setCheckable(True)
+        self.start_btn.setToolTip("Click a flat face of the build body: the layers grow away from it,\n"
+                                  "parallel to it (e.g. the underside of a repair patch)")
+        self.start_btn.toggled.connect(lambda on: self._pick_face("start", on))
+        self.start_label = QLabel()
+        self.start_label.setWordWrap(True)
+        self.base_btn = QPushButton("Pick base face (optional)")
+        self.base_btn.setCheckable(True)
+        self.base_btn.setToolTip("Click a flat face (any body) for the part to stand on: it is turned\n"
+                                 "to face down onto the plate, or the faceplate without one")
+        self.base_btn.toggled.connect(lambda on: self._pick_face("base", on))
+        self.base_label = QLabel()
+        self.base_label.setWordWrap(True)
+        clear_btn = QPushButton("Clear faces")
+        clear_btn.clicked.connect(self._clear_faces)
+        for w in (self.start_btn, self.start_label, self.base_btn, self.base_label, clear_btn):
+            fl.addWidget(w)
+        layout.addWidget(face_box)
+
+        next_btn = QPushButton("Next: position in the cell  →")
+        next_btn.setStyleSheet("font-weight: bold; padding: 8px;")
+        next_btn.clicked.connect(lambda: self.tabs.setCurrentIndex(1))
+        layout.addWidget(next_btn)
+        layout.addStretch(1)
+        return self._scroll(inner)
+
+    def _build_panel(self) -> QWidget:
+        inner = QWidget()
+        layout = QVBoxLayout(inner)
+
+        self.cell_part_label = QLabel()
+        self.cell_part_label.setWordWrap(True)
+        layout.addWidget(self.cell_part_label)
 
         place_box = QGroupBox("Placement on the faceplate")
         vbox = QVBoxLayout(place_box)
@@ -162,27 +231,17 @@ class MainWindow(QMainWindow):
             grid.addRow(key, box)
             self.place[key] = box
         vbox.addLayout(grid)
-        self.pick_btn = QPushButton("Pick base face")
-        self.pick_btn.setCheckable(True)
-        self.pick_btn.setToolTip("Click a flat face (any body) for the part to stand on: it is turned to\n"
-                                 "face down and the part set on the plate (or the faceplate without one)")
-        self.pick_btn.toggled.connect(self._pick_toggled)
-        self.snap_btn = QPushButton("Snap face down")
-        self.snap_btn.setToolTip("Turn the part so the picked face points down and stand it on the plate")
-        self.snap_btn.clicked.connect(self._snap_face)
-        self.snap_btn.setEnabled(False)
         centre_btn = QPushButton("Centre on faceplate")
         centre_btn.setToolTip("Move the part onto the table axis (needed for Revolve)")
         centre_btn.clicked.connect(lambda: self.part and self._set_placement(centre_on_faceplate(self.part)))
         reset_btn = QPushButton("Reset")
-        reset_btn.setToolTip("Back to the CAD orientation, standing on the plate, centred; clears the base face")
+        reset_btn.setToolTip("Back to the start: standing on the base face (or as in the CAD), centred")
         reset_btn.clicked.connect(self._reset_placement)
-        for pair in ((self.pick_btn, self.snap_btn), (centre_btn, reset_btn)):
-            row = QHBoxLayout()
-            for btn in pair:
-                row.addWidget(btn)
-            vbox.addLayout(row)
-        self.face_label = QLabel("Base face: none")
+        row = QHBoxLayout()
+        for btn in (centre_btn, reset_btn):
+            row.addWidget(btn)
+        vbox.addLayout(row)
+        self.face_label = QLabel()
         self.face_label.setWordWrap(True)
         vbox.addWidget(self.face_label)
         self.sm_part = QCheckBox("SpaceMouse moves the part")
@@ -302,13 +361,8 @@ class MainWindow(QMainWindow):
         self.info.setWordWrap(True)
         layout.addWidget(self.info)
         layout.addStretch(1)
-
-        scroll = QScrollArea()
-        scroll.setWidget(inner)
-        scroll.setWidgetResizable(True)
-        scroll.setFixedWidth(380)
         self._mode_changed()
-        return scroll
+        return self._scroll(inner)
 
     def _build_playback(self) -> QHBoxLayout:
         row = QHBoxLayout()
@@ -396,9 +450,6 @@ class MainWindow(QMainWindow):
                 self.sub_box.blockSignals(False)
                 self.substrate = None
                 self.scene.set_substrate(None)
-            part.placement = drop_on_plate(part, self._floor())
-            self.part = part
-            self._fill_bodies()
             builtin = source is None or not Path(str(source)).suffix
             self.part_label.setText(f"{part.name} (built in)" if builtin else Path(source).name)
             if source == "test_tube":
@@ -411,18 +462,169 @@ class MainWindow(QMainWindow):
             return
         finally:
             QApplication.restoreOverrideCursor()
-        self.pick_btn.setChecked(False)
-        self.picked_face = None
-        self.snap_btn.setEnabled(False)
+        self.source, self.part, self.cell_key = part, None, None
+        self.roles = ["build" if b == part.build_body else "fixture" for b in range(part.n_bodies)]
+        self.scene.set_part(None)
+        self._enter_setup()
+        self._fill_bodies()
+        self.part_view.set_part(part, self.roles)
+        self._show_faces()
+        if self.tabs.currentIndex() != 0:
+            self.tabs.setCurrentIndex(0)
+        self._status(f"Loaded {part.name}: choose the build body and start face, then Next")
+
+    # --- Part tab ---------------------------------------------------------------
+    def _fill_bodies(self):
+        """One row per body: visible tick with its size, and its role."""
+        while self.body_grid.count():
+            self.body_grid.takeAt(0).widget().deleteLater()
+        self.body_rows = []
+        part = self.source
+        for b in range(part.n_bodies):
+            faces = part.faces if part.body_ids is None else part.faces[part.body_ids == b]
+            size = np.ptp(part.vertices[np.unique(faces)], axis=0)
+            shown = QCheckBox(f"Body {b + 1}: {size[0]:.0f} x {size[1]:.0f} x {size[2]:.0f} mm")
+            shown.setChecked(True)
+            shown.setToolTip("Untick to hide this body (e.g. to pick a face behind it)")
+            shown.toggled.connect(lambda on, body=b: self.part_view.set_visible(body, on))
+            role = QComboBox()
+            for r in ROLES:
+                role.addItem(r.capitalize(), r)
+            role.setCurrentIndex(ROLES.index(self.roles[b]))
+            role.currentIndexChanged.connect(lambda _, body=b: self._role_changed(body))
+            role.setEnabled(part.n_bodies > 1)
+            self.body_grid.addWidget(shown, b, 0)
+            self.body_grid.addWidget(role, b, 1)
+            self.body_rows.append((shown, role))
+
+    def _role_changed(self, body):
+        part, role = self.source, self.body_rows[body][1].currentData()
+        if body == part.build_body and role != "build":
+            self._status("One body must be the build body: set another body to Build instead")
+            role = "build"
+        elif role == "build":
+            self.roles[part.build_body] = "fixture"
+            part.build_body = body
+            if part.start_face is not None and part.body_of_face(part.start_face) != body:
+                part.start_face = None
+                self.part_view.highlight("start", None)
+        if role == "ignore" and part.base_face is not None and part.body_of_face(part.base_face) == body:
+            part.base_face = None
+            self.part_view.highlight("base", None)
+        self.roles[body] = role
+        for b, (_, combo) in enumerate(self.body_rows):
+            combo.blockSignals(True)
+            combo.setCurrentIndex(ROLES.index(self.roles[b]))
+            combo.blockSignals(False)
+        self.part_view.set_roles(self.roles)
+        self._show_faces()
+
+    def _show_bodies(self, only_build: bool):
+        for b, (shown, _) in enumerate(self.body_rows):
+            shown.setChecked(not only_build or b == self.source.build_body)
+        self.part_view.fit()
+
+    def _pick_face(self, kind: str, on: bool):
+        """Start (or cancel) picking the start or base face in the Part view."""
+        other = self.base_btn if kind == "start" else self.start_btn
+        if not on:
+            self.part_view.cancel_pick()
+            self.part_plotter.render()
+            return
+        other.blockSignals(True)
+        other.setChecked(False)
+        other.blockSignals(False)
+        hint = ("Click the face the build starts from (on the build body)" if kind == "start"
+                else "Click the face the part stands on")
+        if not self.part_view.start_pick(lambda f, b: self._face_picked(kind, f, b), hint):
+            (self.start_btn if kind == "start" else self.base_btn).setChecked(False)
+
+    def _face_picked(self, kind, face_id, body):
+        part = self.source
+        problem = None
+        if face_id not in part.planar:
+            problem = "Not a flat face: pick a flat face"
+        elif kind == "start" and body != part.build_body:
+            problem = f"That face is on body {body + 1}, not the build body"
+        if problem:
+            self._status(problem)
+            self.part_view.start_pick(lambda f, b: self._face_picked(kind, f, b), problem)
+            return
+        btn = self.start_btn if kind == "start" else self.base_btn
+        btn.blockSignals(True)
+        btn.setChecked(False)
+        btn.blockSignals(False)
+        if kind == "start":
+            part.start_face = face_id
+        else:
+            part.base_face = face_id
+        self.part_view.highlight(kind, face_id)
+        self._show_faces()
+
+    def _clear_faces(self):
+        self.source.start_face = self.source.base_face = None
+        for kind in ("start", "base"):
+            self.part_view.highlight(kind, None)
+        self._show_faces()
+
+    def _face_text(self, face_id) -> str:
+        part = self.source
+        face = part.planar[face_id]
+        body = f", body {part.body_of_face(face_id) + 1}" if part.n_bodies > 1 else ""
+        n = np.round(face.normal, 2) + 0.0
+        return f"face {face_id}: {face.area:,.0f} mm²{body}, facing ({n[0]:g}, {n[1]:g}, {n[2]:g})"
+
+    def _show_faces(self):
+        part = self.source
+        self.start_label.setText(
+            f"<span style='color:#2bb673'>■</span> Start {self._face_text(part.start_face)}"
+            if part.start_face is not None else
+            "No start face: layers build straight up from the bottom of the build body")
+        self.base_label.setText(
+            f"<span style='color:#1a73e8'>■</span> Base {self._face_text(part.base_face)}"
+            if part.base_face is not None else "No base face: placed as drawn in the CAD")
+
+    def _tab_changed(self, index):
+        self.part_view.cancel_pick()
+        for btn in (self.start_btn, self.base_btn):
+            btn.blockSignals(True)
+            btn.setChecked(False)
+            btn.blockSignals(False)
+        if index == 1:
+            self._enter_cell()
+
+    def _enter_cell(self):
+        """Put the part into the cell as chosen in the Part tab. Kept as it is
+        (with the user's placement) if those choices haven't changed."""
+        src = self.source
+        if src is None or self.scene is None:
+            return
+        key = (id(src), tuple(self.roles), src.build_body, src.start_face, src.base_face)
+        if key == self.cell_key and self.part is not None:
+            return
+        ignored = [b for b, r in enumerate(self.roles) if r == "ignore"]
+        self.part = src.without(ignored)
+        self.part.placement = self._start_placement(self.part)
+        self.cell_key = key
         self.scene.set_part(self.part)
-        self.scene.set_constrained(False)
+        self.scene.set_constrained(self.part.base_face is not None)
+        self.scene.highlight_face(self.part.start_face)
+        self.cell_part_label.setText(f"<b>{src.name}</b>: {self.part.n_bodies} bodies in the cell"
+                                     if self.part.n_bodies > 1 else f"<b>{src.name}</b>")
         self._enter_setup()
         self._show_placement()
         found = self._auto_position(quiet=True)
         self.scene.focus_on_part()
         self.plotter.render()
         if found:
-            self._status(f"Loaded {self.part.name}: set it up, then Generate")
+            self._status(f"{src.name} in the cell: adjust the placement if needed, then Generate")
+
+    def _start_placement(self, part):
+        """Standing on the base face if one is set, else as in the CAD; centred on the table."""
+        part.placement = np.eye(4)
+        if part.base_face is not None:
+            part.placement = snap_face_down(part, part.base_face, self._floor())
+        return drop_on_plate(part, self._floor())
 
     def _auto_position(self, *_, quiet=False) -> bool:
         """Set table tilt, gun roll and E1 for a level gun and a reachable path.
@@ -436,7 +638,11 @@ class MainWindow(QMainWindow):
             return False
         a, mode = self.assets, self.mode.currentData()
         cell = self._work_cell()
-        tilts = layer_tilts(cell) if mode == "layers" else [self.tilt.value()]
+        if mode == "layers":       # spray against the build direction
+            gun_dir = -build_frame(self.part)[:3, 2]
+            tilts = layer_tilts(cell, gun_dir, self.rotation.value())
+        else:
+            tilts = [self.tilt.value()]
 
         def plan(tilt):
             return plan_part(self.part, proc, mode=mode, tilt_deg=tilt, rotation_deg=self.rotation.value(),
@@ -505,27 +711,6 @@ class MainWindow(QMainWindow):
     def _substrate_mesh(self):
         return self.substrate.mesh() if self.substrate else None
 
-    def _fill_bodies(self):
-        part = self.part
-        self.body_box.blockSignals(True)
-        self.body_box.clear()
-        for b in range(part.n_bodies):
-            faces = part.faces if part.body_ids is None else part.faces[part.body_ids == b]
-            size = np.ptp(part.vertices[np.unique(faces)], axis=0)
-            self.body_box.addItem(f"Body {b + 1}: {size[0]:.0f} x {size[1]:.0f} x {size[2]:.0f} mm")
-        self.body_box.setCurrentIndex(part.build_body)
-        self.body_box.blockSignals(False)
-        self.body_row.setVisible(part.n_bodies > 1)
-
-    def _build_body_changed(self, index):
-        if self.part is None or index < 0:
-            return
-        self.part.build_body = index
-        self.scene.show_build_body()
-        self._show_placement()
-        self._enter_setup()
-        self._status(f"Build body: body {index + 1} (the others are checked for collisions only)")
-
     def _set_placement(self, placement, redraw=True):
         """New part placement (kept standing on its base face if one is set); refresh view and boxes."""
         if self.part is None:
@@ -548,16 +733,10 @@ class MainWindow(QMainWindow):
             box.blockSignals(False)
             box.setEnabled(not (locked and key in "ZBC"))
         part, floor = self.part, "the plate" if self.substrate else "the faceplate"
-        body = lambda f: f", body {part.body_of_face(f) + 1}" if part.n_bodies > 1 else ""
-        if part.base_face is not None:
-            face = part.planar[part.base_face]
-            text = f"Base face {part.base_face} ({face.area:,.0f} mm²{body(part.base_face)}) down on {floor} ✓"
-        elif self.picked_face is not None:
-            face = part.planar[self.picked_face]
-            text = (f"Picked face {self.picked_face} ({face.area:,.0f} mm²{body(self.picked_face)}):"
-                    " press Snap face down")
-        else:
-            text = "Base face: none (pick a flat face to stand the part on)"
+        text = (f"Standing on base face {part.base_face} (down on {floor}): Z, B and C locked"
+                if part.base_face is not None else "No base face: free to move and turn")
+        text += (f"<br>Layers grow from start face {part.start_face} (green)" if part.start_face is not None
+                 else "<br>Layers build up from the bottom of the build body")
         try:
             check_placement(placed_vertices(self.part), self.substrate, self.mode.currentData())
         except ValueError as e:
@@ -574,55 +753,9 @@ class MainWindow(QMainWindow):
         else:
             self._show_placement(placement)
 
-    def _pick_toggled(self, on):
-        if self.scene is None:
-            return
-        if not on:
-            self.scene.cancel_face_pick()
-            self.plotter.render()
-            return
-        if self.scene.mode != "setup":
-            self._enter_setup()
-        if not self.scene.start_face_pick(self._face_picked):
-            self.pick_btn.setChecked(False)
-            return
-        self._status("Click a flat face for the part to stand on")
-        self.plotter.render()
-
-    def _face_picked(self, face_id):
-        if face_id not in self.part.planar:
-            self._status("Not a flat face: pick a flat face")
-            self.scene.start_face_pick(self._face_picked)   # keep picking
-            return
-        self.pick_btn.blockSignals(True)
-        self.pick_btn.setChecked(False)
-        self.pick_btn.blockSignals(False)
-        self.picked_face = face_id
-        self.scene.highlight_face(face_id)
-        self.snap_btn.setEnabled(True)
-        self._show_placement()
-        self._status(f"Picked face {face_id}")
-        self.plotter.render()
-
-    def _snap_face(self):
-        if self.part is None or self.picked_face is None:
-            return
-        placement = snap_face_down(self.part, self.picked_face, self._floor())
-        self.part.base_face, self.picked_face = self.picked_face, None
-        self.snap_btn.setEnabled(False)
-        self.scene.set_constrained(True)
-        self._set_placement(placement)
-
     def _reset_placement(self):
-        if self.part is None:
-            return
-        self.pick_btn.setChecked(False)
-        self.part.base_face = self.picked_face = None
-        self.part.placement = np.eye(4)
-        self.snap_btn.setEnabled(False)
-        self.scene.highlight_face(None)
-        self.scene.set_constrained(False)
-        self._set_placement(drop_on_plate(self.part, self._floor()))
+        if self.part is not None:
+            self._set_placement(self._start_placement(self.part))
 
     def _substrate_changed(self, *_):
         old = self._floor()
@@ -662,7 +795,6 @@ class MainWindow(QMainWindow):
             cell = self._work_cell()
             self.scene.set_placement(robroot(cell), gantry_offset(cell))
 
-            self.pick_btn.setChecked(False)
             name, mode = self.part.name, self.mode.currentData()
             self._status("Planning...")
             summary, path = plan_part(self.part, proc, mode=mode, tilt_deg=self.tilt.value(),
@@ -824,12 +956,19 @@ class MainWindow(QMainWindow):
         now = time.time()
         dt, self.sm_last = min(now - self.sm_last, 0.1), now
         pressed = self.spacemouse.poll()
+        t, r = self.spacemouse.motion()
+        if self.tabs.currentIndex() == 0:            # Part tab: camera only
+            if 1 in pressed:
+                self.part_view.fit()
+            if t.any() or r.any():
+                fly(self.part_plotter, t, r, dt)
+                self.part_plotter.render()
+            return
         if 0 in pressed:
             self.sm_part.toggle()
         if 1 in pressed:
             (self.scene.focus_on_part if self.scene.mode == "setup" else self.scene.focus_on_work)()
             self.plotter.render()
-        t, r = self.spacemouse.motion()
         if not (t.any() or r.any()):
             if self.sm_moved_part:           # finished moving: settle like a drag release
                 self.sm_moved_part = False
@@ -838,7 +977,7 @@ class MainWindow(QMainWindow):
         if self.sm_part.isChecked() and self.scene.mode == "setup" and self.part is not None:
             self._spacemouse_part(t, r, dt)
         else:
-            self.scene.fly(t, r, dt)
+            fly(self.plotter, t, r, dt)
         self.plotter.render()
 
     def _spacemouse_part(self, t, r, dt, speed=120.0, turn_rate=60.0):
@@ -846,7 +985,7 @@ class MainWindow(QMainWindow):
         about the part centre. mm/s and deg/s at full deflection."""
         f = self.scene.setup_frame
         n = f[:3, 2]                          # faceplate normal
-        right, fwd, _ = self.scene.camera_axes()
+        right, fwd, _ = camera_axes(self.plotter)
         along = fwd - fwd @ n * n
         along = along / np.linalg.norm(along) if np.linalg.norm(along) > 1e-3 else np.cross(n, right)
         side = np.cross(along, n)
@@ -873,6 +1012,7 @@ class MainWindow(QMainWindow):
         self.check_id += 1            # let a running check finish without effect
         self.pool.shutdown(wait=False, cancel_futures=True)
         self.plotter.close()
+        self.part_plotter.close()
         super().closeEvent(event)
 
 

@@ -43,3 +43,9 @@ def test_auto_position_levels_the_gun_for_layers():
     assert pos.tilt_deg == 90.0
     path = plan_part(part, proc, "layers", tilt_deg=pos.tilt_deg, cell=cell, roll_deg=pos.roll_deg)[1]
     assert gun_down_deg(world_poses(path, cell)).max() < 1e-6
+
+
+def test_layer_tilts_for_a_sideways_build():
+    cell = load_cell()
+    assert layer_tilts(cell, gun_dir=(1.0, 0.0, 0.0))[0] == 0.0     # already level with the table flat
+    assert layer_tilts(cell, gun_dir=(0.0, 0.0, -1.0)) == [90, 75, 60, 45]

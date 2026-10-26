@@ -6,13 +6,17 @@ assembly from one STEP file): one is the build body that is sliced and
 sprayed; the others (the component being repaired, fixtures) only take up
 space. Everything stands on the "floor": the top of an optional substrate
 plate, or the faceplate itself. The base face, if one is picked, points down
-(-Z) and the assembly's lowest point sits on the floor.
+(-Z) and the assembly's lowest point sits on the floor. The start face, if one
+is picked, is a flat face of the build body that the layers grow away from
+(e.g. the underside of a repair patch, against the component).
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 import trimesh
+
+from coldspray.transforms import frame
 
 DOWN = np.array([0.0, 0.0, -1.0])
 
@@ -35,6 +39,7 @@ class Part:
     base_face: int | None = None          # flat face kept pointing down onto the floor
     body_ids: np.ndarray | None = None    # (m,) body index per triangle; None = one body
     build_body: int = 0                   # the body that is sliced and sprayed
+    start_face: int | None = None         # flat face of the build body the layers grow away from
 
     @property
     def n_bodies(self) -> int:
@@ -48,6 +53,28 @@ class Part:
         if self.body_ids is None:
             return 0
         return int(self.body_ids[np.flatnonzero(self.face_ids == face_id)[0]])
+
+    def without(self, bodies) -> "Part":
+        """Copy without the given bodies (renumbered); the build body must stay."""
+        drop = set(bodies) - {None}
+        if not drop or self.body_ids is None:
+            return replace(self, placement=self.placement.copy())
+        if self.build_body in drop:
+            raise ValueError("the build body can't be left out")
+        keep = ~np.isin(self.body_ids, list(drop))
+        vertices, faces = _submesh(self.vertices, self.faces[keep])
+        kept = [b for b in range(self.n_bodies) if b not in drop]
+        renumber = np.zeros(self.n_bodies, np.int64)
+        renumber[kept] = np.arange(len(kept))
+        face_ids = self.face_ids[keep]
+        present = set(face_ids.tolist())
+        return replace(self, vertices=vertices, faces=faces, face_ids=face_ids,
+                       planar={k: p for k, p in self.planar.items() if k in present},
+                       placement=self.placement.copy(),
+                       base_face=self.base_face if self.base_face in present else None,
+                       start_face=self.start_face if self.start_face in present else None,
+                       body_ids=renumber[self.body_ids[keep]] if len(kept) > 1 else None,
+                       build_body=int(renumber[self.build_body]) if len(kept) > 1 else 0)
 
 
 @dataclass
@@ -102,6 +129,26 @@ def _submesh(vertices, faces) -> tuple[np.ndarray, np.ndarray]:
 def build_mesh(part: Part) -> tuple[np.ndarray, np.ndarray]:
     """(vertices in BASE, faces) of the build body."""
     return _submesh(placed_vertices(part), part.faces[part.in_build()])
+
+
+def build_frame(part: Part) -> np.ndarray:
+    """BASE <- build frame: layers lie parallel to its XY plane and stack along
+    its +Z from z = 0. From the start face if one is set (Z into the build
+    body), otherwise the bottom of the build body with BASE axes."""
+    if part.start_face is None:
+        v, _ = build_mesh(part)
+        return frame(z=v[:, 2].min())
+    face = part.planar[part.start_face]
+    r, t = part.placement[:3, :3], part.placement[:3, 3]
+    z = -(r @ face.normal)
+    x = np.array([1.0, 0.0, 0.0]) - z[0] * z
+    if np.linalg.norm(x) < 0.1:
+        x = np.array([0.0, 1.0, 0.0]) - z[1] * z
+    x /= np.linalg.norm(x)
+    out = np.eye(4)
+    out[:3, :3] = np.column_stack([x, np.cross(z, x), z])
+    out[:3, 3] = r @ face.point + t
+    return out
 
 
 def other_mesh(part: Part) -> tuple[np.ndarray, np.ndarray] | None:
