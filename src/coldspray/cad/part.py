@@ -204,3 +204,11 @@ def drop_on_plate(part: Part, plate_top: float) -> np.ndarray:
     t = centre_on_faceplate(part)
     t[2, 3] += plate_top - _apply(t, part.vertices)[:, 2].min()
     return t
+
+
+def lower_to_floor(part: Part, plate_top: float) -> np.ndarray:
+    """Placement with the same orientation and XY, moved along Z so the lowest
+    point (all bodies) is on the floor at `plate_top`."""
+    t = np.array(part.placement, float)
+    t[2, 3] += plate_top - placed_vertices(part)[:, 2].min()
+    return t

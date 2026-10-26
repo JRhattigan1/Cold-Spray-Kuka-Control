@@ -2,8 +2,8 @@ import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
 
-from coldspray.cad.part import (Part, Substrate, build_frame, build_mesh, centre_on_faceplate, constrain, drop_on_plate, other_mesh,
-                                placed_vertices, rotation_between, snap_face_down)
+from coldspray.cad.part import (Part, Substrate, build_frame, build_mesh, centre_on_faceplate, constrain, drop_on_plate,
+                                lower_to_floor, other_mesh, placed_vertices, rotation_between, snap_face_down)
 from coldspray.models import load_process
 from coldspray.pipeline import load_part, plan_part
 from coldspray.transforms import frame
@@ -127,9 +127,8 @@ def test_plan_part_rejects_bad_placement(block):
     with pytest.raises(ValueError, match="into the substrate plate by 2.0 mm"):
         plan_part(part, proc)
     part.placement = drop_on_plate(block, TOP + 5)
-    with pytest.raises(ValueError, match="floats 5.0 mm"):
-        plan_part(part, proc)
-    plan_part(part, proc, mode="revolve")             # fine: revolve coats a part held off the plate
+    assert plan_part(part, proc)[0] == "10 layers"    # fine: held off the plate (fixture, riser)
+    plan_part(part, proc, mode="revolve")
     part.placement = frame(x=600) @ drop_on_plate(block, TOP)
     with pytest.raises(ValueError, match="faceplate"):
         plan_part(part, proc)
@@ -176,8 +175,24 @@ def test_repair_patch_layers_start_on_the_component(repair):
 def test_no_plate_placement_checks(repair):
     part = Part(repair.name, repair.vertices, repair.faces, repair.face_ids, repair.planar,
                 body_ids=repair.body_ids, build_body=1, placement=drop_on_plate(repair, 5.0))
-    with pytest.raises(ValueError, match="floats 5.0 mm above the faceplate"):
+    plan_part(part, load_process(), substrate=None)            # held 5 mm up: fine
+    part.placement = drop_on_plate(repair, -1.0)
+    with pytest.raises(ValueError, match="into the faceplate by 1.0 mm"):
         plan_part(part, load_process(), substrate=None)
+    part.placement = frame(x=600) @ drop_on_plate(repair, 0.0)
+    with pytest.raises(ValueError, match="from the table axis"):
+        plan_part(part, load_process(), substrate=None)
+
+
+def test_lower_to_floor_keeps_orientation_and_xy(repair):
+    part = Part(repair.name, repair.vertices, repair.faces, repair.face_ids, repair.planar,
+                body_ids=repair.body_ids, build_body=1,
+                placement=frame(x=12, y=-7, z=80, a=20, b=30, c=10))
+    t = lower_to_floor(part, 4.0)
+    assert np.allclose(t[:3, :3], part.placement[:3, :3])
+    assert np.allclose(t[:2, 3], part.placement[:2, 3])
+    part.placement = t
+    assert placed_vertices(part)[:, 2].min() == pytest.approx(4.0)
 
 
 def test_snap_any_body_face_stands_assembly_on_floor(repair):

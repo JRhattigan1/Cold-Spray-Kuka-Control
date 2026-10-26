@@ -100,13 +100,12 @@ MODES = {
 
 def check_placement(vertices, substrate: Substrate | None, mode="layers"):
     """Raises ValueError (with a message for the user) if the placed part
-    (all bodies) can't be sprayed. No substrate: it stands on the faceplate."""
+    (all bodies) can't be sprayed. No substrate: the floor is the faceplate.
+    A part held above the floor (fixture, riser) is fine."""
     floor, what = (substrate.top, "the substrate plate") if substrate else (0.0, "the faceplate")
     zmin = vertices[:, 2].min()
     if zmin < floor - 0.1:
         raise ValueError(f"Part goes into {what} by {floor - zmin:.1f} mm — snap a face down or raise it")
-    if mode == "layers" and zmin > floor + 0.1:
-        raise ValueError(f"Part floats {zmin - floor:.1f} mm above {what} — snap a face down to stand it there")
     reach = np.linalg.norm(vertices[:, :2], axis=1).max()
     if reach > FACEPLATE_RADIUS:
         raise ValueError(f"Part reaches {reach:.0f} mm from the table axis, beyond the"

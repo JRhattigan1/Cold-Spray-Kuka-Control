@@ -26,8 +26,8 @@ from PySide6.QtWidgets import (
 from pyvistaqt import QtInteractor
 
 from coldspray.cad.part import (
-    Substrate, build_frame, build_mesh, centre_on_faceplate, constrain, drop_on_plate, other_mesh,
-    placed_vertices, snap_face_down,
+    Substrate, build_frame, build_mesh, centre_on_faceplate, constrain, drop_on_plate,
+    lower_to_floor, other_mesh, placed_vertices, snap_face_down,
 )
 from coldspray.cell import robroot, table_axis_names
 from coldspray.kinematics.robot import Robot
@@ -221,32 +221,47 @@ class MainWindow(QMainWindow):
         for key, lo, hi, unit, tip in (
                 ("X", -500, 500, " mm", "Along the faceplate X axis"),
                 ("Y", -500, 500, " mm", "Along the faceplate Y axis"),
-                ("Z", -500, 1000, " mm", "Height above the faceplate (locked once a base face is set)"),
+                ("Z", -500, 1000, " mm", "Height above the faceplate (locked while Keep on plate is ticked)"),
                 ("A", -180, 180, " °", "Turn about the faceplate Z axis"),
-                ("B", -90, 90, " °", "Turn about Y (locked once a base face is set)"),
-                ("C", -180, 180, " °", "Turn about X (locked once a base face is set)")):
+                ("B", -90, 90, " °", "Turn about Y (locked while Keep on plate is ticked)"),
+                ("C", -180, 180, " °", "Turn about X (locked while Keep on plate is ticked)")):
             box = _spin(lo, hi, 0, unit, tip=tip)
             box.setKeyboardTracking(False)
             box.valueChanged.connect(self._placement_typed)
             grid.addRow(key, box)
             self.place[key] = box
         vbox.addLayout(grid)
+        self.keep_on_plate = QCheckBox("Keep on plate")
+        self.keep_on_plate.setToolTip("Stand the part on its base face on the plate (or the faceplate)\n"
+                                      "and lock Z, B and C. Untick to place it anywhere in 3D\n"
+                                      "(held in a fixture or on a riser).")
+        self.keep_on_plate.setEnabled(False)
+        self.keep_on_plate.toggled.connect(self._keep_toggled)
+        vbox.addWidget(self.keep_on_plate)
+        snap_btn = QPushButton("Snap base face down")
+        snap_btn.setToolTip("Once: turn the part so its base face points down, lowest point on the floor")
+        snap_btn.clicked.connect(lambda: self.part and self.part.base_face is not None and self._set_placement(
+            snap_face_down(self.part, self.part.base_face, self._floor())))
+        self.snap_btn = snap_btn
+        drop_btn = QPushButton("Drop onto plate")
+        drop_btn.setToolTip("Once: move the part straight down (or up) so its lowest point is on the floor")
+        drop_btn.clicked.connect(lambda: self.part and self._set_placement(lower_to_floor(self.part, self._floor())))
         centre_btn = QPushButton("Centre on faceplate")
         centre_btn.setToolTip("Move the part onto the table axis (needed for Revolve)")
         centre_btn.clicked.connect(lambda: self.part and self._set_placement(centre_on_faceplate(self.part)))
         reset_btn = QPushButton("Reset")
         reset_btn.setToolTip("Back to the start: standing on the base face (or as in the CAD), centred")
         reset_btn.clicked.connect(self._reset_placement)
-        row = QHBoxLayout()
-        for btn in (centre_btn, reset_btn):
-            row.addWidget(btn)
-        vbox.addLayout(row)
+        buttons = QGridLayout()
+        for k, btn in enumerate((snap_btn, drop_btn, centre_btn, reset_btn)):
+            buttons.addWidget(btn, k // 2, k % 2)
+        vbox.addLayout(buttons)
         self.face_label = QLabel()
         self.face_label.setWordWrap(True)
         vbox.addWidget(self.face_label)
         self.sm_part = QCheckBox("SpaceMouse moves the part")
         self.sm_part.setToolTip("Off: the SpaceMouse flies the camera. On (setup only): it moves the part,\n"
-                                "kept standing on its base face once one is set.\n"
+                                "kept standing on its base face while Keep on plate is ticked.\n"
                                 "Left SpaceMouse button toggles this; right button shows the part.")
         self.sm_part.setVisible(False)
         vbox.addWidget(self.sm_part)
@@ -606,8 +621,14 @@ class MainWindow(QMainWindow):
         self.part = src.without(ignored)
         self.part.placement = self._start_placement(self.part)
         self.cell_key = key
+        has_base = self.part.base_face is not None
+        self.keep_on_plate.blockSignals(True)
+        self.keep_on_plate.setChecked(has_base)
+        self.keep_on_plate.setEnabled(has_base)
+        self.keep_on_plate.blockSignals(False)
+        self.snap_btn.setEnabled(has_base)
         self.scene.set_part(self.part)
-        self.scene.set_constrained(self.part.base_face is not None)
+        self.scene.set_constrained(self._kept())
         self.scene.highlight_face(self.part.start_face)
         self.cell_part_label.setText(f"<b>{src.name}</b>: {self.part.n_bodies} bodies in the cell"
                                      if self.part.n_bodies > 1 else f"<b>{src.name}</b>")
@@ -711,11 +732,23 @@ class MainWindow(QMainWindow):
     def _substrate_mesh(self):
         return self.substrate.mesh() if self.substrate else None
 
-    def _set_placement(self, placement, redraw=True):
-        """New part placement (kept standing on its base face if one is set); refresh view and boxes."""
+    def _kept(self) -> bool:
+        """Keep on plate: the part stays standing on its base face, Z/B/C locked."""
+        return self.part is not None and self.part.base_face is not None and self.keep_on_plate.isChecked()
+
+    def _keep_toggled(self, on):
         if self.part is None:
             return
-        self.part.placement = constrain(self.part, np.asarray(placement, float), self._floor())
+        self.scene.set_constrained(self._kept())
+        self._set_placement(self.part.placement)     # ticked: stand it on the base face now
+        self.plotter.render()
+
+    def _set_placement(self, placement, redraw=True):
+        """New part placement (kept standing on its base face with Keep on plate); refresh view and boxes."""
+        if self.part is None:
+            return
+        placement = np.asarray(placement, float)
+        self.part.placement = constrain(self.part, placement, self._floor()) if self._kept() else placement
         if redraw:
             self.scene.set_part_placement()
         self._show_placement()
@@ -726,15 +759,22 @@ class MainWindow(QMainWindow):
         if self.part is None:
             return
         values = xyzabc(self.part.placement if placement is None else placement)
-        locked = self.part.base_face is not None
+        locked = self._kept()
         for (key, box), v in zip(self.place.items(), values):
             box.blockSignals(True)
             box.setValue(float(v))
             box.blockSignals(False)
             box.setEnabled(not (locked and key in "ZBC"))
         part, floor = self.part, "the plate" if self.substrate else "the faceplate"
-        text = (f"Standing on base face {part.base_face} (down on {floor}): Z, B and C locked"
-                if part.base_face is not None else "No base face: free to move and turn")
+        if locked:
+            text = f"Keep on plate: standing on base face {part.base_face} (down on {floor}), Z, B and C locked"
+        elif part.base_face is not None:
+            text = f"Free placement (base face {part.base_face}): move and turn it anywhere"
+        else:
+            text = "No base face: free to move and turn"
+        above = placed_vertices(part)[:, 2].min() - self._floor()
+        if above > 0.1:
+            text += f"<br>{above:.1f} mm above {floor}"
         text += (f"<br>Layers grow from start face {part.start_face} (green)" if part.start_face is not None
                  else "<br>Layers build up from the bottom of the build body")
         try:
@@ -998,7 +1038,8 @@ class MainWindow(QMainWindow):
         step = np.eye(4)
         step[:3, :3] = rot
         step[:3, 3] = centre - rot @ centre + to_base @ move
-        self.part.placement = constrain(self.part, step @ self.part.placement, self._floor())
+        placement = step @ self.part.placement
+        self.part.placement = constrain(self.part, placement, self._floor()) if self._kept() else placement
         self.scene.set_part_placement()
         self._show_placement()
         self.sm_moved_part = True

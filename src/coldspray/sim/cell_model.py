@@ -32,11 +32,11 @@ FIXED = ("__motorfortilt",)         # tilt drive sits on the fixed base frame
 # label -> (assembly names in the cell CAD, shown by default, moves with: None / "rotating")
 OPTIONAL = {
     "Booth walls": (("__enclosure",), False, None),
-    "Table-top extensions": (("__tabletop_extensions",), True, "rotating"),
-    "Rear cabinets / water cooling": (("__rear_electronics_and_water_cooling",), True, None),
-    "Filtration unit": (("__filtration unit 2",), True, None),
-    "Hoppers": (("__hoppers",), True, None),
-    "Control arm": (("__LCD_screen",), True, None),
+    "Table-top extensions": (("__tabletop_extensions",), False, "rotating"),
+    "Rear cabinets / water cooling": (("__rear_electronics_and_water_cooling",), False, None),
+    "Filtration unit": (("__filtration unit 2",), False, None),
+    "Hoppers": (("__hoppers",), False, None),
+    "Control arm": (("__LCD_screen",), False, None),
 }
 
 

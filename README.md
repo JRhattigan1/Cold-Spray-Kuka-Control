@@ -26,7 +26,10 @@ C:\Users\qrb21117\.venvs\coldspray\Scripts\python.exe -m coldspray.cad.step_cach
    parallel to it and grow away from it) and optionally a **base face** for the
    part to stand on.
 2. **Cell** - position it on the faceplate (drag handles, X/Y/Z/A/B/C boxes or
-   a SpaceMouse), optional substrate plate. "Auto position" picks table tilt,
+   a SpaceMouse), optional substrate plate. **Keep on plate** (on when a base
+   face is set) stands it on its base face and locks Z/B/C; untick it to place
+   the part anywhere in 3D (fixture, riser). "Snap base face down" / "Drop onto
+   plate" move it once. "Auto position" picks table tilt,
    gun roll and gantry E1 to keep the gun level (max `gun_max_down_deg` below
    horizontal). Choose a strategy (Layers, or Revolve: coat a round part while
    the turntable spins), set process parameters, generate, check reach and
