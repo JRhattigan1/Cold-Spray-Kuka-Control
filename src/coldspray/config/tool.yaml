@@ -1,0 +1,7 @@
+# Spray gun TCP relative to the KUKA flange, in KUKA TOOL_DATA convention:
+# X, Y, Z in mm, A, B, C in degrees (Z-Y'-X'' Euler). Tool X = spray direction.
+# PLACEHOLDER: gun mounted at 90 deg to the flange. Replace with the measured /
+# taught TOOL_DATA from the controller before running on the robot.
+name: cold_spray_gun
+verified: false
+tcp: {x: 150.0, y: 0.0, z: 250.0, a: 0.0, b: 90.0, c: 0.0}

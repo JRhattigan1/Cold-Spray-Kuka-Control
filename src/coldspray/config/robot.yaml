@@ -1,0 +1,28 @@
+# KUKA KR 50 R2500 (KR C4)
+# Source: KUKA datasheet 0000-334-818 / V6.1 / 19.01.2023, workspace graphic.
+# Check: a1 + c2 + sqrt(c3^2 + a2^2) = 2501.2 mm = quoted max reach (to wrist centre).
+# TODO: confirm against the controller ($machine.dat) and pendant readings.
+name: KR 50 R2500
+
+opw:            # mm
+  a1: 175.0     # A1 -> A2 horizontal offset
+  a2: -50.0     # A3 -> forearm offset (forearm sits above A3)
+  b: 0.0
+  c1: 575.0     # floor -> A2 height
+  c2: 1290.0    # A2 -> A3 (link arm)
+  c3: 1035.0    # A3 -> wrist centre (arm)
+  c4: 185.0     # wrist centre -> flange
+  # Mapping KUKA A1..A6 -> OPW joints: q_opw = A * sign + offset.
+  # A2 = -90 puts the link arm vertical (OPW zero), A2 = 0 horizontal.
+  offsets_deg: [0, 90, 0, 0, 0, 0]
+  signs: [-1, 1, 1, -1, 1, -1]
+
+joint_limits_deg:   # A1..A6
+  - [-185, 185]
+  - [-175, 60]
+  - [-120, 170]
+  - [-180, 180]
+  - [-125, 125]
+  - [-350, 350]
+
+max_speed_deg_s: [175, 158, 175, 250, 250, 360]
