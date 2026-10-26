@@ -1,9 +1,12 @@
 """A part mesh with its CAD faces, placed on the turntable faceplate.
 
 `Part.placement` maps part-CAD coordinates to the work BASE frame (faceplate
-top centre, z = 0 on the faceplate surface). Parts are built up on a substrate
-plate lying on the faceplate; the face chosen as build-start face sits on the
-plate top with its outward normal pointing down (-Z).
+top centre, z = 0 on the faceplate surface). A part may be several bodies (an
+assembly from one STEP file): one is the build body that is sliced and
+sprayed; the others (the component being repaired, fixtures) only take up
+space. Everything stands on the "floor": the top of an optional substrate
+plate, or the faceplate itself. The base face, if one is picked, points down
+(-Z) and the assembly's lowest point sits on the floor.
 """
 
 from dataclasses import dataclass, field
@@ -29,7 +32,22 @@ class Part:
     face_ids: np.ndarray      # (m,) B-rep face index per triangle
     planar: dict[int, PlanarFace]
     placement: np.ndarray = field(default_factory=lambda: np.eye(4))   # part-CAD -> BASE
-    build_face: int | None = None
+    base_face: int | None = None          # flat face kept pointing down onto the floor
+    body_ids: np.ndarray | None = None    # (m,) body index per triangle; None = one body
+    build_body: int = 0                   # the body that is sliced and sprayed
+
+    @property
+    def n_bodies(self) -> int:
+        return 1 if self.body_ids is None else int(self.body_ids.max()) + 1
+
+    def in_build(self) -> np.ndarray:
+        """(m,) True for the triangles of the build body."""
+        return np.ones(len(self.faces), bool) if self.body_ids is None else self.body_ids == self.build_body
+
+    def body_of_face(self, face_id: int) -> int:
+        if self.body_ids is None:
+            return 0
+        return int(self.body_ids[np.flatnonzero(self.face_ids == face_id)[0]])
 
 
 @dataclass
@@ -75,23 +93,41 @@ def placed_vertices(part: Part) -> np.ndarray:
     return _apply(part.placement, part.vertices)
 
 
+def _submesh(vertices, faces) -> tuple[np.ndarray, np.ndarray]:
+    """Only the vertices `faces` use, re-indexed."""
+    used, inverse = np.unique(faces, return_inverse=True)
+    return vertices[used], inverse.reshape(faces.shape)
+
+
+def build_mesh(part: Part) -> tuple[np.ndarray, np.ndarray]:
+    """(vertices in BASE, faces) of the build body."""
+    return _submesh(placed_vertices(part), part.faces[part.in_build()])
+
+
+def other_mesh(part: Part) -> tuple[np.ndarray, np.ndarray] | None:
+    """(vertices in BASE, faces) of every body except the build body, or None."""
+    rest = ~part.in_build()
+    return _submesh(placed_vertices(part), part.faces[rest]) if rest.any() else None
+
+
 def _xy_centre(points) -> np.ndarray:
     return (points[:, :2].min(axis=0) + points[:, :2].max(axis=0)) / 2
 
 
 def _face_down(part: Part, face_id: int, placement, plate_top: float) -> np.ndarray:
-    """`placement` turned so the face points down, with the face plane at
-    `plate_top`; the XY translation is left as it is."""
+    """`placement` turned so the face points down, lowest point on the floor
+    at `plate_top`; the XY translation is left as it is."""
     face = part.planar[face_id]
     t = np.array(placement, float)
     t[:3, :3] = rotation_between(t[:3, :3] @ face.normal, DOWN) @ t[:3, :3]
-    t[2, 3] = plate_top - (t[:3, :3] @ face.point)[2]
+    t[2, 3] = plate_top - (part.vertices @ t[:3, :3].T)[:, 2].min()
     return t
 
 
 def snap_face_down(part: Part, face_id: int, plate_top: float) -> np.ndarray:
-    """Placement with planar face `face_id` lying on the plate (normal -Z),
-    keeping the part's XY bounding-box centre where it was."""
+    """Placement with planar face `face_id` pointing down (normal -Z) and the
+    lowest point on the floor at `plate_top` (for a single convex part: the
+    face lies on the floor), keeping the XY bounding-box centre where it was."""
     if face_id not in part.planar:
         raise ValueError("Only flat faces can be placed on the plate")
     before = _xy_centre(placed_vertices(part))
@@ -108,11 +144,11 @@ def centre_on_faceplate(part: Part) -> np.ndarray:
 
 
 def constrain(part: Part, placement, plate_top: float) -> np.ndarray:
-    """Nearest placement to `placement` that keeps the build face on the plate:
+    """Nearest placement to `placement` that keeps the base face down on the floor:
     tilt removed, yaw and XY translation kept. Unchanged if no build face is set."""
-    if part.build_face is None:
+    if part.base_face is None:
         return placement
-    return _face_down(part, part.build_face, placement, plate_top)
+    return _face_down(part, part.base_face, placement, plate_top)
 
 
 def drop_on_plate(part: Part, plate_top: float) -> np.ndarray:

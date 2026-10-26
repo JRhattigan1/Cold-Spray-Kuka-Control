@@ -33,6 +33,7 @@ CRASH = "#c2185b"
 KUKA_ORANGE = "#ff6a13"
 TABLE = "#a7b4bd"
 PART = "#4f6d7a"
+FIXTURE = "#8d8f7a"        # other bodies of the part's assembly (component, clamps)
 SUBSTRATE = "#b0bec5"
 BUILD_FACE = "#2bb673"
 OUT_OF_DATE = "#e37400"
@@ -204,11 +205,21 @@ class Scene:
                 self.pl.remove_actor(a)
         self.part, self.part_actor, self.face_actor = part, None, None
         if part is not None:
-            self.part_actor = self.pl.add_mesh(_polydata(part.vertices, part.faces), color=PART)
+            mesh = _polydata(part.vertices, part.faces)
+            mesh.cell_data["build"] = part.in_build().astype(float)
+            self.part_actor = self.pl.add_mesh(mesh, scalars="build", cmap=[FIXTURE, PART], clim=(0, 1),
+                                               n_colors=2, show_scalar_bar=False)
             self.part_actor.SetVisibility(self.mode == "setup")
             self.set_part_placement()
             if self.mode == "setup":
                 self._make_widget()
+
+    def show_build_body(self):
+        """Recolour after part.build_body changed."""
+        if self.part_actor is not None:
+            mesh = self.part_actor.mapper.dataset
+            mesh.cell_data["build"] = self.part.in_build().astype(float)
+            mesh.Modified()
 
     def set_substrate(self, mesh):
         """Substrate plate (vertices, faces) in BASE, or None."""
@@ -373,9 +384,10 @@ class Scene:
         self.collisions = {}
 
     def set_path(self, path: Toolpath, cell: CellConfig, part=None, plate_size=None, step=5.0, home=None,
-                 angle_step=2.0, substrate=None, gun_limit_deg=None):
-        """Preview mode: draw a toolpath, with optional part and substrate meshes
-        (vertices, faces) in BASE coordinates (`plate_size` (w, l): an old-style
+                 angle_step=2.0, substrate=None, gun_limit_deg=None, fixture=None):
+        """Preview mode: draw a toolpath, with optional part (build body), fixture
+        (the other bodies) and substrate meshes (vertices, faces) in BASE
+        coordinates (`plate_size` (w, l): an old-style
         plate when no substrate is given). Returns the joint angles for every
         sampled point (NaN = unreachable). Points where the gun points more than
         `gun_limit_deg` below horizontal are marked."""
@@ -408,6 +420,8 @@ class Scene:
             add(self.pl.add_mesh(_polydata(*substrate), color=SUBSTRATE))
         if part is not None:
             add(self.pl.add_mesh(_polydata(*part), color=PART, opacity=0.4))
+        if fixture is not None:
+            add(self.pl.add_mesh(_polydata(*fixture), color=FIXTURE))
         for mask, color, width in ((s.gun_on, SPRAY, 3), (~s.gun_on, TRAVEL, 1)):
             segs = [i for i in range(1, len(pts)) if mask[i]]
             if segs:
@@ -477,7 +491,7 @@ class Scene:
         crash = self.collisions.get(i)
         crash_text = ("\nCOLLISION: " + ", ".join(f"{a} / {b}" for a, b in sorted(crash))) if crash else ""
         self.status.SetText(2, f"{self.path_name}  point {i}/{self.n_points - 1}  "
-                               f"spray {'ON' if self.gun_on[i] else 'off'}   gun {self.gun_down[i]:.0f}° down"
+                               f"spray {'ON' if self.gun_on[i] else 'off'}   gun {round(self.gun_down[i])}° down"
                                f"{'  TOO STEEP' if self.steep[i] else ''}\nA1..A6: {j}   {table}{crash_text}")
 
     def focus_on_work(self):

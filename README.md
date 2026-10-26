@@ -18,12 +18,16 @@ C:\Users\qrb21117\.venvs\coldspray\Scripts\python.exe -m coldspray.cad.step_cach
 ```
 
 ## Run
-**Main window** - pick a STEP part and set it up on the substrate plate (drag
-handles or X/Y/Z/A/B/C boxes; "Pick build face" + "Snap face to plate" lays a
-flat face on the plate and layers build up from it), choose a strategy (Layers,
-or Revolve: coat a round part while the turntable spins), set process
-parameters, gantry and turntable positions, generate, check reach and
-collisions in 3D, save the KRL program:
+**Main window** - open a STEP part or assembly and set it up on the faceplate
+(drag handles, X/Y/Z/A/B/C boxes or a SpaceMouse; "Pick base face" + "Snap face
+down" stands it on a flat face). With several bodies, pick the **build body**
+(sliced and sprayed, e.g. a repair patch); the others (component, fixtures) are
+collision-checked only. The substrate plate is optional. Layers build up from
+the bottom of the build body. "Auto position" picks table tilt, gun roll and
+gantry E1 to keep the gun level (max `gun_max_down_deg` below horizontal).
+Choose a strategy (Layers, or Revolve: coat a round part while the turntable
+spins), set process parameters, generate, check reach and collisions in 3D,
+save the KRL program:
 ```
 .\run          (or double-click run.bat)
 .\run test     (the tests)

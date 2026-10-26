@@ -57,9 +57,9 @@ def _bare_meshes(robot):
     return CellMeshes(static=pv.PolyData(), carriage=pv.PolyData(), robot=_links(robot))
 
 
-@pytest.mark.parametrize("name", ["part", "substrate"])
+@pytest.mark.parametrize("name", ["part", "substrate", "fixture"])
 def test_contact_with_workpiece_never_ignored(name):
-    """A part or substrate placed so the arm touches it in the CAD pose must still be reported."""
+    """A part, substrate or fixture placed so the arm touches it in the CAD pose must still be reported."""
     robot, cell = Robot(load_robot()), load_cell()
     block = _block_at_wrist(robot, cell)
     checker = CollisionChecker(robot, cell, _bare_meshes(robot), reach_mm=1e5, **{name: block})
@@ -96,7 +96,7 @@ def test_workpiece_follows_turntable(axes):
     block = _block_at_wrist(robot, cell, axes)
     checker = CollisionChecker(robot, cell, _bare_meshes(robot), reach_mm=1e5)
     checker.set_placement(robroot(cell, 0.0))
-    checker.set_workpiece(block, block)
+    checker.set_workpiece(block, block, block)
     home = np.array(HOME_DEG, float)
-    assert {("A5", "part"), ("A5", "substrate")} <= checker.check(home, axes)
+    assert {("A5", "part"), ("A5", "substrate"), ("A5", "fixture")} <= checker.check(home, axes)
     assert checker.check(home, {}) == set()

@@ -3,7 +3,7 @@
 from pathlib import Path
 
 import numpy as np
-from OCP.BRep import BRep_Tool
+from OCP.BRep import BRep_Builder, BRep_Tool
 from OCP.BRepAdaptor import BRepAdaptor_Surface
 from OCP.BRepGProp import BRepGProp
 from OCP.BRepMesh import BRepMesh_IncrementalMesh
@@ -11,10 +11,10 @@ from OCP.GeomAbs import GeomAbs_Plane
 from OCP.GProp import GProp_GProps
 from OCP.IFSelect import IFSelect_RetDone
 from OCP.STEPControl import STEPControl_Reader
-from OCP.TopAbs import TopAbs_FACE, TopAbs_REVERSED
+from OCP.TopAbs import TopAbs_FACE, TopAbs_REVERSED, TopAbs_SOLID
 from OCP.TopExp import TopExp_Explorer
 from OCP.TopLoc import TopLoc_Location
-from OCP.TopoDS import TopoDS
+from OCP.TopoDS import TopoDS, TopoDS_Compound
 
 from coldspray.cad.part import PlanarFace
 
@@ -60,7 +60,41 @@ def tessellate_with_ids(shape, deflection=0.1, angle=0.2):
     return _mesh(shape, deflection, angle, planes=True)
 
 
-def _mesh(shape, deflection, angle, planes):
+def bodies(shape) -> list:
+    """The solids of a shape, plus one compound of any faces outside a solid."""
+    out, exp = [], TopExp_Explorer(shape, TopAbs_SOLID)
+    while exp.More():
+        out.append(exp.Current())
+        exp.Next()
+    loose, builder = TopoDS_Compound(), BRep_Builder()
+    builder.MakeCompound(loose)
+    exp, n = TopExp_Explorer(shape, TopAbs_FACE, TopAbs_SOLID), 0
+    while exp.More():
+        builder.Add(loose, exp.Current())
+        n += 1
+        exp.Next()
+    return out + ([loose] if n else [])
+
+
+def tessellate_bodies(shape, deflection=0.1, angle=0.2):
+    """`tessellate_with_ids` body by body: (vertices, faces, face_ids, planar,
+    body_ids), with face indices numbered on across the bodies."""
+    BRepMesh_IncrementalMesh(shape, deflection, False, angle, True)
+    vs, fs, ids, planar, body_ids, n_verts, n_faces = [], [], [], {}, [], 0, 0
+    for b, body in enumerate(bodies(shape)):
+        v, f, i, p, count = _mesh(body, deflection, angle, planes=True, count=True)
+        vs.append(v)
+        fs.append(f + n_verts)
+        ids.append(i + n_faces)
+        planar |= {k + n_faces: face for k, face in p.items()}
+        body_ids.append(np.full(len(f), b, np.int64))
+        n_verts, n_faces = n_verts + len(v), n_faces + count
+    if not vs:
+        raise ValueError("no faces in the shape")
+    return np.vstack(vs), np.vstack(fs), np.concatenate(ids), planar, np.concatenate(body_ids)
+
+
+def _mesh(shape, deflection, angle, planes, count=False):
     BRepMesh_IncrementalMesh(shape, deflection, False, angle, True)
     verts, faces, ids, planar, offset = [], [], [], {}, 0
     exp = TopExp_Explorer(shape, TopAbs_FACE)
@@ -85,5 +119,6 @@ def _mesh(shape, deflection, angle, planes):
             offset += tri.NbNodes()
         exp.Next()
         index += 1
-    return (np.array(verts, float).reshape(-1, 3), np.array(faces, np.int64).reshape(-1, 3),
-            np.array(ids, np.int64), planar)
+    out = (np.array(verts, float).reshape(-1, 3), np.array(faces, np.int64).reshape(-1, 3),
+           np.array(ids, np.int64), planar)
+    return out + (index,) if count else out

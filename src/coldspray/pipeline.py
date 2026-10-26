@@ -1,14 +1,16 @@
-"""STEP part -> placed on the substrate plate -> layers -> toolpath.
+"""STEP part -> placed on the faceplate -> layers -> toolpath.
 
-The part is built up on a substrate plate lying on the faceplate; planning is
-done relative to the plate top and the toolpath moved up into BASE.
+The part (one body, or an assembly with one build body) stands on an optional
+substrate plate on the faceplate. The build body is sliced from its own base
+upwards; planning is done relative to that base and the toolpath moved up
+into BASE.
 """
 
 from pathlib import Path
 
 import numpy as np
 
-from coldspray.cad.part import Part, Substrate, drop_on_plate, placed_vertices
+from coldspray.cad.part import Part, Substrate, build_mesh, drop_on_plate, placed_vertices
 from coldspray.cad.slicer import slice_mesh
 from coldspray.models import CellConfig, ProcessConfig
 from coldspray.planner.layers import plan_layers
@@ -47,22 +49,47 @@ def test_tube():
     return BRepAlgoAPI_Cut(outer, bore).Shape()
 
 
-BUILT_IN = {"test_block": test_block, "test_tube": test_tube}
+def test_repair():
+    """Two bodies: a 120 x 80 x 30 mm component with a 40 x 20 x 6 mm patch to
+    build on its top face (the patch is the smaller, second body)."""
+    from OCP.BRep import BRep_Builder
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+    from OCP.gp import gp_Pnt
+    from OCP.TopoDS import TopoDS_Compound
+
+    both, builder = TopoDS_Compound(), BRep_Builder()
+    builder.MakeCompound(both)
+    builder.Add(both, BRepPrimAPI_MakeBox(gp_Pnt(0, 0, 0), 120, 80, 30).Shape())
+    builder.Add(both, BRepPrimAPI_MakeBox(gp_Pnt(30, 40, 30), 40, 20, 6).Shape())
+    return both
+
+
+BUILT_IN = {"test_block": test_block, "test_tube": test_tube, "test_repair": test_repair}
 
 
 def load_part(source=None, deflection=0.05) -> Part:
     """A Part dropped onto the default substrate plate, centred on the table.
     `source` is a STEP path or the name of a built-in test part
-    (default: the test block)."""
-    from coldspray.cad.step_io import load_step, tessellate_with_ids
+    (default: the test block). With several bodies the smallest is taken as
+    the build body (change `build_body` to pick another)."""
+    from coldspray.cad.step_io import load_step, tessellate_bodies
 
     source = source or "test_block"
     builtin = BUILT_IN.get(source)
     shape = builtin() if builtin else load_step(source)
-    v, f, ids, planar = tessellate_with_ids(shape, deflection=deflection)
-    part = Part(program_name(source if builtin else Path(source).stem), v, f, ids, planar)
+    v, f, ids, planar, body_ids = tessellate_bodies(shape, deflection=deflection)
+    part = Part(program_name(source if builtin else Path(source).stem), v, f, ids, planar,
+                body_ids=body_ids if body_ids.max() > 0 else None)
+    if part.n_bodies > 1:
+        part.build_body = int(np.argmin([body_size(part, b) for b in range(part.n_bodies)]))
     part.placement = drop_on_plate(part, Substrate().top)
     return part
+
+
+def body_size(part: Part, body: int) -> float:
+    """Bounding-box volume of one body (mm^3)."""
+    faces = part.faces if part.body_ids is None else part.faces[part.body_ids == body]
+    return float(np.prod(np.ptp(part.vertices[np.unique(faces)], axis=0)))
 
 
 MODES = {
@@ -71,15 +98,15 @@ MODES = {
 }
 
 
-def check_placement(vertices, substrate: Substrate, mode="layers"):
-    """Raises ValueError (with a message for the user) if the placed part can't be sprayed."""
+def check_placement(vertices, substrate: Substrate | None, mode="layers"):
+    """Raises ValueError (with a message for the user) if the placed part
+    (all bodies) can't be sprayed. No substrate: it stands on the faceplate."""
+    floor, what = (substrate.top, "the substrate plate") if substrate else (0.0, "the faceplate")
     zmin = vertices[:, 2].min()
-    if zmin < substrate.top - 0.1:
-        raise ValueError(f"Part goes into the substrate plate by {substrate.top - zmin:.1f} mm"
-                         " — snap a face to the plate or raise it")
-    if mode == "layers" and zmin > substrate.top + 0.1:
-        raise ValueError(f"Part floats {zmin - substrate.top:.1f} mm above the substrate plate"
-                         " — snap a face to the plate to start the build")
+    if zmin < floor - 0.1:
+        raise ValueError(f"Part goes into {what} by {floor - zmin:.1f} mm — snap a face down or raise it")
+    if mode == "layers" and zmin > floor + 0.1:
+        raise ValueError(f"Part floats {zmin - floor:.1f} mm above {what} — snap a face down to stand it there")
     reach = np.linalg.norm(vertices[:, :2], axis=1).max()
     if reach > FACEPLATE_RADIUS:
         raise ValueError(f"Part reaches {reach:.0f} mm from the table axis, beyond the"
@@ -87,22 +114,28 @@ def check_placement(vertices, substrate: Substrate, mode="layers"):
 
 
 def plan_part(part: Part, proc: ProcessConfig, mode="layers", tilt_deg=0.0, rotation_deg=0.0,
-              coats=1, cell: CellConfig | None = None, substrate=Substrate(), roll_deg=0.0):
-    """Returns (summary, toolpath in BASE). `summary` is a short description for the user.
-    `roll_deg` turns the gun about its spray axis (for reach; the spray is unchanged)."""
-    v = placed_vertices(part)
-    check_placement(v, substrate, mode)
-    v = v - [0.0, 0.0, substrate.top]  # plan relative to the plate top
-    up = frame(z=substrate.top)
+              coats=1, cell: CellConfig | None = None, substrate: Substrate | None = Substrate(),
+              roll_deg=0.0):
+    """Returns (summary, toolpath in BASE) for the build body. `summary` is a
+    short description for the user. `substrate` None: no plate, the part
+    stands on the faceplate. `roll_deg` turns the gun about its spray axis
+    (for reach; the spray is unchanged)."""
+    check_placement(placed_vertices(part), substrate, mode)
+    v, faces = build_mesh(part)
+    # Layers start at the bottom of the build body (on the plate, or on the
+    # component a repair patch sits on); revolve works from the floor
+    base = v[:, 2].min() if mode == "layers" else (substrate.top if substrate else 0.0)
+    v = v - [0.0, 0.0, base]
+    up = frame(z=base)
     tt = cell.turntable if cell else None
     tilt_axis, rot_axis = (tt.tilt.axis, tt.rotation.axis) if tt else ("E2", "E5")
     if mode == "revolve":
-        path = plan_revolve(v, part.faces, proc, part.name, coats=coats, tilt_deg=tilt_deg,
+        path = plan_revolve(v, faces, proc, part.name, coats=coats, tilt_deg=tilt_deg,
                             tilt_axis=tilt_axis, rotation_axis=rot_axis).transformed(up).rolled(roll_deg)
         passes = sum(1 for a, b in zip(path.moves, path.moves[1:]) if b.gun_on and a.gun_on
                      and abs(b.pose[2, 3] - a.pose[2, 3]) > 1e-9)
         return f"{coats} coat(s), {passes + coats} passes", path
-    layers = slice_mesh(v, part.faces, proc.layer_thickness_mm)
+    layers = slice_mesh(v, faces, proc.layer_thickness_mm)
     table = {tilt_axis: tilt_deg, rot_axis: rotation_deg} if tt else {}
     path = plan_layers(layers, proc, part.name, table_axes=table).transformed(up).rolled(roll_deg)
     return f"{len(layers)} layers", path
