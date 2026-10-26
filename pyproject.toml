@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "coldspray"
+version = "0.1.0"
+description = "Toolpath generation, simulation and KRL export for cold spray additive manufacturing on a KUKA cell"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy",
+    "scipy",
+    "pydantic>=2",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+sim = ["pyvista", "pyvistaqt", "PySide6"]
+cad = ["cadquery", "trimesh"]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+coldspray = ["config/*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
