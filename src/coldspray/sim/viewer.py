@@ -95,7 +95,7 @@ class Scene:
         self._pick_cb = self._pick_obs = None
 
         pl.set_background("white")
-        pl.enable_anti_aliasing("ssaa")
+        pl.enable_anti_aliasing("msaa")   # not ssaa: its render pass breaks the hardware picker the drag handles use
         self.link_actors, self.stick, self.carriage = [], None, None
         self.group_actors = {}
         self.tilting_actors, self.rotating_actors = [], []
