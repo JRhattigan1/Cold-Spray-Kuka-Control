@@ -25,8 +25,10 @@ or Revolve: coat a round part while the turntable spins), set process
 parameters, gantry and turntable positions, generate, check reach and
 collisions in 3D, save the KRL program:
 ```
-C:\Users\qrb21117\.venvs\coldspray\Scripts\python.exe -m coldspray.gui
+.\run          (or double-click run.bat)
+.\run test     (the tests)
 ```
+which runs `C:\Users\qrb21117\.venvs\coldspray\Scripts\python.exe -m coldspray.gui`.
 Other entry points: `python -m coldspray.demo_part [part.step]` (command line),
 `python -m coldspray.demo` (flat plate raster), `python -m pytest` (tests).
 
