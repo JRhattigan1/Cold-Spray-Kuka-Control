@@ -37,16 +37,32 @@ class XYZABC(BaseModel):
     c: float = 0.0
 
 
+class NozzleConfig(BaseModel):
+    label: str
+    step_file: str | None = None
+    exit_x_mm: float          # outlet face, nozzle CAD x
+    mount_x_mm: float         # face seated on the gun, nozzle CAD x
+
+    @property
+    def length(self) -> float:
+        """Gun nozzle face to nozzle outlet."""
+        return self.mount_x_mm - self.exit_x_mm
+
+
 class GunConfig(BaseModel):
     step_file: str
     mount_point: tuple[float, float, float]
     clock_deg: float = 0.0
     nozzle: str
-    nozzle_lengths_mm: dict[str, float]
+    nozzles: dict[str, NozzleConfig]
+
+    @property
+    def current_nozzle(self) -> NozzleConfig:
+        return self.nozzles[self.nozzle]
 
     @property
     def nozzle_length(self) -> float:
-        return self.nozzle_lengths_mm[self.nozzle]
+        return self.current_nozzle.length
 
 
 class ToolConfig(BaseModel):

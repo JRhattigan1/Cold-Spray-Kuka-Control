@@ -11,7 +11,7 @@ import numpy as np
 import pyvista as pv
 
 from coldspray.kinematics.robot import HOME_DEG, Robot
-from coldspray.sim.cell_model import CellMeshes
+from coldspray.sim.cell_model import OPTIONAL, CellMeshes
 from coldspray.toolpath.model import Toolpath
 
 SPRAY = "#f28c28"
@@ -26,6 +26,7 @@ class Gun:
     faces: np.ndarray
     to_flange: np.ndarray      # gun CAD -> flange frame
     nozzle_length: float
+    nozzle: tuple | None = None  # (vertices, faces) of the nozzle in gun-CAD coordinates
 
 
 def _polydata(v, f) -> pv.PolyData:
@@ -58,11 +59,16 @@ class Scene:
 
         pl.set_background("white")
         pl.enable_anti_aliasing("ssaa")
-        self.link_actors, self.stick, self.walls, self.carriage = [], None, None, None
+        self.link_actors, self.stick, self.carriage = [], None, None
+        self.group_actors = {}
         if cell is not None:
             pl.add_mesh(cell.static, color="#c9cfd4", smooth_shading=True)
-            self.walls = pl.add_mesh(cell.enclosure, color="#dfe6ea", opacity=0.12)
-            self.walls.SetVisibility(False)
+            for label, mesh in cell.groups.items():
+                walls = label == "Booth walls"
+                actor = pl.add_mesh(mesh, color="#dfe6ea" if walls else "#c9cfd4",
+                                    opacity=0.12 if walls else 1.0, smooth_shading=not walls)
+                actor.SetVisibility(OPTIONAL[label][1])
+                self.group_actors[label] = actor
             self.carriage = pl.add_mesh(cell.carriage, color="#9fb3c1", smooth_shading=True)
             self.cad_frames = robot.link_frames(cad_pose)
             for k, mesh in enumerate(cell.robot):
@@ -97,13 +103,19 @@ class Scene:
         self.gun, self.gun_actors = gun, []
         if gun is not None:
             body = self.pl.add_mesh(_polydata(gun.vertices, gun.faces), color="#8d99a6", smooth_shading=True)
-            nozzle = pv.Cylinder(center=(0, gun.nozzle_length / 2, 0), direction=(0, 1, 0),
-                                 radius=14, height=gun.nozzle_length)
-            self.gun_actors = [body, self.pl.add_mesh(nozzle, color="#5f6b77")]
+            if gun.nozzle is not None:
+                nozzle = _polydata(*gun.nozzle)
+            else:  # no nozzle CAD: a plain tube of the right length
+                nozzle = pv.Cylinder(center=(0, gun.nozzle_length / 2, 0), direction=(0, 1, 0),
+                                     radius=14, height=gun.nozzle_length)
+            self.gun_actors = [body, self.pl.add_mesh(nozzle, color="#5f6b77", smooth_shading=True)]
+
+    def set_group_visible(self, label: str, visible: bool):
+        if label in self.group_actors:
+            self.group_actors[label].SetVisibility(visible)
 
     def show_walls(self, visible: bool):
-        if self.walls is not None:
-            self.walls.SetVisibility(visible)
+        self.set_group_visible("Booth walls", visible)
 
     # --- toolpath -------------------------------------------------------------
     def set_path(self, path: Toolpath, base_in_robot, part=None, plate_size=None, step=5.0, home=None):

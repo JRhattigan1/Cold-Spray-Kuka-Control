@@ -22,6 +22,7 @@ from coldspray.kinematics.robot import Robot
 from coldspray.models import PROJECT_ROOT, ProcessConfig, load_process, save_process
 from coldspray.pipeline import load_part, plan_part
 from coldspray.post.krl import KRLError, to_krl
+from coldspray.sim.cell_model import OPTIONAL
 from coldspray.sim.scene import gantry_offset, load_assets, make_gun
 from coldspray.sim.viewer import Scene
 
@@ -121,6 +122,17 @@ class MainWindow(QMainWindow):
         cform.addRow("Gantry E1", self.e1)
         layout.addWidget(cell_box)
 
+        show_box = QGroupBox("Show")
+        sbox = QVBoxLayout(show_box)
+        self.group_checks = {}
+        for label, (_, default) in OPTIONAL.items():
+            check = QCheckBox(label)
+            check.setChecked(default)
+            check.toggled.connect(lambda on, lbl=label: self._show_group(lbl, on))
+            sbox.addWidget(check)
+            self.group_checks[label] = check
+        layout.addWidget(show_box)
+
         self.generate_btn = QPushButton("Generate toolpath")
         self.generate_btn.setStyleSheet("font-weight: bold; padding: 8px;")
         self.generate_btn.clicked.connect(self.generate)
@@ -150,12 +162,14 @@ class MainWindow(QMainWindow):
         self.play_btn.clicked.connect(self._toggle_play)
         self.slider = QSlider(Qt.Horizontal)
         self.slider.valueChanged.connect(self._on_slider)
-        self.walls = QCheckBox("Booth walls")
-        self.walls.toggled.connect(lambda on: self.scene and (self.scene.show_walls(on), self.plotter.render()))
         row.addWidget(self.play_btn)
         row.addWidget(self.slider, 1)
-        row.addWidget(self.walls)
         return row
+
+    def _show_group(self, label, on):
+        if self.scene:
+            self.scene.set_group_visible(label, on)
+            self.plotter.render()
 
     # --- startup --------------------------------------------------------------
     def _status(self, msg):
@@ -167,8 +181,9 @@ class MainWindow(QMainWindow):
         try:
             self.assets = a = load_assets(log=self._status)
             if a.tool.gun:
-                self.nozzle.addItems(list(a.tool.gun.nozzle_lengths_mm))
-                self.nozzle.setCurrentText(a.tool.gun.nozzle)
+                for key, n in a.tool.gun.nozzles.items():
+                    self.nozzle.addItem(f"{n.label} ({n.length:.0f} mm)", key)
+                self.nozzle.setCurrentIndex(self.nozzle.findData(a.tool.gun.nozzle))
             else:
                 self.nozzle.setEnabled(False)
             if a.cell.gantry:
@@ -221,7 +236,7 @@ class MainWindow(QMainWindow):
             a = self.assets
             tool = a.tool.model_copy(deep=True)
             if tool.gun:
-                tool.gun.nozzle = self.nozzle.currentText()
+                tool.gun.nozzle = self.nozzle.currentData()
             robot = Robot(a.robot.cfg, tool)
             self.scene.set_gun(robot, make_gun(tool, a.gun_mesh))
 

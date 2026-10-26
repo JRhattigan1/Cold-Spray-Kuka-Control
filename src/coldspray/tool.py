@@ -2,11 +2,17 @@
 
 import numpy as np
 
-from coldspray.models import GunConfig, ToolConfig
+from coldspray.models import GunConfig, NozzleConfig, ToolConfig
 from coldspray.transforms import frame
 
 # Tool axes expressed in gun-CAD coordinates: X = spray (+Y gun), Y = -X gun, Z = +Z gun
 _TOOL_IN_GUN = frame(a=90.0)
+
+
+def nozzle_to_gun(nozzle: NozzleConfig) -> np.ndarray:
+    """Maps nozzle-CAD coordinates into gun-CAD coordinates: the nozzle's spray
+    axis (-X) becomes gun +Y and its mounting face lands on the gun origin."""
+    return frame(y=nozzle.mount_x_mm, a=-90.0)
 
 
 def gun_to_flange(gun: GunConfig) -> np.ndarray:

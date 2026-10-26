@@ -1,7 +1,8 @@
 import numpy as np
+import pytest
 
 from coldspray.models import ToolConfig, XYZABC, load_tool
-from coldspray.tool import gun_to_flange, tool_frame
+from coldspray.tool import gun_to_flange, nozzle_to_gun, tool_frame
 from coldspray.transforms import xyzabc
 
 
@@ -23,10 +24,23 @@ def test_tcp_from_gun_geometry():
 
 def test_nozzle_choice_moves_tcp():
     tool = load_tool()
-    short = tool.model_copy(deep=True)
-    short.gun.nozzle = "short"
-    d = tool_frame(tool)[:3, 3] - tool_frame(short)[:3, 3]
-    assert np.isclose(np.linalg.norm(d), 160.8 - 109.7)
+    tool.gun.nozzle = "central_injector"
+    radial = tool.model_copy(deep=True)
+    radial.gun.nozzle = "radial_injector"
+    d = tool_frame(tool)[:3, 3] - tool_frame(radial)[:3, 3]
+    assert np.isclose(np.linalg.norm(d), (404.0 - 30.0) - (209.7 - 30.0))
+
+
+@pytest.mark.parametrize("key", ["central_injector", "radial_injector"])
+def test_nozzle_outlet_lands_on_tcp(key):
+    tool = load_tool()
+    tool.gun.nozzle = key
+    n = tool.gun.current_nozzle
+    outlet_in_gun = nozzle_to_gun(n) @ [n.exit_x_mm, 0, 0, 1]
+    assert np.allclose(outlet_in_gun[:3], [0, n.length, 0])           # on the spray axis
+    assert np.allclose(nozzle_to_gun(n)[:3, :3] @ [-1, 0, 0], [0, 1, 0])  # spraying along gun +Y
+    outlet_in_flange = gun_to_flange(tool.gun) @ outlet_in_gun
+    assert np.allclose(outlet_in_flange[:3], tool_frame(tool)[:3, 3])
 
 
 def test_explicit_tcp_overrides_gun():

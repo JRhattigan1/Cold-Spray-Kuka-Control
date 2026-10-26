@@ -37,12 +37,20 @@ def load_assets(log=print) -> Assets:
 
 
 def make_gun(tool: ToolConfig, gun_mesh):
+    """Gun (and selected nozzle) meshes for the viewer, in gun-CAD coordinates."""
+    from coldspray.cad.mesh_cache import cached_mesh
     from coldspray.sim.viewer import Gun
-    from coldspray.tool import gun_to_flange
+    from coldspray.tool import gun_to_flange, nozzle_to_gun
 
     if tool.gun is None or gun_mesh is None:
         return None
-    return Gun(*gun_mesh, gun_to_flange(tool.gun), tool.gun.nozzle_length)
+    nozzle = None
+    n = tool.gun.current_nozzle
+    if n.step_file and (PROJECT_ROOT / n.step_file).exists():
+        v, f = cached_mesh(n.step_file, deflection=0.2)
+        m = nozzle_to_gun(n)
+        nozzle = (v @ m[:3, :3].T + m[:3, 3], f)
+    return Gun(*gun_mesh, gun_to_flange(tool.gun), tool.gun.nozzle_length, nozzle)
 
 
 def gantry_offset(cell: CellConfig) -> np.ndarray:
