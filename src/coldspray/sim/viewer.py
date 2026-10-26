@@ -20,6 +20,7 @@ from vtkmodules.vtkRenderingCore import vtkCellPicker
 
 from coldspray.cell import base_world, turntable_motion
 from coldspray.kinematics.robot import HOME_DEG, Robot
+from coldspray.planner.position import gun_down_deg
 from coldspray.models import CellConfig
 from coldspray.sim.cell_model import OPTIONAL, CellMeshes
 from coldspray.toolpath.model import Toolpath
@@ -34,6 +35,7 @@ PART = "#4f6d7a"
 SUBSTRATE = "#b0bec5"
 BUILD_FACE = "#2bb673"
 OUT_OF_DATE = "#e37400"
+STEEP = "#f2b600"          # gun pointing further down than allowed
 
 
 @dataclass
@@ -81,6 +83,8 @@ class Scene:
         self.joints = np.zeros((0, 6))
         self.reachable = np.zeros(0, bool)
         self.collisions: dict[int, set] = {}
+        self.gun_down = np.zeros(0)       # spray direction below horizontal (deg) per sample
+        self.steep = np.zeros(0, bool)    # ... beyond the allowed limit
         self.cell_cfg: CellConfig | None = None
         self.mode = "preview"
 
@@ -368,11 +372,12 @@ class Scene:
         self.collisions = {}
 
     def set_path(self, path: Toolpath, cell: CellConfig, part=None, plate_size=None, step=5.0, home=None,
-                 angle_step=2.0, substrate=None):
+                 angle_step=2.0, substrate=None, gun_limit_deg=None):
         """Preview mode: draw a toolpath, with optional part and substrate meshes
         (vertices, faces) in BASE coordinates (`plate_size` (w, l): an old-style
         plate when no substrate is given). Returns the joint angles for every
-        sampled point (NaN = unreachable)."""
+        sampled point (NaN = unreachable). Points where the gun points more than
+        `gun_limit_deg` below horizontal are marked."""
         self.cancel_face_pick()
         self._clear_path()
         self.mode = "preview"
@@ -390,6 +395,8 @@ class Scene:
         targets = [robot_from_world @ b @ p for b, p in zip(self.base_frames, s.poses)]
         self.joints = self.robot.ik_path(targets, seed_deg=HOME_DEG if home is None else home)
         self.reachable = ~np.isnan(self.joints[:, 0])
+        self.gun_down = gun_down_deg(self.base_frames @ s.poses)
+        self.steep = (self.gun_down > gun_limit_deg + 1e-6) if gun_limit_deg is not None             else np.zeros(len(s), bool)
         self.gun_on, self.path_name, self.n_points = s.gun_on, path.name, len(s)
         pts = s.poses[:, :3, 3]           # BASE coordinates
 
@@ -405,6 +412,8 @@ class Scene:
             if segs:
                 lines = np.hstack([[2, i - 1, i] for i in segs])
                 add(self.pl.add_mesh(pv.PolyData(pts, lines=lines), color=color, line_width=width))
+        if self.steep.any():
+            add(self.pl.add_points(pts[self.steep], color=STEEP, point_size=7, render_points_as_spheres=True))
         if (~self.reachable).any():
             add(self.pl.add_points(pts[~self.reachable], color=BAD, point_size=10, render_points_as_spheres=True))
         for a in self.path_actors:
@@ -438,6 +447,8 @@ class Scene:
             parts.append(f"{bad} unreachable points")
         if crashes:
             parts.append(f"{crashes} collision points")
+        if self.steep.any():
+            parts.append(f"{int(self.steep.sum())} points gun too steep (down {self.gun_down.max():.0f}°)")
         self.summary.SetText(3, "\n".join(parts) if parts else "all points reachable")
         self.summary.GetTextProperty().SetColor(pv.Color(BAD if parts else "green").float_rgb)
 
@@ -465,7 +476,8 @@ class Scene:
         crash = self.collisions.get(i)
         crash_text = ("\nCOLLISION: " + ", ".join(f"{a} / {b}" for a, b in sorted(crash))) if crash else ""
         self.status.SetText(2, f"{self.path_name}  point {i}/{self.n_points - 1}  "
-                               f"spray {'ON' if self.gun_on[i] else 'off'}\nA1..A6: {j}   {table}{crash_text}")
+                               f"spray {'ON' if self.gun_on[i] else 'off'}   gun {self.gun_down[i]:.0f}° down"
+                               f"{'  TOO STEEP' if self.steep[i] else ''}\nA1..A6: {j}   {table}{crash_text}")
 
     def focus_on_work(self):
         target = base_world(self.cell_cfg)[:3, 3] if self.cell_cfg else self.world_from_robot[:3, 3]

@@ -12,6 +12,8 @@ from typing import Literal
 import numpy as np
 from scipy.spatial.transform import Rotation, Slerp
 
+from coldspray.transforms import frame
+
 
 @dataclass
 class Move:
@@ -52,6 +54,12 @@ class Toolpath:
     def transformed(self, t: np.ndarray) -> "Toolpath":
         """Copy with every pose replaced by `t @ pose` (speeds, spray state and axes kept)."""
         return Toolpath(self.name, [Move(t @ m.pose, m.speed, m.gun_on, m.kind, dict(m.axes))
+                                    for m in self.moves])
+
+    def rolled(self, deg: float) -> "Toolpath":
+        """Copy with the gun turned `deg` about its spray axis (tool X) at every pose."""
+        r = frame(c=deg)
+        return Toolpath(self.name, [Move(m.pose @ r, m.speed, m.gun_on, m.kind, dict(m.axes))
                                     for m in self.moves])
 
     def sample(self, step: float = 5.0, angle_step: float = 2.0) -> Samples:

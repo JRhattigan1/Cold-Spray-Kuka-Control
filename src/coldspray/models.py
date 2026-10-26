@@ -106,6 +106,7 @@ class CellConfig(BaseModel):
     gun_output: int
     ptp_velocity_pct: int
     home_deg: list[float]
+    gun_max_down_deg: float = 45.0   # spray direction below horizontal allowed
 
 
 class ProcessConfig(BaseModel):

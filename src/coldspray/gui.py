@@ -25,6 +25,7 @@ from coldspray.cell import robroot, table_axis_names
 from coldspray.kinematics.robot import Robot
 from coldspray.models import PROJECT_ROOT, ProcessConfig, load_process, save_process
 from coldspray.pipeline import MODES, check_placement, load_part, plan_part
+from coldspray.planner.position import auto_position, layer_tilts
 from coldspray.post.krl import KRLError, to_krl
 from coldspray.sim.cell_model import OPTIONAL
 from coldspray.sim.scene import gantry_offset, load_assets, make_gun
@@ -224,10 +225,18 @@ class MainWindow(QMainWindow):
         cform.addRow("Gantry E1", self.e1)
         cform.addRow("Table tilt", self.tilt)
         cform.addRow("Table rotation", self.rotation)
-        for box in (self.e1, self.tilt, self.rotation):
+        self.roll = _spin(-180, 180, 0, " °", tip="Gun turned about its spray axis (changes how the wrist reaches;\n"
+                                                  "the spray itself is unchanged)")
+        cform.addRow("Gun roll", self.roll)
+        for box in (self.e1, self.tilt, self.rotation, self.roll):
             box.setKeyboardTracking(False)
             box.valueChanged.connect(self._enter_setup)
         self.nozzle.currentIndexChanged.connect(self._enter_setup)
+        auto_btn = QPushButton("Auto position (gun level)")
+        auto_btn.setToolTip("Choose table tilt, gun roll and gantry E1 so the gun is as level as allowed\n"
+                            "and the whole path is reachable (also done when a part is loaded)")
+        auto_btn.clicked.connect(self._auto_position)
+        cform.addRow(auto_btn)
         self.check_box = QCheckBox("Check collisions")
         self.check_box.setChecked(True)
         cform.addRow(self.check_box)
@@ -364,9 +373,52 @@ class MainWindow(QMainWindow):
         self.scene.set_constrained(False)
         self._enter_setup()
         self._show_placement()
+        found = self._auto_position(quiet=True)
         self.scene.focus_on_part()
         self.plotter.render()
-        self._status(f"Loaded {self.part.name}: set it up, then Generate")
+        if found:
+            self._status(f"Loaded {self.part.name}: set it up, then Generate")
+
+    def _auto_position(self, *_, quiet=False) -> bool:
+        """Set table tilt, gun roll and E1 for a level gun and a reachable path.
+        `quiet`: report problems in the status bar only. False if nothing fully reachable was found."""
+        if self.scene is None or self.part is None:
+            return False
+        try:
+            proc = self.read_process()
+        except ValidationError as e:
+            QMessageBox.warning(self, "Invalid parameter", str(e))
+            return False
+        a, mode = self.assets, self.mode.currentData()
+        cell = self._work_cell()
+        tilts = layer_tilts(cell) if mode == "layers" else [self.tilt.value()]
+
+        def plan(tilt):
+            return plan_part(self.part, proc, mode=mode, tilt_deg=tilt, rotation_deg=self.rotation.value(),
+                             coats=self.coats.value(), cell=cell, substrate=self.substrate)[1]
+
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            pos = auto_position(plan, a.robot, cell, tilts, e1_now=self.e1.value(), log=self._status)
+        except ValueError as e:              # placement not plannable yet
+            self._status(f"Auto position skipped: {e}")
+            return False
+        finally:
+            QApplication.restoreOverrideCursor()
+        for box, value in ((self.tilt, pos.tilt_deg), (self.roll, pos.roll_deg), (self.e1, pos.e1_mm)):
+            if value is not None:
+                box.blockSignals(True)
+                box.setValue(value)
+                box.blockSignals(False)
+        self._enter_setup()
+        msg = (f"Auto position: tilt {pos.tilt_deg:.0f}°, gun roll {pos.roll_deg:.0f}°"
+               + (f", E1 {pos.e1_mm:.0f} mm" if pos.e1_mm is not None else ""))
+        if pos.reach < 1.0:
+            msg += f": best found reaches only {pos.reach:.0%} of the path"
+            if not quiet:
+                QMessageBox.warning(self, "Auto position", msg + "\nTry moving the part or another tilt.")
+        self._status(msg)
+        return pos.reach == 1.0
 
     # --- part setup -----------------------------------------------------------
     def _work_cell(self):
@@ -538,14 +590,15 @@ class MainWindow(QMainWindow):
             self._status("Planning...")
             summary, path = plan_part(self.part, proc, mode=mode, tilt_deg=self.tilt.value(),
                                       rotation_deg=self.rotation.value(), coats=self.coats.value(), cell=cell,
-                                      substrate=self.substrate)
+                                      substrate=self.substrate, roll_deg=self.roll.value())
             if not path.moves:
                 raise ValueError("No toolpath: the part gave no layers (is it thinner than one layer?)")
             self._status("Checking reach...")
             part_mesh = (placed_vertices(self.part), self.part.faces)
             substrate_mesh = self.substrate.mesh()
             joints = self.scene.set_path(path, cell, part=part_mesh, substrate=substrate_mesh, step=2.0,
-                                         home=cell.home_deg, angle_step=5.0)
+                                         home=cell.home_deg, angle_step=5.0,
+                                         gun_limit_deg=cell.gun_max_down_deg)
             self.result = (path, proc, cell, robot)
         except Exception as e:
             QApplication.restoreOverrideCursor()
@@ -572,7 +625,12 @@ class MainWindow(QMainWindow):
     def _update_info(self):
         reach = (f"<span style='color:#d93025'>{self.unreachable} unreachable points</span>" if self.unreachable
                  else "<span style='color:green'>All points reachable</span>")
-        self.info.setText(self.summary_head + reach + "<br>" + self.collision_text)
+        steep, limit = int(self.scene.steep.sum()), self.assets.cell.gun_max_down_deg
+        gun = (f"<span style='color:#b38600'>{steep} points with the gun more than {limit:.0f}° down "
+               f"(max {self.scene.gun_down.max():.0f}°, yellow)</span>" if steep
+               else f"<span style='color:green'>Gun within {limit:.0f}° of level "
+                    f"(max {max(self.scene.gun_down.max(), 0):.0f}° down)</span>")
+        self.info.setText(self.summary_head + reach + "<br>" + gun + "<br>" + self.collision_text)
 
     # --- collision checking (background) -------------------------------------------
     def _start_collision_check(self, robot, gun, cell, part, substrate, joints):
@@ -632,6 +690,13 @@ class MainWindow(QMainWindow):
                 self, "Collisions found",
                 f"The simulation found {len(hits)} collision points. Save the program anyway?") \
                 != QMessageBox.StandardButton.Yes:
+            return
+        steep, limit = int(self.scene.steep.sum()), cell.gun_max_down_deg
+        if steep and QMessageBox.question(
+                self, "Gun pointing down",
+                f"At {steep} points the gun points more than {limit:.0f}° below horizontal "
+                f"(down to {self.scene.gun_down.max():.0f}°), which is bad for the equipment. "
+                "Save the program anyway?") != QMessageBox.StandardButton.Yes:
             return
         out = PROJECT_ROOT / "output"
         out.mkdir(exist_ok=True)

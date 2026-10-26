@@ -55,3 +55,7 @@ gun_output: 1         # $OUT number that switches the spray on
 ptp_velocity_pct: 20  # PTP speed override in generated programs
 
 home_deg: [0, -90, 90, 0, 0, 0]
+
+# The gun must not point far down (bad for the equipment): spray direction at
+# most this many degrees below horizontal. Steeper points are flagged.
+gun_max_down_deg: 45.0

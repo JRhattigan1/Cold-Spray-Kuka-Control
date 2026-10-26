@@ -87,8 +87,9 @@ def check_placement(vertices, substrate: Substrate, mode="layers"):
 
 
 def plan_part(part: Part, proc: ProcessConfig, mode="layers", tilt_deg=0.0, rotation_deg=0.0,
-              coats=1, cell: CellConfig | None = None, substrate=Substrate()):
-    """Returns (summary, toolpath in BASE). `summary` is a short description for the user."""
+              coats=1, cell: CellConfig | None = None, substrate=Substrate(), roll_deg=0.0):
+    """Returns (summary, toolpath in BASE). `summary` is a short description for the user.
+    `roll_deg` turns the gun about its spray axis (for reach; the spray is unchanged)."""
     v = placed_vertices(part)
     check_placement(v, substrate, mode)
     v = v - [0.0, 0.0, substrate.top]  # plan relative to the plate top
@@ -97,11 +98,11 @@ def plan_part(part: Part, proc: ProcessConfig, mode="layers", tilt_deg=0.0, rota
     tilt_axis, rot_axis = (tt.tilt.axis, tt.rotation.axis) if tt else ("E2", "E5")
     if mode == "revolve":
         path = plan_revolve(v, part.faces, proc, part.name, coats=coats, tilt_deg=tilt_deg,
-                            tilt_axis=tilt_axis, rotation_axis=rot_axis).transformed(up)
+                            tilt_axis=tilt_axis, rotation_axis=rot_axis).transformed(up).rolled(roll_deg)
         passes = sum(1 for a, b in zip(path.moves, path.moves[1:]) if b.gun_on and a.gun_on
                      and abs(b.pose[2, 3] - a.pose[2, 3]) > 1e-9)
         return f"{coats} coat(s), {passes + coats} passes", path
     layers = slice_mesh(v, part.faces, proc.layer_thickness_mm)
     table = {tilt_axis: tilt_deg, rot_axis: rotation_deg} if tt else {}
-    path = plan_layers(layers, proc, part.name, table_axes=table).transformed(up)
+    path = plan_layers(layers, proc, part.name, table_axes=table).transformed(up).rolled(roll_deg)
     return f"{len(layers)} layers", path
