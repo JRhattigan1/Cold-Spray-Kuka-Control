@@ -6,6 +6,7 @@ import yaml
 from pydantic import BaseModel
 
 CONFIG_DIR = Path(__file__).parent / "config"
+PROJECT_ROOT = Path(__file__).parents[2]
 
 
 class OPWConfig(BaseModel):
@@ -36,13 +37,37 @@ class XYZABC(BaseModel):
     c: float = 0.0
 
 
+class GunConfig(BaseModel):
+    step_file: str
+    mount_point: tuple[float, float, float]
+    clock_deg: float = 0.0
+    nozzle: str
+    nozzle_lengths_mm: dict[str, float]
+
+    @property
+    def nozzle_length(self) -> float:
+        return self.nozzle_lengths_mm[self.nozzle]
+
+
 class ToolConfig(BaseModel):
     name: str
     verified: bool = False
-    tcp: XYZABC
+    tcp: XYZABC | None = None
+    gun: GunConfig | None = None
+
+
+class GantryConfig(BaseModel):
+    axis: str = "E1"
+    direction: tuple[float, float, float]
+    limits_mm: tuple[float, float]
+    position_mm: float = 0.0
 
 
 class CellConfig(BaseModel):
+    cad_cache: str | None = None
+    robroot: XYZABC = XYZABC()
+    robot_cad_pose_deg: list[float] = [0, -90, 90, 0, 0, 0]
+    gantry: GantryConfig | None = None
     base_number: int
     base: XYZABC
     tool_number: int

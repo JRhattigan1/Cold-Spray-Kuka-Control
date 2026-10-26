@@ -14,7 +14,6 @@ from coldspray.kinematics.robot import Robot
 from coldspray.models import load_cell, load_process, load_robot, load_tool
 from coldspray.planner.layers import plan_layers
 from coldspray.post.krl import to_krl
-from coldspray.transforms import frame
 
 
 def _test_block():
@@ -49,10 +48,8 @@ def main(argv=None):
     print(f"Wrote {src}")
 
     if "--no-view" not in argv:
-        from coldspray.sim.viewer import show
-        size = tuple(v[:, :2].max(axis=0) + 10)
-        show(robot, path, frame(**cell.base.model_dump()), plate_size=size,
-             home=cell.home_deg, step=2.0, part=(v, f))
+        from coldspray.sim.scene import show_toolpath
+        show_toolpath(path, part=(v, f), plate_size=tuple(v[:, :2].max(axis=0) + 10), step=2.0)
 
 
 if __name__ == "__main__":

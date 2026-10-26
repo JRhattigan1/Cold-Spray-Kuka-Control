@@ -10,18 +10,21 @@ when the robot reaches the point rather than early.
 
 import numpy as np
 
+from coldspray.cell import base_in_robot, gantry_position
 from coldspray.kinematics.robot import Robot
 from coldspray.models import CellConfig, ProcessConfig
 from coldspray.toolpath.model import Toolpath
-from coldspray.transforms import frame, xyzabc
+from coldspray.transforms import xyzabc
 
 
 class KRLError(Exception):
     pass
 
 
-def _axis(q) -> str:
-    return "{" + ", ".join(f"A{i + 1} {v:.3f}" for i, v in enumerate(q)) + "}"
+def _axis(q, external: dict[str, float] | None = None) -> str:
+    items = [f"A{i + 1} {v:.3f}" for i, v in enumerate(q)]
+    items += [f"{k} {v:.3f}" for k, v in (external or {}).items()]
+    return "{" + ", ".join(items) + "}"
 
 
 def _pos(pose) -> str:
@@ -31,7 +34,9 @@ def _pos(pose) -> str:
 
 def to_krl(path: Toolpath, robot: Robot, cell: CellConfig, proc: ProcessConfig) -> str:
     name = path.name[:24]
-    base = frame(**cell.base.model_dump())
+    base = base_in_robot(cell)
+    # External axes are set by the PTP moves; LIN moves leave them where they are.
+    ext = {cell.gantry.axis: gantry_position(cell)} if cell.gantry else {}
     gun = f"$OUT[{cell.gun_output}]"
     home = cell.home_deg
 
@@ -69,7 +74,7 @@ def to_krl(path: Toolpath, robot: Robot, cell: CellConfig, proc: ProcessConfig) 
             if not sols:
                 raise KRLError(f"move {i}: PTP target is unreachable")
             seed = sols[0]
-            lines.append(f"PTP {_axis(seed)}")
+            lines.append(f"PTP {_axis(seed, ext)}")
             continue
 
         if m.speed != vel:

@@ -56,5 +56,21 @@ def test_ik_with_tool(robot):
     assert np.allclose(sols[0], q, atol=1e-6)
 
 
+@pytest.mark.parametrize("q", [[0, 0, 0, 0, 0, 0], [30, -60, 100, 45, -30, 120], [-100, -120, 20, -170, 90, -300]])
+def test_link_frames_end_at_flange(robot, q):
+    t6 = robot.link_frames(q)[-1]
+    flange_opw = t6.copy()
+    flange_opw[:3, 3] += robot.params.c4 * t6[:3, 2]
+    assert np.allclose(flange_opw @ robot._opw_to_kuka, robot.flange(q), atol=1e-9)
+
+
+def test_link_frames_follow_their_joint(robot):
+    # Moving only A5 leaves A1..A4 where they were
+    a, b = robot.link_frames([10, -80, 95, 20, 0, 0]), robot.link_frames([10, -80, 95, 20, 70, 0])
+    for k in range(4):
+        assert np.allclose(a[k], b[k])
+    assert not np.allclose(a[4], b[4])
+
+
 def test_ik_out_of_reach(robot):
     assert robot.ik(frame(4000, 0, 1000)) == []

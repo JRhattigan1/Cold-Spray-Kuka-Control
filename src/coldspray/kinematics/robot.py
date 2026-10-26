@@ -9,7 +9,7 @@ import numpy as np
 
 from coldspray.kinematics import opw
 from coldspray.models import RobotConfig, ToolConfig
-from coldspray.transforms import frame
+from coldspray.tool import tool_frame
 
 HOME_DEG = np.array([0.0, -90.0, 90.0, 0.0, 0.0, 0.0])
 
@@ -29,7 +29,7 @@ class Robot:
         home_rot = opw.forward(self.params, np.radians(HOME_DEG))[:3, :3]
         self._opw_to_kuka = np.eye(4)
         self._opw_to_kuka[:3, :3] = home_rot.T
-        self.tool = frame(**tool.tcp.model_dump()) if tool else np.eye(4)
+        self.tool = tool_frame(tool)
 
     def flange(self, joints_deg) -> np.ndarray:
         return opw.forward(self.params, np.radians(joints_deg)) @ self._opw_to_kuka
@@ -69,6 +69,38 @@ class Robot:
             if sols:
                 out[i] = seed = sols[0]
         return out
+
+    def link_frames(self, joints_deg) -> list[np.ndarray]:
+        """Frames of the moving links A1..A6 in the robot root frame.
+
+        Each frame turns with its own joint, so a link's CAD geometry drawn at
+        pose q0 moves to pose q by  link_frames(q)[k] @ inv(link_frames(q0)[k]).
+        """
+        p = self.params
+        q = np.radians(joints_deg) * p.signs + p.offsets
+
+        def rz(t):
+            m = np.eye(4)
+            m[:2, :2] = [[np.cos(t), -np.sin(t)], [np.sin(t), np.cos(t)]]
+            return m
+
+        def ry(t):
+            m = np.eye(4)
+            m[[0, 0, 2, 2], [0, 2, 0, 2]] = [np.cos(t), np.sin(t), -np.sin(t), np.cos(t)]
+            return m
+
+        def tr(x, y, z):
+            m = np.eye(4)
+            m[:3, 3] = [x, y, z]
+            return m
+
+        t1 = rz(q[0])
+        t2 = t1 @ tr(p.a1, p.b, p.c1) @ ry(q[1])
+        t3 = t2 @ tr(0, 0, p.c2) @ ry(q[2])
+        t4 = t3 @ tr(p.a2, 0, p.c3) @ rz(q[3])  # A4 turns about the forearm, at the wrist centre
+        t5 = t4 @ ry(q[4])
+        t6 = t5 @ rz(q[5])
+        return [t1, t2, t3, t4, t5, t6]
 
     def link_points(self, joints_deg) -> np.ndarray:
         """Key points along the arm (robot frame) for drawing:

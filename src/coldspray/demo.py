@@ -11,7 +11,6 @@ from coldspray.kinematics.robot import Robot
 from coldspray.models import load_cell, load_process, load_robot, load_tool
 from coldspray.post.krl import to_krl
 from coldspray.toolpath.raster import plate_raster
-from coldspray.transforms import frame
 
 
 def main(argv=None):
@@ -27,8 +26,8 @@ def main(argv=None):
     print(f"Wrote {src} ({len(path.moves)} moves)")
 
     if "--no-view" not in argv:
-        from coldspray.sim.viewer import show
-        show(robot, path, frame(**cell.base.model_dump()), home=cell.home_deg)
+        from coldspray.sim.scene import show_toolpath
+        show_toolpath(path, plate_size=(100.0, 100.0))
 
 
 if __name__ == "__main__":

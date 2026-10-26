@@ -1,7 +1,15 @@
-# Spray gun TCP relative to the KUKA flange, in KUKA TOOL_DATA convention:
-# X, Y, Z in mm, A, B, C in degrees (Z-Y'-X'' Euler). Tool X = spray direction.
-# PLACEHOLDER: gun mounted at 90 deg to the flange. Replace with the measured /
-# taught TOOL_DATA from the controller before running on the robot.
-name: cold_spray_gun
+# Spray gun on the robot flange. Tool X = spray direction.
+# The TCP is computed from the gun CAD and the chosen nozzle, unless `tcp` is
+# given (X, Y, Z mm / A, B, C deg, KUKA TOOL_DATA convention) - once the gun
+# is taught on the controller, copy TOOL_DATA here and that takes priority.
+name: Impact Gun 6/11 EvoCSII
 verified: false
-tcp: {x: 150.0, y: 0.0, z: 250.0, a: 0.0, b: 90.0, c: 0.0}
+# tcp: {x: 0, y: 0, z: 0, a: 0, b: 0, c: 0}
+
+gun:
+  step_file: assets/cad/Impact_Gun_6-11_EvoCSII Gun without nozzles.stp
+  # Gun CAD: origin = nozzle mounting face centre, spray along +Y.
+  mount_point: [-138.0, -274.0, 0.0]   # centre of the robot mounting face (normal -X)
+  clock_deg: 0.0      # rotation of the gun about the flange axis - CHECK on the robot
+  nozzle: medium
+  nozzle_lengths_mm: {short: 109.7, medium: 160.8, long: 210.8}  # Impact manual 4.2.7
