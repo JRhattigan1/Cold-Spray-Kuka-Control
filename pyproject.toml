@@ -16,7 +16,7 @@ dependencies = [
 
 [project.optional-dependencies]
 sim = ["pyvista", "pyvistaqt", "PySide6"]
-cad = ["cadquery", "trimesh"]
+cad = ["cadquery-ocp", "trimesh", "shapely", "networkx", "rtree"]
 dev = ["pytest"]
 
 [tool.setuptools.packages.find]

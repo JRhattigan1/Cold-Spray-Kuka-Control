@@ -7,3 +7,9 @@ approach_height_mm: 100.0   # clearance above the start / end point
 rapid_speed_mm_s: 250.0     # LIN speed for non-spray moves
 spray_settle_s: 2.0         # dwell after switching spray on, before moving
 approx_distance_mm: 1.0     # $APO.CDIS corner blending
+
+# Additive build (part slicing)
+layer_thickness_mm: 0.5     # deposit height from one full layer of passes
+track_width_mm: 4.0         # width of a single spray track (nozzle footprint)
+raster_angle_step_deg: 90   # raster direction rotates by this each layer
+contour_passes: 1           # perimeter passes around each layer before infill

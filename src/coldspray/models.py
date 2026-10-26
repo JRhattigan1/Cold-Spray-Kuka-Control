@@ -60,6 +60,10 @@ class ProcessConfig(BaseModel):
     rapid_speed_mm_s: float
     spray_settle_s: float
     approx_distance_mm: float
+    layer_thickness_mm: float
+    track_width_mm: float
+    raster_angle_step_deg: float
+    contour_passes: int
 
 
 def _load(model, name, path):
