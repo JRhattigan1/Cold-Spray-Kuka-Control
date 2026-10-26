@@ -4,7 +4,7 @@ from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut
 from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeCylinder
 from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt
 from OCP.STEPControl import STEPControl_AsIs, STEPControl_Writer
-from shapely.geometry import Point
+from shapely.geometry import LineString, Point
 
 from coldspray.cad.slicer import place_on_plate, slice_mesh
 from coldspray.cad.step_io import load_step, tessellate
@@ -59,8 +59,17 @@ def test_plan_stays_on_part(layers):
     grown = layers[0].region.buffer(0.01)
     for m in spray:
         assert grown.contains(Point(m.pose[0, 3], m.pose[1, 3]))
-    heights = sorted({round(m.pose[2, 3], 6) for m in spray})
+    sprayed = [m for m in spray if m.speed == proc.traverse_speed_mm_s]
+    heights = sorted({round(m.pose[2, 3], 6) for m in sprayed})
     assert np.allclose(heights, [l.z_bottom + proc.standoff_mm for l in layers])
+    # every move made at spray speed lies on the part (no stripes across the hole)
+    for a, b in zip(path.moves, path.moves[1:]):
+        if b.speed == proc.traverse_speed_mm_s and b.gun_on:
+            seg = LineString([a.pose[:2, 3], b.pose[:2, 3]])
+            assert grown.contains(seg)
+    # no zero-length moves
+    pts = np.array([m.pose[:3, 3] for m in path.moves])
+    assert np.all(np.linalg.norm(np.diff(pts, axis=0), axis=1) > 1e-9)
 
 
 def test_raster_rotates_between_layers(layers):

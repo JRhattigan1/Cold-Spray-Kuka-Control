@@ -21,7 +21,9 @@ def _polyline(points) -> pv.PolyData:
 
 
 def show(robot: Robot, path: Toolpath, base: np.ndarray, plate_size=(100.0, 100.0),
-         step=5.0, home=None, screenshot=None):
+         step=5.0, home=None, screenshot=None, part=None):
+    """`part` is an optional (vertices, faces) mesh in BASE coordinates, drawn
+    semi-transparent in place of the plain plate."""
     poses, gun, _ = path.sample(step)
     world = np.array([base @ p for p in poses])
     joints = robot.ik_path(world, seed_deg=HOME_DEG if home is None else home)
@@ -36,6 +38,10 @@ def show(robot: Robot, path: Toolpath, base: np.ndarray, plate_size=(100.0, 100.
     w, l = plate_size
     plate = pv.Box(bounds=(0, w, 0, l, -10, 0)).transform(base, inplace=False)
     pl.add_mesh(plate, color="#b0bec5")
+    if part is not None:
+        v, f = part
+        mesh = pv.PolyData(np.asarray(v, float), np.hstack([np.full((len(f), 1), 3), f]).ravel())
+        pl.add_mesh(mesh.transform(base, inplace=False), color="#4f6d7a", opacity=0.35)
 
     pts = world[:, :3, 3]
     for mask, color, width in ((gun, SPRAY, 3), (~gun, TRAVEL, 1)):

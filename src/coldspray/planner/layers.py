@@ -3,10 +3,14 @@
 Per layer: `contour_passes` perimeter loops, then raster lines filling the
 rest at `step_over_mm` spacing, rotated by `raster_angle_step_deg` each layer.
 Nozzle height is the top of the previous layer + standoff. The spray stays on
-through each layer and is switched off for the move to the next layer.
+through each layer (powder feed can't switch quickly) and is switched off for
+the move to the next layer.
 
-v1 limitations: raster segments are joined by straight moves (which can cross
-holes or concave notches), and the gun always points straight down.
+Neighbouring strokes (gap up to 1.5 x step-over) are joined at spray height.
+Longer gaps are "jumps": the gun lifts by `jump_height_mm` and moves at rapid
+speed, so little powder deposits on the way across holes or between islands.
+
+v1 limitation: the gun always points straight down.
 """
 
 import numpy as np
@@ -19,6 +23,7 @@ from coldspray.toolpath.model import Move, Toolpath, spray_frame
 
 DOWN = (0.0, 0.0, -1.0)
 ALONG_X = (1.0, 0.0, 0.0)
+SIMPLIFY_MM = 0.05  # max deviation when thinning dense contour points
 
 
 def _polygons(geom) -> list[Polygon]:
@@ -32,7 +37,7 @@ def contour_loops(region: MultiPolygon, proc: ProcessConfig) -> list[np.ndarray]
     loops = []
     for k in range(proc.contour_passes):
         inset = region.buffer(-(proc.track_width_mm / 2 + k * proc.step_over_mm))
-        for poly in _polygons(inset):
+        for poly in _polygons(inset.simplify(SIMPLIFY_MM)):
             for ring in [poly.exterior, *poly.interiors]:
                 loops.append(np.asarray(ring.coords))
     return loops
@@ -90,7 +95,14 @@ def plan_layers(layers: list[Layer], proc: ProcessConfig, name="part") -> Toolpa
         path.moves.append(Move(at(first, z + proc.approach_height_mm), proc.rapid_speed_mm_s, kind=kind))
         path.moves.append(Move(at(first, z), proc.rapid_speed_mm_s))
         for stroke in strokes:
+            here = path.moves[-1].pose[:2, 3]
+            if np.linalg.norm(stroke[0] - here) > 1.5 * proc.step_over_mm:
+                up = z + proc.jump_height_mm
+                for p, h in ((here, up), (stroke[0], up), (stroke[0], z)):
+                    path.moves.append(Move(at(p, h), proc.rapid_speed_mm_s, gun_on=True))
             for p in stroke:
+                if np.allclose(path.moves[-1].pose[:2, 3], p):
+                    continue
                 path.moves.append(Move(at(p, z), proc.traverse_speed_mm_s, gun_on=True))
         last = strokes[-1][-1]
         path.moves.append(Move(at(last, z + proc.approach_height_mm), proc.rapid_speed_mm_s))

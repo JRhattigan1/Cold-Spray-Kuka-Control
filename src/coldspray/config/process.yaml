@@ -13,3 +13,4 @@ layer_thickness_mm: 0.5     # deposit height from one full layer of passes
 track_width_mm: 4.0         # width of a single spray track (nozzle footprint)
 raster_angle_step_deg: 90   # raster direction rotates by this each layer
 contour_passes: 1           # perimeter passes around each layer before infill
+jump_height_mm: 50.0        # long moves between areas lift the gun this much (spray stays on)

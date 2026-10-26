@@ -64,6 +64,7 @@ class ProcessConfig(BaseModel):
     track_width_mm: float
     raster_angle_step_deg: float
     contour_passes: int
+    jump_height_mm: float
 
 
 def _load(model, name, path):
