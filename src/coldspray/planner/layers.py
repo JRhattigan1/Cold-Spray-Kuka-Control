@@ -14,64 +14,15 @@ v1 limitation: the gun always points straight down.
 """
 
 import numpy as np
-from shapely import affinity
-from shapely.geometry import LineString, MultiPolygon, Polygon
 
 from coldspray.cad.slicer import Layer
 from coldspray.models import ProcessConfig
+from coldspray.planner.patterns import (  # noqa: F401  (re-exported for old imports)
+    SIMPLIFY_MM, _order, _polygons, contour_loops, raster_segments)
 from coldspray.toolpath.model import Move, Toolpath, spray_frame
 
 DOWN = (0.0, 0.0, -1.0)
 ALONG_X = (1.0, 0.0, 0.0)
-SIMPLIFY_MM = 0.05  # max deviation when thinning dense contour points
-
-
-def _polygons(geom) -> list[Polygon]:
-    if geom.is_empty:
-        return []
-    return list(geom.geoms) if isinstance(geom, MultiPolygon) else [geom]
-
-
-def contour_loops(region: MultiPolygon, proc: ProcessConfig) -> list[np.ndarray]:
-    """Perimeter loops, the first one half a track inside the part edge."""
-    loops = []
-    for k in range(proc.contour_passes):
-        inset = region.buffer(-(proc.track_width_mm / 2 + k * proc.step_over_mm))
-        for poly in _polygons(inset.simplify(SIMPLIFY_MM)):
-            for ring in [poly.exterior, *poly.interiors]:
-                loops.append(np.asarray(ring.coords))
-    return loops
-
-
-def raster_segments(region, step: float, angle_deg: float) -> list[np.ndarray]:
-    """Parallel lines `step` apart across `region` at `angle_deg`, clipped to it."""
-    if region.is_empty:
-        return []
-    rotated = affinity.rotate(region, -angle_deg, origin=(0, 0))
-    xmin, ymin, xmax, ymax = rotated.bounds
-    segments = []
-    for y in np.arange(ymin + step / 2, ymax, step):
-        cut = rotated.intersection(LineString([(xmin - 1, y), (xmax + 1, y)]))
-        parts = getattr(cut, "geoms", [cut])
-        for seg in parts:
-            if seg.length > 1e-6:
-                back = affinity.rotate(seg, angle_deg, origin=(0, 0))
-                segments.append(np.asarray(back.coords)[[0, -1]])
-    return segments
-
-
-def _order(segments: list[np.ndarray], start) -> list[np.ndarray]:
-    """Greedy nearest-neighbour ordering, flipping segments as needed."""
-    remaining = list(segments)
-    out, here = [], np.asarray(start, float)
-    while remaining:
-        d = [min(np.linalg.norm(s[0] - here), np.linalg.norm(s[-1] - here)) for s in remaining]
-        s = remaining.pop(int(np.argmin(d)))
-        if np.linalg.norm(s[-1] - here) < np.linalg.norm(s[0] - here):
-            s = s[::-1]
-        out.append(s)
-        here = s[-1]
-    return out
 
 
 def plan_layers(layers: list[Layer], proc: ProcessConfig, name="part", table_axes: dict | None = None) -> Toolpath:
