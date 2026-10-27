@@ -264,21 +264,21 @@ Partial WPs are resumed by a fresh agent in the next wave, using their `-resume.
 
 | WP | Status | Attempts | Branch | Last report |
 |---|---|---|---|---|
-| WP0 | todo | 0 | wp/WP0 | - |
-| A1 | todo | 0 | wp/A1 | - |
-| A2 | todo | 0 | wp/A2 | - |
-| A3 | todo | 0 | wp/A3 | - |
-| B1 | todo | 0 | wp/B1 | - |
-| B2 | todo | 0 | wp/B2 | - |
-| C1 | todo | 0 | wp/C1 | - |
-| D1 | todo | 0 | wp/D1 | - |
-| D2 | todo | 0 | wp/D2 | - |
-| D3 | todo | 0 | wp/D3 | - |
-| E1 | todo | 0 | wp/E1 | - |
+| WP0 | done | 2 | wp/WP0, wp/WP0r | WP0-2.md |
+| A1 | done | 1 | wp/A1 | A1-1.md |
+| A2 | partial | 1 | wp/A2 | A2-1.md: no plane labels; fixed 600 mm size |
+| A3 | todo | 0 | wp/A3 | - (A1 + A2 are ready) |
+| B1 | done | 1 | wp/B1 | B1-1.md |
+| B2 | partial | 1 | wp/B2 | B2-1.md: per-pattern snapshot + reach/collision tests; contour seam rotation |
+| C1 | done | 1 | wp/C1 | C1-1.md: optional per-move orientation limit |
+| D1 | done | 1 | wp/D1 | D1-1.md: GUI click check; invalidate Surface toolpath when coat faces change |
+| D2 | done | 1 | wp/D2 | D2-1.md: lift on turns / unbridged gaps |
+| D3 | partial | 1 | wp/D3 | D3-1.md: end-to-end Surface run on test_repair (deps now merged) |
+| E1 | partial | 1 | wp/E1 | E1-1.md: register advanced process-form rows with widgets.advanced() |
 | E2 | todo | 0 | wp/E2 | - |
-| F1 | todo | 0 | wp/F1 | - |
-| F2 | todo | 0 | wp/F2 | - |
-| G1 | todo | 0 | wp/G1 | - |
+| F1 | done | 1 | wp/F1 | F1-1.md: plan_part test with real PurgeConfig |
+| F2 | partial | 1 | wp/F2 | F2-1.md: drag marker, Move gun here, custom dir, save to cell.yaml |
+| G1 | todo | 0 | wp/G1 | - (patterns + datums ready) |
 
 Status values: `todo | in-progress | partial | done | blocked`.
 
