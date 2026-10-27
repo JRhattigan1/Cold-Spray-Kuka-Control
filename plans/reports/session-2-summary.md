@@ -90,3 +90,23 @@ Merge rules (from M1): `git merge --no-ff`, keep both sides on conflict, then ru
 ## Housekeeping
 - Worktrees for every branch above are still in `C:\Users\qrb21117\worktrees\cs-*`. Remove each with `git worktree remove` after its branch merges. If a `.git\worktrees\<name>` folder is left behind locked, PowerShell `Remove-Item -Recurse -Force` cleared it this session.
 - Reports for each agent are in `plans/reports/<name>-<n>.md` on its branch, and on `main` once merged.
+
+## Update: merge pass started, then stopped (session reset)
+- **Merged into `main`** (all clean, no conflicts): R1, R2b, T1, A3, X10, X1, X4, X9, X3, X8, X2, X6, X5. The full suite on the merged `main` was started but **stopped before it finished**, so `main` is **untested** after these merges. Run it first.
+- **`wp/G1`:** the frame bug is fixed (2fa1f3b). `plan_layers` takes `to_base` and `plan_part` passes `build_frame(part)`. 90 tests pass (turns, patterns, layers_patterns, KRL regression). **Ready to merge, not merged.**
+- **`wp/R3`:** the coat-face fix agent was stopped mid-way and left **4 uncommitted files** in `C:\Users\qrb21117\worktrees\cs-R3`. Review that diff (it may include a half-done `git merge main`). Then finish the fix from `R3-1.md`, or discard the changes and redo it.
+- **P1–P8 were stopped before committing anything**, so no work was lost. Their tasks are still open:
+  - P1: constraint angle at 0°/180°, distance side, flaky `test_fast`
+  - P2: purge every-N in Surface mode; auto-position message when the purge point is unreachable
+  - P3: check crosshatch and spiral really differ from zigzag and concentric
+  - P4: `centre_between` and `fix` rows in the constraints panel
+  - P5: Simple/Advanced for the Simulate and Export panels
+  - P6: Simple/Advanced for Position, plus removing F2's workarounds
+  - P7: collision checks in the end-to-end tests, including purge moves
+  - P8: clearance check on Surface-mode turns
+- **Next:**
+  1. Run the full suite on `main`.
+  2. Merge `wp/G1`.
+  3. Sort out `wp/R3`.
+  4. Rerun P1–P8, then the E2 Part step.
+  5. Update plan §5 and §8 and `ROADMAP.md`.
