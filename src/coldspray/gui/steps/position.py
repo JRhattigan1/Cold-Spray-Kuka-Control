@@ -395,6 +395,8 @@ class PositionStep:
             w.toggled.connect(self._purge_changed)
         self.purge_dir.currentIndexChanged.connect(self._purge_changed)
         box.toggled.connect(lambda on: on and self._purge_load())
+        if hasattr(self, "e1"):                 # reach depends on the gantry position
+            self.e1.valueChanged.connect(lambda *_: self._purge_show())
         return box
 
     def _purge_cell(self):
