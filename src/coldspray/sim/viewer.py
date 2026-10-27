@@ -174,6 +174,15 @@ class Scene:
             for a in self.gun_actors:
                 a.SetPickable(False)
 
+    def set_purge_marker(self, pose, visible=True, reachable=True):
+        """Ghost gun at the purge point (WORLD pose); made on first use."""
+        from coldspray.sim.markers import GHOST, GunMarker
+        if getattr(self, "purge_marker", None) is None:
+            self.purge_marker = GunMarker(self.pl)
+        self.purge_marker.set_pose(pose)
+        self.purge_marker.set_visible(visible)
+        self.purge_marker.set_color(GHOST if reachable else BAD)
+
     def set_group_visible(self, label: str, visible: bool):
         if label in self.group_actors:
             self.group_actors[label].SetVisibility(visible)
