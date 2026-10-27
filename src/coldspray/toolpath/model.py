@@ -20,10 +20,85 @@ class Move:
     pose: np.ndarray
     speed: float                      # mm/s along the part surface (ignored for PTP)
     gun_on: bool = False              # spray state during this move
-    kind: Literal["LIN", "PTP"] = "LIN"
+    kind: Literal["LIN", "PTP", "CIRC"] = "LIN"
     axes: dict[str, float] = field(default_factory=dict)  # e.g. {"E2": 0.0, "E5": 90.0}
     tag: str = ""                     # what the move is for: contour, infill, turn, jump, purge, approach
     dwell_s: float = 0.0              # wait this long at the point after arriving
+    aux: np.ndarray | None = None     # CIRC: a pose on the arc between the previous move and this one
+
+
+def cross(a, b) -> np.ndarray:
+    """np.cross for 3-vectors (single or stacked (n, 3) with a single one), without its overhead."""
+    a, b = np.asarray(a), np.asarray(b)
+    return np.stack([a[..., 1] * b[..., 2] - a[..., 2] * b[..., 1], a[..., 2] * b[..., 0] - a[..., 0] * b[..., 2],
+                     a[..., 0] * b[..., 1] - a[..., 1] * b[..., 0]], axis=-1)
+
+
+def circle(p0, p1, p2):
+    """Circle through three points: (centre, unit normal, radius, sweep rad from p0 via p1 to p2),
+    or None if they are (nearly) collinear."""
+    p0, p1, p2 = (np.asarray(p, float)[:3] for p in (p0, p1, p2))
+    a, b = p1 - p0, p2 - p0
+    n = cross(a, b)
+    nn = n @ n
+    if nn < 1e-12:
+        return None
+    c = p0 + (cross(n, a) * (b @ b) + cross(b, n) * (a @ a)) / (2 * nn)
+    n = n / np.sqrt(nn)
+    u, v = p0 - c, p2 - c
+    sweep = np.arctan2(cross(u, v) @ n, u @ v) % (2 * np.pi)
+    return c, n, float(np.linalg.norm(u)), float(sweep)
+
+
+def exp_rot(v) -> np.ndarray:
+    """Rotation matrices (n, 3, 3) from rotation vectors (n, 3) (Rodrigues)."""
+    v = np.atleast_2d(np.asarray(v, float))
+    th = np.linalg.norm(v, axis=1)
+    k = v / np.where(th > 1e-12, th, 1.0)[:, None]
+    K = np.zeros((len(v), 3, 3))
+    K[:, 0, 1], K[:, 0, 2], K[:, 1, 2] = -k[:, 2], k[:, 1], -k[:, 0]
+    K[:, 1, 0], K[:, 2, 0], K[:, 2, 1] = k[:, 2], -k[:, 1], k[:, 0]
+    s, c = np.sin(th)[:, None, None], np.cos(th)[:, None, None]
+    return np.eye(3) + s * K + (1 - c) * (K @ K)
+
+
+def log_rot(r) -> np.ndarray:
+    """Rotation vector of one rotation matrix."""
+    th = np.arccos(np.clip((np.trace(r) - 1) / 2, -1.0, 1.0))
+    if th < 1e-9:
+        return np.zeros(3)
+    if th > np.pi - 1e-3:                       # axis from the skew part is ill-conditioned
+        return Rotation.from_matrix(r).as_rotvec()
+    return th / (2 * np.sin(th)) * np.array([r[2, 1] - r[1, 2], r[0, 2] - r[2, 0], r[1, 0] - r[0, 1]])
+
+
+def slerp_mats(r0, r1, t) -> np.ndarray:
+    """Rotation matrices slerped from r0 to r1 at fractions t."""
+    w = log_rot(r0.T @ r1)
+    return r0 @ exp_rot(np.outer(np.atleast_1d(t), w))
+
+
+def circ_poses(start, aux, end, t) -> np.ndarray:
+    """Poses at arc fractions `t` of a CIRC from `start` via `aux` to `end` (4x4 each).
+    Position on the circle; orientation as KUKA $CIRC_TYPE = #PATH: turned with the
+    arc, plus the remaining change slerped."""
+    t = np.atleast_1d(np.asarray(t, float))
+    c, n, r, sweep = circle(start[:3, 3], aux[:3, 3], end[:3, 3])
+    rot = exp_rot(np.outer(t * sweep, n))
+    out = np.tile(np.eye(4), (len(t), 1, 1))
+    out[:, :3, 3] = rot @ (start[:3, 3] - c) + c
+    r1 = exp_rot(-sweep * n)[0] @ end[:3, :3]
+    out[:, :3, :3] = rot @ slerp_mats(start[:3, :3], r1, t)
+    return out
+
+
+def move_length(prev: np.ndarray, m: "Move") -> float:
+    """Travel of move `m` from pose `prev` (mm): arc length for CIRC, else straight."""
+    if m.kind == "CIRC" and m.aux is not None:
+        g = circle(prev[:3, 3], m.aux[:3, 3], m.pose[:3, 3])
+        if g is not None:
+            return g[2] * g[3]
+    return float(np.linalg.norm(m.pose[:3, 3] - prev[:3, 3]))
 
 
 @dataclass
@@ -63,13 +138,15 @@ class Toolpath:
 
     def transformed(self, t: np.ndarray) -> "Toolpath":
         """Copy with every pose replaced by `t @ pose` (everything else kept)."""
-        return Toolpath(self.name, [replace(m, pose=t @ m.pose, axes=dict(m.axes)) for m in self.moves],
+        return Toolpath(self.name, [replace(m, pose=t @ m.pose, axes=dict(m.axes),
+                                            aux=None if m.aux is None else t @ m.aux) for m in self.moves],
                         self.skipped_points, self.joint_hint)
 
     def rolled(self, deg: float) -> "Toolpath":
         """Copy with the gun turned `deg` about its spray axis (tool X) at every pose."""
         r = frame(c=deg)
-        return Toolpath(self.name, [replace(m, pose=m.pose @ r, axes=dict(m.axes)) for m in self.moves],
+        return Toolpath(self.name, [replace(m, pose=m.pose @ r, axes=dict(m.axes),
+                                            aux=None if m.aux is None else m.aux @ r) for m in self.moves],
                         self.skipped_points, self.joint_hint)
 
     def sample(self, step: float = 5.0, angle_step: float = 2.0) -> Samples:
@@ -92,6 +169,9 @@ class Toolpath:
             return Samples(P[:1].copy(), gun_all[:1], np.array([0]), {k: V[:1, j] for j, k in enumerate(names)})
         dl = P[1:, :3, 3] - P[:-1, :3, 3]
         dist = np.array([np.linalg.norm(r) for r in dl])        # per-vector norm: same ulp as before at exact step multiples
+        circs = [i for i in range(1, m) if self.moves[i].kind == "CIRC" and self.moves[i].aux is not None]
+        for i in circs:
+            dist[i - 1] = move_length(P[i - 1], self.moves[i])
         turn = np.abs(V[1:] - V[:-1]).max(axis=1) if names else np.zeros(m - 1)
         n = np.maximum(1, np.maximum(np.ceil(dist / step), np.ceil(turn / angle_step))).astype(int)
         seg = np.repeat(np.arange(1, m), n)                      # destination move per sample
@@ -118,6 +198,9 @@ class Toolpath:
         out[0] = P[0]
         out[1:, :3, :3] = Rotation.from_quat(qi).as_matrix()
         out[1:, :3, 3] = (1 - t) * P[seg - 1, :3, 3] + t * P[seg, :3, 3]
+        for i in circs:                                          # along the arc
+            sel = np.flatnonzero(seg == i)
+            out[1 + sel] = circ_poses(P[i - 1], self.moves[i].aux, P[i], tt[sel])
         gun = np.concatenate([gun_all[:1], gun_all[seg]])
         index = np.concatenate([[0], seg])
         ax = {k: np.concatenate([V[:1, c], (1 - tt) * V[seg - 1, c] + tt * V[seg, c]])

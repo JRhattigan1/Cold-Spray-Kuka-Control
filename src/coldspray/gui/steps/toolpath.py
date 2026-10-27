@@ -21,6 +21,7 @@ from coldspray.models import ProcessConfig, field_level, load_process, save_proc
 from coldspray.pipeline import MODES, plan_part
 from coldspray.planner.gun import wrist_side
 from coldspray.sim.scene import gantry_offset, make_gun
+from coldspray.toolpath.model import move_length
 
 UNITS = {"_mm_s": " mm/s", "_mm": " mm", "_deg": " °", "_s": " s"}
 
@@ -157,7 +158,7 @@ def estimate_time_s(path, proc: ProcessConfig) -> float:
     Pure table rotations count at their speed over the part too; dwells add their wait."""
     total, on = sum(m.dwell_s for m in path.moves), False
     for a, b in zip(path.moves, path.moves[1:]):
-        total += np.linalg.norm(b.pose[:3, 3] - a.pose[:3, 3]) / b.speed
+        total += move_length(a.pose, b) / b.speed
         if b.gun_on and not on:
             total += proc.spray_settle_s
         on = b.gun_on

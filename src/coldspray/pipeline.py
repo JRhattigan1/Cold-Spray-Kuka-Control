@@ -14,6 +14,7 @@ from coldspray.cad.part import Part, Substrate, build_frame, build_mesh, drop_on
 from coldspray.cad.slicer import slice_mesh
 from coldspray.models import CellConfig, ProcessConfig
 from coldspray.planner.gun import level_gun
+from coldspray.toolpath.simplify import simplify
 from coldspray.planner.layers import plan_layers
 from coldspray.planner.purge import add_purge
 from coldspray.planner.revolve import plan_revolve
@@ -262,7 +263,8 @@ def plan_part(part: Part, proc: ProcessConfig, mode="layers", tilt_deg=0.0, rota
 
 def _hold_gun(path, cell, roll_deg, wrist):
     """The gun's turn about its spray axis: levelled (wrist up) plus `roll_deg`
-    when the tool's wrist side is known, else the planner's roll plus `roll_deg`."""
+    when the tool's wrist side is known, else the planner's roll plus `roll_deg`.
+    Then straight spray runs merge into one LIN and curved ones into CIRCs (toolpath/simplify.py)."""
     if wrist is not None and cell is not None:
-        return level_gun(path, cell, wrist, roll_deg)
-    return path.rolled(roll_deg)
+        return simplify(level_gun(path, cell, wrist, roll_deg))
+    return simplify(path.rolled(roll_deg))

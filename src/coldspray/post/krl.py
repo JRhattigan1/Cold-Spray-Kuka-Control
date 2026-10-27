@@ -28,7 +28,7 @@ import numpy as np
 from coldspray.cell import base_in_robot, base_world, base_worlds, gantry_position, table_axis_names
 from coldspray.kinematics.robot import Robot
 from coldspray.models import CellConfig, ProcessConfig
-from coldspray.toolpath.model import Toolpath
+from coldspray.toolpath.model import Toolpath, move_length
 from coldspray.transforms import xyzabc
 
 
@@ -73,9 +73,9 @@ def to_krl(path: Toolpath, robot: Robot, cell: CellConfig, proc: ProcessConfig,
 
     in_fixed_base = fixed_base_inv @ base_worlds(cell, table)           # per move: BASE -> fixed base
 
-    def cartesian(i):
-        """TCP pose of move i as written in the program."""
-        pose = path.moves[i].pose
+    def cartesian(i, pose=None):
+        """TCP pose of move i (or `pose` at move i's table position) as written in the program."""
+        pose = path.moves[i].pose if pose is None else pose
         return to_part @ (pose if coupled else in_fixed_base[i] @ pose)
 
     if part_base is None:
@@ -106,6 +106,7 @@ def to_krl(path: Toolpath, robot: Robot, cell: CellConfig, proc: ProcessConfig,
         f"BAS(#VEL_PTP, {cell.ptp_velocity_pct})",
         f"$APO.CDIS = {proc.approx_distance_mm:.1f}",
         f"{gun} = FALSE",
+        *(["$CIRC_TYPE = #PATH", "$ORI_TYPE = #VAR"] if any(m.kind == "CIRC" for m in path.moves) else []),
         "",
         f"PTP {_axis(home)}  ;home",
     ]
@@ -148,7 +149,7 @@ def to_krl(path: Toolpath, robot: Robot, cell: CellConfig, proc: ProcessConfig,
         else:
             # Plan the move time from the speed over the part, then make the
             # robot's (fixed-base) motion and each table axis take that time.
-            over_part = np.linalg.norm(m.pose[:3, 3] - moves[i - 1].pose[:3, 3])
+            over_part = move_length(moves[i - 1].pose, m)
             turns = {k: abs(table[i][k] - table[i - 1][k]) for k in table_names}
             limits = {tt.tilt.axis: tt.tilt.max_speed_deg_s, tt.rotation.axis: tt.rotation.max_speed_deg_s}
             t = over_part / m.speed
@@ -158,14 +159,19 @@ def to_krl(path: Toolpath, robot: Robot, cell: CellConfig, proc: ProcessConfig,
             if t <= 0:
                 set_vel("$VEL.CP", m.speed / 1000, f"{m.speed:g} mm/s")
             else:
-                robot_mm = np.linalg.norm(cartesian(i)[:3, 3] - cartesian(i - 1)[:3, 3])
+                robot_mm = (over_part if m.kind == "CIRC" and not any(turns.values())  # rigid: same arc
+                            else np.linalg.norm(cartesian(i)[:3, 3] - cartesian(i - 1)[:3, 3]))
                 set_vel("$VEL.CP", max(robot_mm / t / 1000, 0.0001))
                 for k, deg in turns.items():
                     if deg > 1e-9 and limits[k]:
                         set_vel(f"$VEL_EXTAX[{k[1:]}]", min(100.0, 100.0 * deg / t / limits[k]))
         nxt = moves[i + 1] if i + 1 < len(moves) else None
-        blend = nxt is not None and nxt.gun_on == m.gun_on and nxt.kind == "LIN" and not m.dwell_s
-        lines.append(f"LIN {_pos(cartesian(i), table[i])}" + (" C_DIS" if blend else ""))
+        blend = nxt is not None and nxt.gun_on == m.gun_on and nxt.kind in ("LIN", "CIRC") and not m.dwell_s
+        if m.kind == "CIRC":
+            lines.append(f"CIRC {_pos(cartesian(i, m.aux), table[i])}, {_pos(cartesian(i), table[i])}"
+                         + (" C_DIS" if blend else ""))
+        else:
+            lines.append(f"LIN {_pos(cartesian(i), table[i])}" + (" C_DIS" if blend else ""))
         dwell(m)
 
     if gun_on:
