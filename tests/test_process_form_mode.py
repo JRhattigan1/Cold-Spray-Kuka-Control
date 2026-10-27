@@ -36,3 +36,22 @@ def test_advanced_row_hides_in_simple_unless_changed():
     assert not row.isHidden() and chip.text() == "changed"
     widgets.set_mode(widgets.ADVANCED)
     assert not row.isHidden() and chip.text() == ""
+
+
+def test_sync_advanced_opens_section_in_simple_and_skips_text_fields():
+    from types import SimpleNamespace
+    from PySide6.QtWidgets import QLineEdit
+    from coldspray.gui.steps.toolpath import ToolpathStep
+    proc = load_process()
+    name = next(n for n, i in ProcessConfig.model_fields.items()
+                if field_level(n) == "advanced" and i.annotation in (int, float))
+    box = make_process_box(name, ProcessConfig.model_fields[name], getattr(proc, name), lambda *_: None)
+    text = QLineEdit("not-the-default")
+    step = SimpleNamespace(fields={name: box, "turn_plane": text}, process_defaults=proc,
+                           advanced_section=widgets.Section("Advanced", open=False))
+    widgets.set_mode(widgets.SIMPLE)
+    ToolpathStep._sync_advanced(step)
+    assert step.advanced_section.isHidden() and not step.advanced_section._open
+    box.setValue(box.value() + 1)
+    ToolpathStep._sync_advanced(step)
+    assert not step.advanced_section.isHidden() and step.advanced_section._open

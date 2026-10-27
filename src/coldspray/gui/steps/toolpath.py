@@ -185,12 +185,17 @@ class ToolpathStep:
 
     def _sync_advanced(self):
         """Show how many advanced values differ from process.yaml and apply the Simple/Advanced mode."""
+        # free-text fields (QLineEdit, e.g. turn_plane) have no row in the form: don't count them
         changed = [n for n, box in self.fields.items()
-                   if field_level(n) != "basic" and box_differs(box, getattr(self.process_defaults, n))]
+                   if field_level(n) != "basic" and not isinstance(box, QLineEdit)
+                   and box_differs(box, getattr(self.process_defaults, n))]
         self.advanced_section.set_chip(f"{len(changed)} changed" if changed else "", "warn")
         widgets.refresh()
-        # Simple mode: the Advanced section only shows when it holds a changed value
-        self.advanced_section.setVisible(not widgets.is_simple() or bool(changed))
+        # Simple mode: the Advanced section only shows (and opens) when it holds a changed value
+        simple = widgets.is_simple()
+        self.advanced_section.setVisible(not simple or bool(changed))
+        if simple and changed:
+            self.advanced_section.set_open(True)
 
     def read_process(self) -> ProcessConfig:
         return ProcessConfig(**{name: box_value(box) for name, box in self.fields.items()})
