@@ -88,3 +88,15 @@ def test_part_step_coat_ui():
     w._set_coat(set())
     assert w.part_view.coat_actor is None and "No coat faces" in w.coat_label.text()
     w.close()
+
+
+def test_grow_tangent_stays_in_body():
+    from coldspray.cad.part import Part
+    # two coplanar quads sharing an edge, faces 0 and 1, in different bodies
+    v = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [2, 0, 0], [2, 1, 0]], float)
+    f = np.array([[0, 1, 2], [0, 2, 3], [1, 4, 5], [1, 5, 2]])
+    ids = np.array([0, 0, 1, 1])
+    one = Part("p", v, f, ids, {})
+    assert grow_tangent(one, {0}) == {0, 1}
+    two = Part("p", v, f, ids, {}, body_ids=np.array([0, 0, 1, 1]))
+    assert grow_tangent(two, {0}) == {0}

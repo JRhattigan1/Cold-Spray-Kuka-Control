@@ -173,3 +173,27 @@ def test_touch_from_180_degree_flip(block):
     r = solve(block.placement, [touch(top, substrate_top(Substrate()))])
     assert r.status == "ok"
     assert np.allclose(base(r.placement, top)[1], (0, 0, -1), atol=1e-4)
+
+
+def test_reference_rejects_curved_non_cylinder_face(block):
+    import dataclasses
+    fid = int(block.face_ids[0])
+    bare = dataclasses.replace(block, planar={}, cylinders={})
+    with pytest.raises(ValueError, match=f"face {fid} is not flat or cylindrical"):
+        reference(f"face:{fid}", bare)
+
+
+def test_wrong_entity_type_is_a_clear_error():
+    ax, pl = table_axis(), faceplate()
+    with pytest.raises(ValueError, match="touch.*plane"):
+        touch(ax, pl)
+    with pytest.raises(ValueError, match="centre_between.*plane"):
+        centre_between(pl, ax, pl)
+    with pytest.raises(ValueError, match="centre.*axis"):
+        centre(pl, ax)
+    with pytest.raises(ValueError, match="parallel.*plane or axis"):
+        parallel(PointRef((0, 0, 0)), pl)
+    k = touch(pl, pl)
+    k.a = ax                                  # changed after building: caught by solve
+    with pytest.raises(ValueError, match="touch.*plane"):
+        solve(np.eye(4), [k])
