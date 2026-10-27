@@ -1,10 +1,10 @@
-"""Stroke icons (24x24, 1.75 px lines) tinted for the theme.
+"""Stroke icons (24x24, 1.6 px rounded lines) tinted for the theme.
 
     from coldspray.gui import icons
     button.setIcon(icons.icon("fit", mode))          # mode: "light" | "dark" | "system"
     icons.icon("warning", mode, colour="bad")        # a token name or "#rrggbb"
 
-The SVGs in icons/ draw with `currentColor`; Qt SVG doesn't know it, so the text
+The SVGs in icons/ draw with `currentColor` (lines) and `accentColor` (accent fills, orange); Qt SVG doesn't know it, so the text
 is loaded and the colour substituted per theme. Results are cached; call
 `clear_cache()` after a theme switch only if you hold on to old QIcons (they keep
 their old colour - set the icons again with the new mode).
@@ -38,9 +38,9 @@ def _colour(colour: str, mode: str) -> str:
     return colour if colour.startswith("#") else style.tokens(mode)[colour]
 
 
-def pixmap(name: str, size: int = 24, colour: str = "#000000", scale: float = 1.0) -> QPixmap:
+def pixmap(name: str, size: int = 24, colour: str = "#000000", scale: float = 1.0, accent: str = "") -> QPixmap:
     """`name` drawn in `colour` (#rrggbb) on a transparent `size` px pixmap."""
-    renderer = QSvgRenderer(QByteArray(svg_text(name).replace("currentColor", colour).encode()))
+    renderer = QSvgRenderer(QByteArray(svg_text(name).replace("accentColor", accent or colour).replace("currentColor", colour).encode()))
     px = round(size * scale)
     pm = QPixmap(px, px)
     pm.fill(Qt.transparent)
@@ -53,14 +53,14 @@ def pixmap(name: str, size: int = 24, colour: str = "#000000", scale: float = 1.
 
 
 @lru_cache(maxsize=None)
-def _icon(name: str, normal: str, disabled: str, active: str) -> QIcon:
+def _icon(name: str, normal: str, disabled: str, active: str, accent: str = "") -> QIcon:
     ic = QIcon()
     for s in SIZES:
         for scale in (1.0, 2.0):
-            ic.addPixmap(pixmap(name, s, normal, scale), QIcon.Normal, QIcon.Off)
+            ic.addPixmap(pixmap(name, s, normal, scale, accent), QIcon.Normal, QIcon.Off)
             ic.addPixmap(pixmap(name, s, active, scale), QIcon.Normal, QIcon.On)
             ic.addPixmap(pixmap(name, s, active, scale), QIcon.Active, QIcon.On)
-            ic.addPixmap(pixmap(name, s, normal, scale), QIcon.Active, QIcon.Off)
+            ic.addPixmap(pixmap(name, s, normal, scale, accent), QIcon.Active, QIcon.Off)
             ic.addPixmap(pixmap(name, s, disabled, scale), QIcon.Disabled, QIcon.Off)
             ic.addPixmap(pixmap(name, s, disabled, scale), QIcon.Disabled, QIcon.On)
     return ic
@@ -71,7 +71,7 @@ def icon(name: str, mode: str = "system", colour: str = "ink", checked: str = "a
     button is on): token names ("ink", "muted", "accent", "bad", ...) or "#rrggbb"."""
     mode = style.resolve(mode)
     disabled = style._mix(style.tokens(mode)["muted"], style.tokens(mode)["panel"], 0.6)
-    return _icon(name, _colour(colour, mode), disabled, _colour(checked, mode))
+    return _icon(name, _colour(colour, mode), disabled, _colour(checked, mode), _colour("accent", mode))
 
 
 def clear_cache():
