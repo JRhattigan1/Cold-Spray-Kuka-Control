@@ -83,25 +83,45 @@ class Toolpath:
         first = {k: axes_per_move[-1].get(k, 0.0) for k in names}  # value before an axis is first set
         values = [{k: a.get(k, first[k]) for k in names} for a in axes_per_move]
 
-        poses, gun, index = [self.moves[0].pose], [self.moves[0].gun_on], [0]
-        ax = {k: [values[0][k]] for k in names}
-        for i in range(1, len(self.moves)):
-            a, b = self.moves[i - 1].pose, self.moves[i].pose
-            dist = np.linalg.norm(b[:3, 3] - a[:3, 3])
-            turn = max((abs(values[i][k] - values[i - 1][k]) for k in names), default=0.0)
-            n = max(1, int(np.ceil(dist / step)), int(np.ceil(turn / angle_step)))
-            slerp = Slerp([0, 1], Rotation.from_matrix([a[:3, :3], b[:3, :3]]))
-            for t in np.linspace(0, 1, n + 1)[1:]:
-                p = np.eye(4)
-                p[:3, :3] = slerp(t).as_matrix()
-                p[:3, 3] = (1 - t) * a[:3, 3] + t * b[:3, 3]
-                poses.append(p)
-                gun.append(self.moves[i].gun_on)
-                index.append(i)
-                for k in names:
-                    ax[k].append((1 - t) * values[i - 1][k] + t * values[i][k])
-        return Samples(np.array(poses), np.array(gun), np.array(index),
-                       {k: np.array(v) for k, v in ax.items()})
+        m = len(self.moves)
+        P = np.array([mv.pose for mv in self.moves])
+        V = np.array([[v[k] for k in names] for v in values]).reshape(m, len(names))
+        gun_all = np.array([mv.gun_on for mv in self.moves])
+        if m == 1:
+            return Samples(P[:1].copy(), gun_all[:1], np.array([0]), {k: V[:1, j] for j, k in enumerate(names)})
+        dl = P[1:, :3, 3] - P[:-1, :3, 3]
+        dist = np.array([np.linalg.norm(r) for r in dl])        # per-vector norm: same ulp as before at exact step multiples
+        turn = np.abs(V[1:] - V[:-1]).max(axis=1) if names else np.zeros(m - 1)
+        n = np.maximum(1, np.maximum(np.ceil(dist / step), np.ceil(turn / angle_step))).astype(int)
+        seg = np.repeat(np.arange(1, m), n)                      # destination move per sample
+        start = np.cumsum(n) - n
+        j = np.arange(len(seg)) - np.repeat(start, n)            # 0..n-1 within segment
+        t = ((j + 1) / np.repeat(n, n))[:, None]
+        q = Rotation.from_matrix(P[:, :3, :3]).as_quat()
+        q0, q1 = q[seg - 1], q[seg]
+        d = d_raw = np.einsum("ij,ij->i", q0, q1)
+        q1 = np.where((d < 0)[:, None], -q1, q1)
+        d = np.abs(d).clip(0, 1)
+        th = np.arccos(d)
+        sth = np.sin(th)
+        ok = sth > 1e-9
+        tt = t[:, 0]
+        w0 = np.where(ok, np.sin((1 - tt) * th) / np.where(ok, sth, 1), 1 - tt)
+        w1 = np.where(ok, np.sin(tt * th) / np.where(ok, sth, 1), tt)
+        qi = w0[:, None] * q0 + w1[:, None] * q1
+        qi /= np.linalg.norm(qi, axis=1)[:, None]
+        for i in np.unique(seg[np.abs(d_raw) < 1e-9]):           # 180 deg flips: sign is a coin toss, defer to scipy
+            sel = seg == i
+            qi[sel] = Slerp([0, 1], Rotation.from_matrix([P[i - 1, :3, :3], P[i, :3, :3]]))(tt[sel]).as_quat()
+        out = np.tile(np.eye(4), (len(seg) + 1, 1, 1))
+        out[0] = P[0]
+        out[1:, :3, :3] = Rotation.from_quat(qi).as_matrix()
+        out[1:, :3, 3] = (1 - t) * P[seg - 1, :3, 3] + t * P[seg, :3, 3]
+        gun = np.concatenate([gun_all[:1], gun_all[seg]])
+        index = np.concatenate([[0], seg])
+        ax = {k: np.concatenate([V[:1, c], (1 - tt) * V[seg - 1, c] + tt * V[seg, c]])
+              for c, k in enumerate(names)}
+        return Samples(out, gun, index, ax)
 
 
 def spray_frame(point, spray_dir, travel_dir) -> np.ndarray:
