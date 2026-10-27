@@ -146,6 +146,8 @@ class ProcessConfig(BaseModel):
     approx_distance_mm: float = _field(ge=0, level="advanced", description="$APO.CDIS corner blending")
     layer_thickness_mm: float = _field(gt=0, level="basic", description="deposit height from one full layer of passes")
     track_width_mm: float = _field(gt=0, level="basic", description="width of a single spray track (nozzle footprint)")
+    raster_start_deg: float = _field(0.0, level="basic",
+                                     description="direction of the first raster passes (0: along BASE X; Surface: along the longest side)")
     raster_angle_step_deg: float = _field(level="advanced", description="raster direction rotates by this each layer")
     contour_passes: int = _field(ge=0, level="advanced", description="perimeter passes around each layer before infill")
     jump_height_mm: float = _field(ge=0, level="advanced",

@@ -83,7 +83,7 @@ def rotate_seam(loop: np.ndarray, layer_index: int, fraction: float = 0.382) -> 
 
 
 def _angle(proc, layer_index: int) -> float:
-    return (layer_index * proc.raster_angle_step_deg) % 180
+    return (getattr(proc, "raster_start_deg", 0.0) + layer_index * proc.raster_angle_step_deg) % 180
 
 
 def _start(start):
@@ -155,7 +155,8 @@ def spiral(region, proc, layer_index: int, start=None) -> list[np.ndarray]:
 def crosshatch(region, proc, layer_index: int, start=None) -> list[np.ndarray]:
     """Alternate perpendicular full-density rasters layer by layer (0/90, then rotated
     by `raster_angle_step_deg` every pair of layers)."""
-    angle = (90 * (layer_index % 2) + (layer_index // 2) * proc.raster_angle_step_deg) % 180
+    angle = (getattr(proc, "raster_start_deg", 0.0) + 90 * (layer_index % 2)
+             + (layer_index // 2) * proc.raster_angle_step_deg) % 180
     return _order(raster_segments(region, proc.step_over_mm, angle), _start(start))
 
 

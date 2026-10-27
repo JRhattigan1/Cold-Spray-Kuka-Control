@@ -142,13 +142,18 @@ def blend(normals, arc, width, closed=False) -> np.ndarray:
     return n / np.linalg.norm(n, axis=1, keepdims=True)
 
 
-def surface_strokes(vertices, faces, coat_mask, step_over, blend_mm=10.0, max_tilt_deg=60.0):
+def surface_strokes(vertices, faces, coat_mask, step_over, blend_mm=10.0, max_tilt_deg=60.0, angle_deg=0.0):
     """Ordered strokes [(points, normals, closed)] on the surface, zig-zagged,
-    plus the number of points skipped for tilting too far from the mean normal."""
+    plus the number of points skipped for tilting too far from the mean normal.
+    `angle_deg` turns the strokes about the mean normal from the longest side
+    (no effect when the faces wrap round: the cuts are rings)."""
     mesh = trimesh.Trimesh(np.asarray(vertices, float), np.asarray(faces)[np.asarray(coat_mask, bool)])
     if len(mesh.faces) == 0:
         return [], 0
     d, c, strong = raster_axes(mesh.vertices, mesh.face_normals, mesh.area_faces)
+    if strong and angle_deg:
+        a = np.radians(angle_deg)
+        d, c = np.cos(a) * d + np.sin(a) * c, np.cos(a) * c - np.sin(a) * d
     mean = (mesh.face_normals * mesh.area_faces[:, None]).sum(0)
     mean /= np.linalg.norm(mean) if strong else 1.0
     offs = mesh.vertices @ c
@@ -258,9 +263,13 @@ def coat_regions(vertices, faces, coat_mask) -> list[np.ndarray]:
     groups = trimesh.graph.connected_components(mesh.face_adjacency, nodes=np.arange(len(sel)), min_len=1)
     out = []
     for g in groups:
+        if mesh.area_faces[np.asarray(g)].sum() < 1e-6:
+            continue                        # degenerate slivers from the tessellation: nothing to coat
         m = np.zeros(len(faces), bool)
         m[sel[np.asarray(g)]] = True
         out.append(m)
+    if not out:
+        return []
     centre = [np.asarray(vertices)[faces[m]].reshape(-1, 3).mean(0) for m in out]
     return [out[i] for i in sorted(range(len(out)), key=lambda i: (round(centre[i][0], 3), centre[i][1]))]
 
@@ -304,7 +313,8 @@ def plan_surface(vertices, faces, coat_mask, proc: ProcessConfig, name="surface"
             if pattern != "zigzag":
                 fallback.add(r)
             if r not in cut:
-                cut[r] = surface_strokes(vertices, faces, regions[r], proc.step_over_mm, blend_mm, max_tilt_deg)
+                cut[r] = surface_strokes(vertices, faces, regions[r], proc.step_over_mm, blend_mm, max_tilt_deg,
+                                         getattr(proc, "raster_start_deg", 0.0))
             s, k = cut[r]
             skipped += k
             if coat % 2:

@@ -1,5 +1,7 @@
 """Step 2 Position: the part on the faceplate, substrate plate, table and gantry, auto position."""
 
+import traceback
+
 import numpy as np
 from scipy.spatial.transform import Rotation
 from pydantic import ValidationError
@@ -219,11 +221,9 @@ class PositionStep:
                                      if self.part.n_bodies > 1 else f"<b>{src.name}</b>")
         self._enter_setup()
         self._show_placement()
-        found = self._auto_position(quiet=True)
-        self.scene.focus_on_part()
+        self.scene.focus_on_part()           # Auto position only runs from its button
         self.plotter.render()
-        if found:
-            self._status(f"{src.name} in the cell: adjust the placement if needed, then Next: Toolpath")
+        self._status(f"{src.name} in the cell: place it, or use Auto position, then Next: Toolpath")
 
     def _start_placement(self, part):
         """Standing on the base face if one is set, else as in the CAD; centred on the table."""
@@ -268,6 +268,13 @@ class PositionStep:
         except ValueError as e:              # placement not plannable yet
             self.job.finish()
             self._status(f"Auto position skipped: {e}")
+            return False
+        except Exception as e:               # a planning bug: report it, don't take the app down
+            self.job.finish()
+            traceback.print_exc()
+            self._status(f"Auto position failed: {type(e).__name__}: {e}")
+            if not quiet:
+                QMessageBox.warning(self, "Auto position", f"Auto position failed:\n{type(e).__name__}: {e}")
             return False
         cancelled = self.job.is_cancelled()
         self.job.finish("Auto position cancelled" if cancelled else "")

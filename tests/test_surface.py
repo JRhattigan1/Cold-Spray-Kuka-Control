@@ -196,3 +196,22 @@ def test_wrapping_region_falls_back_to_zigzag():
     conc = plan_surface(v, part.faces, mask, load_process().model_copy(update={"infill_pattern": "concentric"}))
     assert conc.zigzag_regions == 1 and zig.zigzag_regions == 0
     assert len(conc.moves) == len(zig.moves)
+
+
+@pytest.mark.parametrize("angle", [0.0, 30.0, 90.0])
+def test_raster_start_angle(angle):
+    """raster_start_deg turns the first raster from the default direction, in Layers
+    patterns (from BASE X) and in the Surface zigzag (from the longest side)."""
+    from shapely.geometry import box as rect
+    from coldspray.planner.patterns import zigzag
+    proc = load_process().model_copy(update={"raster_start_deg": angle})
+    seg = zigzag(rect(-50, -40, 50, 40), proc, 0)
+    d = seg[0][-1] - seg[0][0]
+    assert np.isclose(abs(np.degrees(np.arctan2(d[1], d[0]))) % 180, angle % 180, atol=1e-6) or \
+        np.isclose(180 - abs(np.degrees(np.arctan2(d[1], d[0]))), angle, atol=1e-6)
+    top = trimesh.creation.box([40, 30, 20])
+    path = plan_surface(top.vertices, top.faces, top.face_normals[:, 2] > 0.9,
+                        proc.model_copy(update={"overrun_mm": 0.0}))
+    y = np.array([m.pose[:3, 1] for m in path.moves if m.tag == "infill"])     # gun Y: along the stroke
+    a = np.degrees(np.arctan2(y[:, 1], y[:, 0])) % 180
+    assert np.allclose(np.minimum(a, 180 - a), min(angle % 180, 180 - angle % 180), atol=1e-6)
