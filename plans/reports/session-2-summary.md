@@ -33,3 +33,11 @@ Written by the coordinator just before the session cap. **Read this first next s
 3. Correct the two out-of-date README lines (Simple/Advanced and purge save) and the session-2 statuses in plan §5 and §8.
 4. Small follow-ups: call `datums.set_size` from `viewer.py`, sized to the faceplate bounds; ghost-gun drag and "Move gun here" for the purge marker; open the Advanced section automatically in Simple mode when it holds changes; per-move orientation limit on contour tilt; lift on Surface-mode turns.
 5. E2 on its own (interface sweep, shortcuts, README), then a human check in the app (`.\run`), then the robot-cell checks in the README.
+
+## Late results (after this file was first written)
+- **M1** merged F2b, DOC1 and DOC2. Main has not been re-tested since.
+- **R3 (`wp/R3`, not merged):** found a **high-severity bug**. Coat faces changed after the part has entered the cell never reach `self.part`, because `_part_key` ignores coat faces. Surface mode then plans with a stale selection and is not marked out of date. The fix is spelled out in `R3-1.md` and has an xfail test. R3's other point, "Simple/Advanced changes nothing", is out of date now that E1b is merged. R3 also added a slow (~5 min) end-to-end test, `tests/test_workflow.py`, which passes for Layers with all patterns, purge and tilt.
+- **G1 (`wp/G1`, not merged, partial):** overrun and beyond-plane turns work with tests. **Bug:** the plane is applied in the part frame, not BASE. It needs `to_base` passed in from `plan_part`. There is no GUI combo yet.
+- **T1 (`wp/T1`, not merged):** new end-to-end tests pass. Every pattern reaches fully on test_block, and Surface mode reaches on test_repair (5 faces) and test_tube. Check whether crosshatch and spiral really differ from zigzag and concentric: they have the same move counts.
+- **X1–X10:** 4-minute agents launched at the very end (datums `set_size` hook, purge drag, Move gun here, Advanced auto-open, tilt rate limit, Surface turn lift, README fixes on top of DOC1, approach widget, Ctrl+1..5 / Ctrl+G shortcuts, single-pass `tessellate_bodies`). Check `wp/X*` branches for reports; none are merged.
+- **R1, R2b, A3, M2:** no report had arrived by the cap. Check their branches.
