@@ -7,14 +7,15 @@ import numpy as np
 from pydantic import ValidationError
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QLineEdit, QMessageBox, QPushButton, QSpinBox, QVBoxLayout,
-    QWidget,
+    QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
+    QSpinBox, QVBoxLayout, QWidget,
 )
 
 from coldspray.cad.part import build_mesh, other_mesh
 from coldspray.cell import robroot
 from coldspray.gui.stepper import SIMULATE, TOOLPATH
-from coldspray.gui.widgets import Section, primary_button, wrap_label
+from coldspray.gui import widgets
+from coldspray.gui.widgets import Chip, Section, primary_button, wrap_label
 from coldspray.kinematics.robot import Robot
 from coldspray.models import ProcessConfig, field_level, load_process, save_process
 from coldspray.pipeline import MODES, plan_part
@@ -81,6 +82,21 @@ def box_differs(box: QWidget, default) -> bool:
     return value != default
 
 
+def advanced_row(text: str, box: QWidget, default) -> QWidget:
+    """One advanced process field as a single row (label, editor, "changed" chip), registered
+    with the Simple/Advanced mode: hidden in Simple unless it differs from process.yaml."""
+    row = QWidget()
+    h = QHBoxLayout(row)
+    h.setContentsMargins(0, 0, 0, 0)
+    label = QLabel(text)
+    label.setMinimumWidth(140)
+    chip = Chip()
+    h.addWidget(label)
+    h.addWidget(box, 1)
+    h.addWidget(chip)
+    return widgets.advanced(row, changed=lambda: box_differs(box, default), chip=chip)
+
+
 def estimate_time_s(path, proc: ProcessConfig) -> float:
     """Rough program time: robot moves at their speed over the part, plus spray settling.
     Pure table rotations count at their speed over the part too."""
@@ -125,11 +141,16 @@ class ToolpathStep:
             if isinstance(box, QLineEdit):
                 continue            # free text (e.g. a datum plane name): set elsewhere, not in the form
             text, _ = _label(name)
-            (self.process_form if field_level(name) == "basic" else advanced_form).addRow(text, box)
+            if field_level(name) == "basic":
+                self.process_form.addRow(text, box)
+            else:
+                advanced_form.addRow(advanced_row(text, box, getattr(proc, name)))
         proc_box.add(self.process_form)
         self.advanced_section.add(advanced_form)
         layout.addWidget(proc_box)
         layout.addWidget(self.advanced_section)
+        widgets.on_mode_changed(lambda _mode: self._sync_advanced())
+        self._sync_advanced()
 
         self.generate_btn = primary_button("Generate toolpath", self.generate)
         self.save_settings_btn = QPushButton("Save as default")
@@ -157,12 +178,19 @@ class ToolpathStep:
         self._enter_setup()
 
     def _process_changed(self, *_):
-        """Show how many advanced values differ from process.yaml; a toolpath is now out of date."""
+        """An edited process value: re-sync the advanced rows; a toolpath is now out of date."""
+        self._sync_advanced()
+        if self.result is not None:
+            self._invalidate(TOOLPATH)
+
+    def _sync_advanced(self):
+        """Show how many advanced values differ from process.yaml and apply the Simple/Advanced mode."""
         changed = [n for n, box in self.fields.items()
                    if field_level(n) != "basic" and box_differs(box, getattr(self.process_defaults, n))]
         self.advanced_section.set_chip(f"{len(changed)} changed" if changed else "", "warn")
-        if self.result is not None:
-            self._invalidate(TOOLPATH)
+        widgets.refresh()
+        # Simple mode: the Advanced section only shows when it holds a changed value
+        self.advanced_section.setVisible(not widgets.is_simple() or bool(changed))
 
     def read_process(self) -> ProcessConfig:
         return ProcessConfig(**{name: box_value(box) for name, box in self.fields.items()})
