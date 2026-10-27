@@ -49,3 +49,20 @@ def test_layer_tilts_for_a_sideways_build():
     cell = load_cell()
     assert layer_tilts(cell, gun_dir=(1.0, 0.0, 0.0))[0] == 0.0     # already level with the table flat
     assert layer_tilts(cell, gun_dir=(0.0, 0.0, -1.0)) == [90, 75, 60, 45]
+
+
+def test_auto_position_names_an_unreachable_purge_point():
+    from coldspray.cell import base_world
+    from coldspray.models import PurgeConfig
+    cell, proc = load_cell(), load_process()
+    robot = Robot(load_robot(), load_tool())
+    far = tuple(float(x) for x in base_world(cell)[:3, 3] + [0.0, 20000.0, 300.0])
+    cell.purge = PurgeConfig(point=far, spray_dir=(0.0, 0.0, -1.0))
+    part = load_part("test_block")
+    plan = lambda tilt: plan_part(part, proc, "layers", tilt_deg=tilt, cell=cell)[1]
+    logs = []
+    pos = auto_position(plan, robot, cell, [90.0], e1_step=5000.0, log=logs.append)
+    assert pos.reach < 1.0
+    assert "purge point" in pos.note.lower()
+    assert f"{far[1]:.0f}" in pos.note
+    assert any(pos.note in line for line in logs)
