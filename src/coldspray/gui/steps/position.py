@@ -15,7 +15,9 @@ from coldspray.cad.part import (
 from coldspray.cell import robroot
 from coldspray.gui.constraints_panel import ConstraintsPanel
 from coldspray.gui.stepper import TOOLPATH
+from coldspray.gui import widgets
 from coldspray.gui.widgets import Section, primary_button, spin, wrap_label
+from coldspray.models import PurgeConfig
 from coldspray.pipeline import check_placement, plan_part
 from coldspray.planner.position import auto_position, layer_tilts
 from coldspray.sim.cell_model import OPTIONAL
@@ -34,6 +36,8 @@ class PositionStep:
 
         place_box = self.placement_section = Section("Placement on the faceplate")
         grid = QFormLayout()
+        adv_grid = QFormLayout()                 # Z, B, C: Advanced only
+        adv_grid.setContentsMargins(0, 0, 0, 0)
         self.place = {}
         for key, lo, hi, unit, tip in (
                 ("X", -500, 500, " mm", "Along the faceplate X axis"),
@@ -45,9 +49,10 @@ class PositionStep:
             box = spin(lo, hi, 0, unit, tip=tip)
             box.setKeyboardTracking(False)
             box.valueChanged.connect(self._placement_typed)
-            grid.addRow(key, box)
+            (grid if key in "XYA" else adv_grid).addRow(key, box)
             self.place[key] = box
         place_box.add(grid)
+        place_box.add(widgets.advanced(self._holder(adv_grid)))
         self.keep_on_plate = QCheckBox("Keep on plate")
         self.keep_on_plate.setToolTip("Stand the part on its base face on the plate (or the faceplate)\n"
                                       "and lock Z, B and C. Untick to place it anywhere in 3D\n"
@@ -69,9 +74,10 @@ class PositionStep:
         reset_btn.setToolTip("Back to the start: standing on the base face (or as in the CAD), centred")
         reset_btn.clicked.connect(self._reset_placement)
         buttons = QGridLayout()
+        buttons.setContentsMargins(0, 0, 0, 0)
         for k, btn in enumerate((snap_btn, drop_btn, centre_btn, reset_btn)):
             buttons.addWidget(btn, k // 2, k % 2)
-        place_box.add(buttons)
+        place_box.add(widgets.advanced(self._holder(buttons)))
         self.face_label = wrap_label()
         place_box.add(self.face_label)
         self.sm_part = QCheckBox("SpaceMouse moves the part")
@@ -83,7 +89,7 @@ class PositionStep:
         layout.addWidget(place_box)
         self.constraints = ConstraintsPanel()
         self.constraints.changed.connect(lambda: self.part is not None and self._set_placement(self.part.placement))
-        layout.addWidget(self.constraints)
+        layout.addWidget(widgets.advanced(self.constraints))
 
         sub_box = self.sub_section = Section("Substrate plate")
         self.sub_check = QCheckBox("Build on a substrate plate")
@@ -104,10 +110,11 @@ class PositionStep:
             box.valueChanged.connect(self._substrate_changed)
             sform.addRow(key.capitalize(), box)
         sub_box.add(sform)
-        layout.addWidget(sub_box)
+        layout.addWidget(widgets.advanced(sub_box))
 
         cell_box = self.table_section = Section("Table and gantry")
         cform = QFormLayout()
+        cform.setContentsMargins(0, 0, 0, 0)
         self.nozzle = QComboBox()
         self.nozzle.setToolTip("Nozzle fitted to the gun (sets the TCP)")
         self.tilt = spin(0, 1, 0, " °", tip="Turntable tilt for this program (90° = faceplate facing the tailstock)")
@@ -124,7 +131,7 @@ class PositionStep:
             box.setKeyboardTracking(False)
             box.valueChanged.connect(self._enter_setup)
         self.nozzle.currentIndexChanged.connect(self._enter_setup)
-        cell_box.add(cform)
+        cell_box.add(widgets.advanced(self._holder(cform)))
         self.auto_btn = QPushButton("Auto position (gun level)")
         self.auto_btn.setToolTip("Choose table tilt, gun roll and gantry E1 so the gun is as level as allowed\n"
                                  "and the whole path is reachable (also done when a part is loaded)")
@@ -132,6 +139,7 @@ class PositionStep:
         cell_box.add(self.auto_btn)
         layout.addWidget(cell_box)
         layout.addWidget(self._build_purge_section())
+        self.e1.valueChanged.connect(lambda *_: self._purge_show())     # reach depends on the gantry
 
         show_box = self.show_section = Section("Show")
         self.group_checks = {}
@@ -141,11 +149,18 @@ class PositionStep:
             check.toggled.connect(lambda on, lbl=label: self._show_group(lbl, on))
             show_box.add(check)
             self.group_checks[label] = check
-        layout.addWidget(show_box)
+        layout.addWidget(widgets.advanced(show_box))
 
         layout.addWidget(primary_button("Next: Toolpath  →", lambda: self.go_to(TOOLPATH)))
         layout.addStretch(1)
         return inner
+
+    @staticmethod
+    def _holder(lay) -> QWidget:
+        """A plain widget holding `lay`, so a group of rows can be registered as Advanced."""
+        w = QWidget()
+        w.setLayout(lay)
+        return w
 
     def _show_group(self, label, on):
         if self.scene:
@@ -366,16 +381,16 @@ class PositionStep:
         self.sm_moved_part = True
 
     # --- warm-up / powder purge point (F2) ----------------------------------------
-    # Settings live in `cell.purge` (PurgeConfig) when the model has that field, else
-    # in the plain dict `self.purge_cfg`. The ghost gun shows the purge pose in WORLD.
-    PURGE_DEFAULTS = dict(enabled=False, point=(-884.56, 400.0, 2000.0), spray_dir=(0.0, -1.0, 0.0),
-                          dwell_s=5.0, at_start=True, at_end=True, every_n_layers=0, approach_mm=100.0)
+    # `self.purge_cfg` mirrors `cell.purge` (PurgeConfig) as a dict; every edit writes it back.
+    # The ghost gun shows the purge pose in WORLD.
 
     def _build_purge_section(self) -> Section:
         box = self.purge_section = Section("Warm-up / purge point")
         form = QFormLayout()
+        form.setContentsMargins(0, 0, 0, 0)
         self.purge_on = QCheckBox("Go to the purge point")
         self.purge_on.setToolTip("Spray on at a point in free space before (and after) the part")
+        box.add(self.purge_on)
         self.purge_xyz = [spin(-20000, 20000, 0, " mm", tip=f"Nozzle exit target, WORLD {a}") for a in "XYZ"]
         self.purge_dir = QComboBox()
         self.purge_dir.addItems([*DIRECTION_PRESETS, "Custom"])
@@ -385,7 +400,6 @@ class PositionStep:
         self.purge_start = QCheckBox("At start")
         self.purge_end = QCheckBox("At end")
         self.purge_every = spin(0, 1000, 0, " layers", decimals=0, tip="Also go back every N layers (0: never)")
-        form.addRow(self.purge_on)
         for axis, box_ in zip("XYZ", self.purge_xyz):
             form.addRow(axis, box_)
         form.addRow("Direction", self.purge_dir)
@@ -405,9 +419,9 @@ class PositionStep:
         self.purge_goto_btn.setToolTip("Preview: put the robot at the purge pose (gantry at the current E1)")
         self.purge_goto_btn.clicked.connect(self._purge_goto)
         form.addRow(self.purge_goto_btn)
-        box.add(form)
+        box.add(widgets.advanced(self._holder(form)))
         self._purge_form = form
-        self.purge_cfg = dict(self.PURGE_DEFAULTS)
+        self.purge_cfg = PurgeConfig(point=(-884.56, 400.0, 2000.0), enabled=False).model_dump()
         self._purge_loading = False
         self._purge_load()
         for w in (*self.purge_xyz, *self.purge_custom, self.purge_dwell, self.purge_approach, self.purge_every):
@@ -417,8 +431,6 @@ class PositionStep:
             w.toggled.connect(self._purge_changed)
         self.purge_dir.currentIndexChanged.connect(self._purge_changed)
         box.toggled.connect(lambda on: on and self._purge_load())
-        if hasattr(self, "e1"):                 # reach depends on the gantry position
-            self.e1.valueChanged.connect(lambda *_: self._purge_show())
         return box
 
     def _purge_cell(self):
@@ -430,7 +442,7 @@ class PositionStep:
         cell = self._purge_cell()
         cfg = getattr(cell, "purge", None) if cell is not None else None
         if cfg is not None:
-            self.purge_cfg = cfg.model_dump() if hasattr(cfg, "model_dump") else dict(cfg)
+            self.purge_cfg = cfg.model_dump()
         c = self.purge_cfg
         self._purge_loading = True
         self.purge_on.setChecked(c["enabled"])
@@ -458,8 +470,7 @@ class PositionStep:
                  at_start=self.purge_start.isChecked(), at_end=self.purge_end.isChecked(),
                  every_n_layers=int(self.purge_every.value()))
         cell = self._purge_cell()
-        if cell is not None and "purge" in type(cell).model_fields:
-            from coldspray.models import PurgeConfig
+        if cell is not None:
             cell.purge = PurgeConfig(**c)
         self._purge_show()
 
@@ -471,7 +482,6 @@ class PositionStep:
 
     def _purge_save(self):
         from coldspray.config_io import save_purge
-        from coldspray.models import PurgeConfig
         try:
             path = save_purge(PurgeConfig(**self.purge_cfg))
         except (OSError, ValidationError) as e:
