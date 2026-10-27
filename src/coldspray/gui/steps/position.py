@@ -391,6 +391,10 @@ class PositionStep:
         form.addRow(self.purge_end)
         form.addRow("Every", self.purge_every)
         form.addRow(self.purge_save_btn)
+        self.purge_goto_btn = QPushButton("Move gun here")
+        self.purge_goto_btn.setToolTip("Preview: put the robot at the purge pose (gantry at the current E1)")
+        self.purge_goto_btn.clicked.connect(self._purge_goto)
+        form.addRow(self.purge_goto_btn)
         box.add(form)
         self._purge_form = form
         self.purge_cfg = dict(self.PURGE_DEFAULTS)
@@ -463,13 +467,30 @@ class PositionStep:
             return
         self._status(f"Purge point saved to {path}")
 
-    def _purge_reachable(self, pose) -> bool | None:
-        """Can the robot put the gun at `pose` (WORLD) with the gantry at the current E1?"""
+    def _purge_ik(self, pose):
+        """IK solutions for the gun at `pose` (WORLD), gantry at the current E1; None without assets."""
         a = getattr(self, "assets", None)
         if a is None:
             return None
         cell = self._work_cell()
-        return bool(a.robot.ik(np.linalg.inv(robroot(cell)) @ pose, cell.home_deg))
+        return a.robot.ik(np.linalg.inv(robroot(cell)) @ pose, cell.home_deg)
+
+    def _purge_reachable(self, pose) -> bool | None:
+        """Can the robot put the gun at `pose` (WORLD) with the gantry at the current E1?"""
+        sols = self._purge_ik(pose)
+        return None if sols is None else bool(sols)
+
+    def _purge_goto(self):
+        """Show the robot at the purge pose (first IK solution), or say why not."""
+        c = self.purge_cfg
+        sols = self._purge_ik(marker_pose(c["point"], c["spray_dir"]))
+        if not sols:
+            self._status("Purge point: no part/cell loaded" if sols is None
+                         else "Purge point is out of reach at this gantry position")
+            return
+        if getattr(self, "scene", None) is not None:
+            self.scene.set_robot_pose(sols[0])
+        self._status("Robot shown at the purge point")
 
     def _purge_show(self):
         """Move the ghost gun and set the chip: off / reachable / out of reach."""
