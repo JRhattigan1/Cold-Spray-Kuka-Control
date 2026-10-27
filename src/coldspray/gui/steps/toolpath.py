@@ -83,8 +83,8 @@ def box_differs(box: QWidget, default) -> bool:
 
 def estimate_time_s(path, proc: ProcessConfig) -> float:
     """Rough program time: robot moves at their speed over the part, plus spray settling.
-    Pure table rotations count at their speed over the part too."""
-    total, on = 0.0, False
+    Pure table rotations count at their speed over the part too; dwells add their wait."""
+    total, on = sum(m.dwell_s for m in path.moves), False
     for a, b in zip(path.moves, path.moves[1:]):
         total += np.linalg.norm(b.pose[:3, 3] - a.pose[:3, 3]) / b.speed
         if b.gun_on and not on:

@@ -44,6 +44,7 @@ class Samples:
 class Toolpath:
     name: str
     moves: list[Move] = field(default_factory=list)
+    skipped_points: int = 0           # points a planner dropped (e.g. surface tilt limit)
 
     def axis_values(self) -> list[dict[str, float]]:
         """External axis values in force at each move (carried forward)."""
@@ -55,12 +56,14 @@ class Toolpath:
 
     def transformed(self, t: np.ndarray) -> "Toolpath":
         """Copy with every pose replaced by `t @ pose` (everything else kept)."""
-        return Toolpath(self.name, [replace(m, pose=t @ m.pose, axes=dict(m.axes)) for m in self.moves])
+        return Toolpath(self.name, [replace(m, pose=t @ m.pose, axes=dict(m.axes)) for m in self.moves],
+                        self.skipped_points)
 
     def rolled(self, deg: float) -> "Toolpath":
         """Copy with the gun turned `deg` about its spray axis (tool X) at every pose."""
         r = frame(c=deg)
-        return Toolpath(self.name, [replace(m, pose=m.pose @ r, axes=dict(m.axes)) for m in self.moves])
+        return Toolpath(self.name, [replace(m, pose=m.pose @ r, axes=dict(m.axes)) for m in self.moves],
+                        self.skipped_points)
 
     def sample(self, step: float = 5.0, angle_step: float = 2.0) -> Samples:
         """Points every ~`step` mm (and every ~`angle_step` degrees of external
