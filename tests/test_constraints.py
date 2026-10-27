@@ -165,3 +165,11 @@ def test_reference_names(block):
     assert reference("faceplate").point[2] == 0 and np.allclose(reference("table_axis").dir, (0, 0, 1))
     with pytest.raises(ValueError):
         reference("nope")
+
+
+def test_touch_from_180_degree_flip(block):
+    """R2: the top face already pointing up must still be turned over onto the floor."""
+    top = part_plane(block, face(block, (0, 0, 1)))
+    r = solve(block.placement, [touch(top, substrate_top(Substrate()))])
+    assert r.status == "ok"
+    assert np.allclose(base(r.placement, top)[1], (0, 0, -1), atol=1e-4)
