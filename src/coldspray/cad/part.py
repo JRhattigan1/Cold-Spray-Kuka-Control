@@ -29,6 +29,14 @@ class PlanarFace:
 
 
 @dataclass
+class CylFace:
+    point: np.ndarray    # a point on the cylinder axis, part-CAD coords
+    axis: np.ndarray     # unit axis direction, part-CAD coords
+    radius: float        # mm
+    area: float          # mm^2
+
+
+@dataclass
 class Part:
     name: str
     vertices: np.ndarray      # (n, 3) part-CAD coords
@@ -40,6 +48,7 @@ class Part:
     body_ids: np.ndarray | None = None    # (m,) body index per triangle; None = one body
     build_body: int = 0                   # the body that is sliced and sprayed
     start_face: int | None = None         # flat face of the build body the layers grow away from
+    cylinders: dict[int, CylFace] = field(default_factory=dict)   # B-rep face index -> cylindrical face
 
     @property
     def n_bodies(self) -> int:
@@ -70,6 +79,7 @@ class Part:
         present = set(face_ids.tolist())
         return replace(self, vertices=vertices, faces=faces, face_ids=face_ids,
                        planar={k: p for k, p in self.planar.items() if k in present},
+                       cylinders={k: c for k, c in self.cylinders.items() if k in present},
                        placement=self.placement.copy(),
                        base_face=self.base_face if self.base_face in present else None,
                        start_face=self.start_face if self.start_face in present else None,
