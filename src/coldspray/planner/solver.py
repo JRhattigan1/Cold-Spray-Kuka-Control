@@ -96,7 +96,39 @@ def find_issues(path: Toolpath, ctx: Context):
                 issues.append(Issue(int(i), int(s.move_index[i]), "collision",
                                     ", ".join(f"{a}/{b}" for a, b in sorted(pairs))))
     issues.sort(key=lambda x: x.sample)
+    ctx.last = (s, joints)
     return s, joints, issues
+
+
+def issues_in(path: Toolpath, ctx: Context, lo: int, hi: int) -> list[Issue]:
+    """Problem points of moves lo..hi only - the fast re-check levers use while
+    searching. IK starts from the joints the last `find_issues` had just before
+    move `lo`, so moves before `lo` must be unchanged since then (moves after
+    `hi` may be added or removed). `solve` still re-checks the whole path."""
+    o = ctx.opts
+    s = path.sample(o.sample_mm, o.angle_step_deg)
+    sel = np.flatnonzero((s.move_index >= lo) & (s.move_index <= hi))
+    if not len(sel):
+        return []
+    seed = ctx.cell.home_deg if ctx.seed is None else ctx.seed
+    last = getattr(ctx, "last", None)
+    if last is not None:
+        before = np.flatnonzero(last[0].move_index < lo)
+        if len(before) and not np.isnan(last[1][before[-1], 0]):
+            seed = last[1][before[-1]]
+    targets = robot_targets(s, ctx.cell)[sel]
+    hint = path.hint_for(s.move_index)
+    joints = ctx.robot.ik_path(targets, seed_deg=seed, hint=None if hint is None else hint[sel])
+    out = []
+    for i, q in zip(sel, joints):
+        if np.isnan(q[0]):
+            out.append(Issue(int(i), int(s.move_index[i]), "unreachable"))
+        elif ctx.checker is not None:
+            pairs = ctx.checker.check(q, s.axes_at(i))
+            if pairs:
+                out.append(Issue(int(i), int(s.move_index[i]), "collision",
+                                 ", ".join(f"{a}/{b}" for a, b in sorted(pairs))))
+    return out
 
 
 def _levers():

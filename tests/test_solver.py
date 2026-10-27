@@ -43,6 +43,16 @@ def test_unreachable_move_is_reported(setup):
     assert issues and {i.kind for i in issues} == {"unreachable"} and 5 in {i.move for i in issues}
 
 
+def test_issues_in_matches_the_full_check_for_its_moves(setup):
+    cell, robot, path = setup
+    bad = _far(path, 5)
+    ctx = Context(robot, cell, log=lambda _: None)
+    _, _, full = find_issues(bad, ctx)
+    local = solver.issues_in(bad, ctx, 3, 7)
+    assert [(i.sample, i.kind) for i in local] == [(i.sample, i.kind) for i in full if 3 <= i.move <= 7]
+    assert solver.issues_in(path, ctx, 3, 7) == []          # the good path: nothing there
+
+
 def test_collisions_come_from_the_checker(setup):
     cell, robot, path = setup
 
