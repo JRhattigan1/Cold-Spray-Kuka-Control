@@ -13,7 +13,7 @@ from dataclasses import replace
 
 import numpy as np
 
-from coldspray.cell import base_world
+from coldspray.cell import base_world, robroot
 from coldspray.toolpath.model import Move, Toolpath, spray_frame
 
 
@@ -84,3 +84,36 @@ def add_purge(path: Toolpath, cell, speed: float | None = None) -> Toolpath:
             if out[k].kind == "PTP":
                 out[k].kind = "LIN"             # spray on: keep the gun on a straight line
     return Toolpath(path.name, out, path.skipped_points)
+
+
+def suggest_purge(cell, meshes, robot, e1: float = 0.0, standoff: float = 150.0,
+                  clearance: float = 100.0, step: float = 50.0):
+    """Purge (point, spray_dir) in WORLD: a horizontal line from the robot root towards the
+    "Filtration unit" bbox centre; the point is `standoff + clearance` in front of the unit's
+    near face and the spray goes horizontally into it. Steps back towards the robot until the
+    gun reaches it (gantry at `e1`); if nothing is reachable, returns the last point tried.
+    Raises ValueError without a filtration unit."""
+    from coldspray.sim.markers import marker_pose
+
+    unit = (getattr(meshes, "groups", None) or {}).get("Filtration unit")
+    if unit is None or unit.n_points == 0:
+        raise ValueError("No filtration unit in the cell CAD")
+    lo, hi = np.array(unit.bounds[0::2], float), np.array(unit.bounds[1::2], float)
+    root_t = robroot(cell, e1)
+    root = root_t[:3, 3]
+    d = (lo + hi) / 2 - root
+    d[2] = 0.0
+    d /= np.linalg.norm(d)
+    z = float(np.clip(root[2], lo[2] + 50, hi[2] - 50))
+    o = np.array([root[0], root[1], z])
+    with np.errstate(divide="ignore", invalid="ignore"):          # slab test for the near face
+        t1, t2 = (lo - o) / d, (hi - o) / d
+    t_near = max(np.nanmax(np.minimum(t1, t2)[:2]), 0.0)
+    t_min = 300.0                                                   # not on top of the robot
+    t = t_near - standoff - clearance
+    inv = np.linalg.inv(root_t)
+    while True:
+        point = o + max(t, t_min) * d
+        if robot.ik(inv @ marker_pose(tuple(point), tuple(d)), cell.home_deg) or t <= t_min:
+            return tuple(float(x) for x in point), tuple(float(x) for x in d)
+        t -= step

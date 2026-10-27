@@ -499,6 +499,11 @@ class PositionStep:
         self.purge_goto_btn.setToolTip("Preview: put the robot at the purge pose (gantry at the current E1)")
         self.purge_goto_btn.clicked.connect(self._purge_goto)
         form.addRow(self.purge_goto_btn)
+        self.purge_suggest_btn = QPushButton("Suggest purge point")
+        self.purge_suggest_btn.setToolTip("Point in front of the filtration unit, spraying into it; "
+                                          "stepped back until the robot reaches it")
+        self.purge_suggest_btn.clicked.connect(self._purge_suggest)
+        form.addRow(self.purge_suggest_btn)
         purge_chip = Chip()
         box.add(purge_chip)
         box.add(widgets.advanced(self._holder(form), chip=purge_chip, changed=self._purge_nondefault))
@@ -597,6 +602,28 @@ class PositionStep:
         """Can the robot put the gun at `pose` (WORLD) with the gantry at the current E1?"""
         sols = self._purge_ik(pose)
         return None if sols is None else bool(sols)
+
+    def _purge_suggest(self):
+        """Fill the point and direction from `suggest_purge` (still editable afterwards)."""
+        from coldspray.planner.purge import suggest_purge
+        a = getattr(self, "assets", None)
+        if a is None or getattr(a, "meshes", None) is None:
+            self._status("Suggest purge point: no cell CAD loaded")
+            return
+        try:
+            point, d = suggest_purge(self._work_cell(), a.meshes, a.robot, self.e1.value())
+        except ValueError as e:
+            self._status(str(e))
+            return
+        self._purge_loading = True
+        for box, v in zip(self.purge_xyz, point):
+            box.setValue(float(v))
+        for box, v in zip(self.purge_custom, d):
+            box.setValue(float(v))
+        self.purge_dir.setCurrentText("Custom")
+        self._purge_loading = False
+        self._purge_changed()
+        self._status("Purge point suggested in front of the filtration unit")
 
     def _purge_goto(self):
         """Show the robot at the purge pose (first IK solution), or say why not."""
