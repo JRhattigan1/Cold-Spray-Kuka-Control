@@ -54,11 +54,12 @@ def test_values_update_settings_and_marker(host):
     host.purge_dir.setCurrentText("+X")
     host.purge_dwell.setValue(8)
     host.purge_every.setValue(3)
+    host.purge_approach.setValue(150)
     host.purge_end.setChecked(False)
     c = settings(host)
     assert c["enabled"] and np.allclose(c["point"], (100, -300, 1800))
     assert np.allclose(c["spray_dir"], DIRECTION_PRESETS["+X"])
-    assert c["dwell_s"] == 8 and c["every_n_layers"] == 3 and c["at_end"] is False
+    assert c["dwell_s"] == 8 and c["every_n_layers"] == 3 and c["at_end"] is False and c["approach_mm"] == 150
     m = host.scene.purge_marker
     assert m.visible
     assert np.allclose(m.pose, marker_pose((100, -300, 1800), (1, 0, 0)))
