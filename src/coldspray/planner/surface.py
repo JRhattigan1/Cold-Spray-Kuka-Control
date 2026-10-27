@@ -209,11 +209,20 @@ def plan_surface(vertices, faces, coat_mask, proc: ProcessConfig, name="surface"
                                        axes=dict(table_axes or {}), tag="approach"))
                 path.moves.append(Move(pose(p[0], n[0], tang[0]), proc.rapid_speed_mm_s, tag="approach"))
             else:
-                path.moves.append(Move(pose(p[0], n[0], p[0] - path.moves[-1].pose[:3, 3]),
+                # lift mid-turn: gun goes a further standoff_mm off the surface along the mean
+                # normal, so a turn over a convex part cannot graze it
+                nm = prev_n + n[0]
+                nm = nm / np.linalg.norm(nm) if np.linalg.norm(nm) > 1e-9 else n[0]
+                mid = (prev_p + p[0]) / 2 + nm * proc.standoff_mm
+                travel = p[0] - prev_p
+                path.moves.append(Move(pose(mid, nm, travel), proc.traverse_speed_mm_s,
+                                       gun_on=True, tag="turn"))
+                path.moves.append(Move(pose(p[0], n[0], travel),
                                        proc.traverse_speed_mm_s, gun_on=True, tag="turn"))
             for i in range(1, len(p)):
                 path.moves.append(Move(pose(p[i], n[i], tang[i]), proc.traverse_speed_mm_s,
                                        gun_on=True, tag="infill"))
+            prev_p, prev_n = p[-1], n[-1]
     last = path.moves[-1].pose
     up = last.copy()
     up[:3, 3] = last[:3, 3] - last[:3, 0] * proc.approach_height_mm
