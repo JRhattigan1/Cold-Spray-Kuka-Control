@@ -13,7 +13,7 @@ from coldspray.cad.part import grow_tangent
 from coldspray.gui.stepper import PART, POSITION, TOOLPATH
 from coldspray.gui.widgets import Section, primary_button, wrap_label
 from coldspray.models import PROJECT_ROOT
-from coldspray.pipeline import load_part
+from coldspray.pipeline import BUILT_IN_LABELS, load_part
 from coldspray.sim.part_view import ROLES
 
 
@@ -26,15 +26,15 @@ class PartStep:
         self.part_label = wrap_label("test block (built in)")
         open_btn = QPushButton("Open STEP file...")
         open_btn.clicked.connect(self._open_step)
-        row = QHBoxLayout()
-        for text, key in (("Test block", "test_block"), ("Test tube", "test_tube"),
-                          ("Test repair", "test_repair")):
-            btn = QPushButton(text)
-            btn.clicked.connect(lambda _=False, k=key: self._set_part(k))
-            row.addWidget(btn)
+        self.test_parts = QComboBox()
+        self.test_parts.setToolTip("Load a built-in test part instead of a STEP file")
+        self.test_parts.addItem("Test part...", None)
+        for key, text in BUILT_IN_LABELS.items():
+            self.test_parts.addItem(text, key)
+        self.test_parts.activated.connect(self._test_part_chosen)
         part_box.add(self.part_label)
         part_box.add(open_btn)
-        part_box.add(row)
+        part_box.add(self.test_parts)
         layout.addWidget(part_box)
 
         body_box = self.bodies_section = Section("Bodies")
@@ -103,6 +103,13 @@ class PartStep:
         if fn:
             self._set_part(fn)
 
+    def _test_part_chosen(self, index):
+        """Load the built-in part picked in the drop-down, then show the prompt again."""
+        key = self.test_parts.itemData(index)
+        self.test_parts.setCurrentIndex(0)
+        if key:
+            self._set_part(key)
+
     def _set_part(self, source):
         """`source`: a STEP path, a built-in part name, or None (test block)."""
         QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -117,7 +124,8 @@ class PartStep:
                 self.scene.set_substrate(None)
                 self._substrate_ui()
             builtin = source is None or not Path(str(source)).suffix
-            self.part_label.setText(f"{part.name} (built in)" if builtin else Path(source).name)
+            self.part_label.setText(f"{BUILT_IN_LABELS.get(source, part.name)} (built in)" if builtin
+                                    else Path(source).name)
             self.stepbar.set_chip_text(part.name if builtin else Path(source).name)
             if source == "test_tube":
                 self.mode.setCurrentIndex(self.mode.findData("revolve"))

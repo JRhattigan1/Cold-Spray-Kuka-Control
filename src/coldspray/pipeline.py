@@ -22,6 +22,14 @@ from coldspray.transforms import frame
 FACEPLATE_RADIUS = 500.0  # mm
 
 
+def test_square():
+    """Plain 50 x 50 x 10 mm square block: the simplest build to try a set-up on."""
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+    from OCP.gp import gp_Pnt
+
+    return BRepPrimAPI_MakeBox(gp_Pnt(0, 0, 0), 50, 50, 10).Shape()
+
+
 def test_block():
     """40 x 30 x 5 mm block with a 10 mm through hole."""
     from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut
@@ -66,7 +74,10 @@ def test_repair():
     return both
 
 
-BUILT_IN = {"test_block": test_block, "test_tube": test_tube, "test_repair": test_repair}
+BUILT_IN = {"test_square": test_square, "test_block": test_block, "test_tube": test_tube,
+            "test_repair": test_repair}
+BUILT_IN_LABELS = {"test_square": "Square block 50 x 50 x 10", "test_block": "Block with hole 40 x 30 x 5",
+                   "test_tube": "Tube 120 OD x 150", "test_repair": "Repair: patch on a component"}
 
 
 def load_part(source=None, deflection=0.05) -> Part:
