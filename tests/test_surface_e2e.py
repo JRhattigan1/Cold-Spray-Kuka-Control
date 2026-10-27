@@ -2,7 +2,6 @@
 auto-positions to full reach and exports KRL. Collision checks: not run here."""
 
 import numpy as np
-import pytest
 
 from coldspray.models import load_process
 from coldspray.pipeline import load_part

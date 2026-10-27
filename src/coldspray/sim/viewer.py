@@ -18,7 +18,7 @@ import numpy as np
 import pyvista as pv
 from scipy.spatial.transform import Rotation
 
-from coldspray.cell import base_world, robroot, turntable_motion
+from coldspray.cell import base_world, base_worlds, robroot, turntable_motion
 from coldspray.kinematics.robot import HOME_DEG, Robot
 from coldspray.models import CellConfig
 from coldspray.planner.position import gun_down_deg
@@ -37,6 +37,7 @@ PART = "#4f6d7a"
 FIXTURE = "#8d8f7a"        # other bodies of the part's assembly (component, clamps)
 SUBSTRATE = "#b0bec5"
 BUILD_FACE = "#2bb673"
+CONSTRAINT_FACE = "#8e24aa"  # part faces of the selected constraint row
 OUT_OF_DATE = "#e37400"
 STEEP = "#f2b600"          # gun pointing further down than allowed
 # Point markers on the toolpath, each can be hidden: kind -> (colour, point size)
@@ -111,8 +112,10 @@ class Scene:
         self._widget_on = False
         self._constrained = False
         self.on_part_moved = None        # callback(placement, final) while / after dragging
+        self.part_mesh = None            # the part's PolyData ("build" cell scalars; 2 = constraint face)
+        self._face_pick = None           # (callback, on_cancel, observer ids) while picking part faces
 
-        pl.set_background("white")
+        pl.set_background("#eef1f4", top="#d3dbe2")
         pl.enable_anti_aliasing("msaa")   # not ssaa: its render pass breaks the hardware picker the drag handles use
         self.link_actors, self.stick, self.carriage = [], None, None
         self.group_actors = {}
@@ -146,7 +149,7 @@ class Scene:
         self.set_gun(robot, gun)
         self.set_placement(self.world_from_robot, gantry_offset)
         self.spray = _polyline([[0, 0, 0], [0, 0, 1]])
-        self.spray_actor = pl.add_mesh(self.spray, color="#1a73e8", line_width=4)
+        self.spray_actor = pl.add_mesh(self.spray, color="#ff6a13", line_width=4)
         # only the part and the drag handles are pickable (keeps hover picking fast)
         for a in pl.renderer.actors.values():
             a.SetPickable(False)
@@ -269,6 +272,8 @@ class Scene:
         """Part to set up (a coldspray.cad.part.Part, or None): drawn in part-CAD
         coordinates at part.placement, with drag handles in setup mode."""
         self._remove_widget()
+        self.cancel_face_pick()
+        self.part_mesh = None
         for a in (self.part_actor, self.face_actor):
             if a is not None:
                 self.pl.remove_actor(a)
@@ -276,8 +281,9 @@ class Scene:
         if part is not None:
             mesh = _polydata(part.vertices, part.faces)
             mesh.cell_data["build"] = part.in_build().astype(float)
-            self.part_actor = self.pl.add_mesh(mesh, scalars="build", cmap=[FIXTURE, PART], clim=(0, 1),
-                                               n_colors=2, show_scalar_bar=False)
+            self.part_mesh = mesh
+            self.part_actor = self.pl.add_mesh(mesh, scalars="build", cmap=[FIXTURE, PART, CONSTRAINT_FACE],
+                                               clim=(0, 2), n_colors=3, show_scalar_bar=False)
             self.part_actor.SetVisibility(self.mode == "setup")
             self.set_part_placement()
             if self.mode == "setup":
@@ -329,6 +335,70 @@ class Scene:
         self.face_actor.SetVisibility(self.mode == "setup")
         self.face_actor.user_matrix = self.setup_frame @ self.part.placement
         self._apply_section()
+
+    def highlight_part_faces(self, face_ids):
+        """Colour CAD faces `face_ids` (the selected constraint row's faces; empty: none) on the part."""
+        if self.part_mesh is None:
+            return
+        build = self.part.in_build().astype(float)
+        ids = [int(i) for i in face_ids or ()]
+        if ids:
+            build[np.isin(self.part.face_ids, ids)] = 2.0
+        self.part_mesh.cell_data["build"] = build
+        self.part_mesh.Modified()
+
+    def start_face_pick(self, callback, on_cancel=None) -> bool:
+        """Part-face pick mode: each left click on the part calls `callback(face_id)` (CAD face id) until
+        `cancel_face_pick`; Esc in the view cancels (and calls `on_cancel`). Clicks beside the part still turn
+        the view. False if there is no part or interactor."""
+        self.cancel_face_pick()
+        iren = getattr(self.pl, "iren", None)
+        if self.part_actor is None or iren is None:
+            return False
+        obs = (iren.add_observer("LeftButtonPressEvent", self._face_click),
+               iren.add_observer("KeyPressEvent", self._face_key))
+        self._face_pick = (callback, on_cancel, obs)
+        return True
+
+    def cancel_face_pick(self, notify=False):
+        """Leave part-face pick mode (`notify`: call its on_cancel)."""
+        pick, self._face_pick = getattr(self, "_face_pick", None), None
+        if pick is None:
+            return
+        for o in pick[2]:
+            self.pl.iren.remove_observer(o)
+        if notify and pick[1] is not None:
+            pick[1]()
+
+    def picking_faces(self) -> bool:
+        return getattr(self, "_face_pick", None) is not None
+
+    def pick_part_face(self, x, y) -> int | None:
+        """CAD face id of the part under display point (x, y), else None."""
+        if self.part_actor is None or not self.part_actor.GetVisibility():
+            return None
+        from vtkmodules.vtkRenderingCore import vtkCellPicker
+        picker = vtkCellPicker()
+        picker.SetTolerance(0.0005)
+        picker.PickFromListOn()
+        picker.AddPickList(self.part_actor)
+        if picker.Pick(x, y, 0, self.pl.renderer) and picker.GetCellId() >= 0:
+            return int(self.part.face_ids[picker.GetCellId()])
+        return None
+
+    def report_face(self, face_id: int):
+        """A part face was picked (from a click, or directly in tests)."""
+        if self._face_pick is not None:
+            self._face_pick[0](int(face_id))
+
+    def _face_click(self, iren, _event):
+        face = self.pick_part_face(*iren.GetEventPosition())
+        if face is not None:
+            self.report_face(face)
+
+    def _face_key(self, iren, _event):
+        if iren.GetKeySym() == "Escape":
+            self.cancel_face_pick(notify=True)
 
     def set_constrained(self, on: bool):
         """Build face on the plate: only offer the XY arrows and the yaw ring."""
@@ -438,15 +508,17 @@ class Scene:
 
         s = path.sample(step, angle_step)
         self.samples = s
-        self.base_frames = np.array([base_world(cell, s.axes_at(i)) for i in range(len(s))])
+        self.base_frames = base_worlds(cell, [s.axes_at(i) for i in range(len(s))])
         # E1 per sample when the path sets it (solver / KRL); else the placement as given
         self.e1 = s.axes.get(cell.gantry.axis) if cell.gantry is not None else None
         if self.e1 is None:
             roots = [self.world_from_robot] * len(s)
         else:
-            roots = [robroot(cell, float(e)) for e in self.e1]
+            frames = {e: robroot(cell, e) for e in set(map(float, self.e1))}
+            roots = [frames[float(e)] for e in self.e1]
         self.root_frames = roots
-        targets = [np.linalg.inv(r) @ b @ p for r, b, p in zip(roots, self.base_frames, s.poses)]
+        inv = {id(r): np.linalg.inv(r) for r in roots}
+        targets = [inv[id(r)] @ b @ p for r, b, p in zip(roots, self.base_frames, s.poses)]
         self.joints = self.robot.ik_path(targets, seed_deg=HOME_DEG if home is None else home,
                                          hint=path.hint_for(s.move_index))
         self.reachable = ~np.isnan(self.joints[:, 0])

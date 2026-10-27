@@ -9,7 +9,8 @@ widget has a timer - the window drives playback.
 
 import numpy as np
 from PySide6.QtCore import QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QFontMetrics, QPainter
+from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPainterPath, QRadialGradient
+from coldspray.gui import style
 from PySide6.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QSizePolicy, QToolButton, QWidget
 
 KINDS = ("unreachable", "collision", "steep")        # problem kinds
@@ -92,7 +93,7 @@ class Timeline(QWidget):
 
     seek = Signal(int)
 
-    TRACK_H, PAD = 14, 2
+    TRACK_H, PAD = 14, 5
 
     def __init__(self, parent=None, merge_gap: int = 3):
         super().__init__(parent)
@@ -107,7 +108,7 @@ class Timeline(QWidget):
         self.setCursor(Qt.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         fm = QFontMetrics(self.font())
-        self.setFixedHeight(self.TRACK_H + fm.height() + 3 * self.PAD + 4)
+        self.setFixedHeight(self.TRACK_H + fm.height() + 2 * self.PAD + 4)
         self.setMinimumWidth(200)
 
     # --- data ------------------------------------------------------------------
@@ -192,34 +193,60 @@ class Timeline(QWidget):
 
     def paintEvent(self, _event):
         p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing, False)
+        p.setRenderHint(QPainter.Antialiasing, True)
         c = {k: QColor(v) for k, v in self.colours.items()}
         r = self._track_rect()
         p.setPen(Qt.NoPen)
+        rad = r.height() / 2
+        # glass capsule track: soft fill, hairline rim
         p.setBrush(c["track"])
-        p.drawRoundedRect(r, 3, 3)
+        p.drawRoundedRect(r, rad, rad)
         w = int(r.width())
         if self.n:
+            capsule = QPainterPath()
+            capsule.addRoundedRect(r, rad, rad)
+            p.save()
+            p.setClipPath(capsule)
             spray = QColor(c["accent"])
-            spray.setAlphaF(0.35)
+            spray.setAlphaF(0.4)
             layers = [(self.spray, spray, 1)]
             # gun too steep under collisions under unreachable: the worst problem is drawn on top;
-            # problem marks are at least 3 px wide so a single point stays visible
-            layers += [(self.masks[k], c[KIND_COLOUR[k]], 3) for k in ("steep", "collision", "unreachable")]
+            # problem marks are at least 4 px wide so a single point stays visible
+            layers += [(self.masks[k], c[KIND_COLOUR[k]], 4) for k in ("steep", "collision", "unreachable")]
             for mask, colour, min_w in layers:
                 p.setBrush(colour)
                 for a, b in self._col_spans(mask, w):
                     width = max(b - a, min_w)
                     left = min(max(r.left() + (a + b) / 2 - width / 2, r.left()), r.right() - width)
-                    p.drawRect(QRectF(left, r.top(), width, r.height()))
-            # cursor
-            x = self._x(self.current)
-            p.setBrush(c["cursor"])
-            p.drawRect(QRectF(x - 1, r.top() - 1, 2, r.height() + 2))
+                    if min_w > 1:
+                        p.drawRoundedRect(QRectF(left, r.top() + 2, width, r.height() - 4), width / 2 if width < 8 else 3, 3)
+                    else:
+                        p.drawRect(QRectF(left, r.top(), width, r.height()))
+            p.restore()
+        rim = QColor(c["text"])
+        rim.setAlphaF(0.25)
+        p.setPen(rim)
+        p.setBrush(Qt.NoBrush)
+        p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), rad, rad)
+        if self.n:
+            # playhead: orange knob with glow
+            x, cy, kr = self._x(self.current), r.center().y(), 6.5
+            glow = QColor(c["accent"])
+            g = QRadialGradient(x, cy, kr * 2)
+            glow.setAlphaF(0.55)
+            g.setColorAt(0.35, glow)
+            glow.setAlphaF(0.0)
+            g.setColorAt(1.0, glow)
+            p.setPen(Qt.NoPen)
+            p.setBrush(g)
+            p.drawEllipse(QRectF(x - kr * 2, cy - kr * 2, kr * 4, kr * 4))
+            p.setBrush(c["accent"])
+            p.setPen(QColor(255, 255, 255, 230))
+            p.drawEllipse(QRectF(x - kr, cy - kr, 2 * kr, 2 * kr))
 
         # legend and time
         fm = QFontMetrics(self.font())
-        y = r.bottom() + self.PAD + 2
+        y = r.bottom() + 2
         h = fm.height()
         x = r.left()
         for kind in ("collision", "unreachable", "steep"):
@@ -288,7 +315,23 @@ class PlaybackControls(QWidget):
             row.addWidget(w)
         row.addWidget(self.follow)
         row.addStretch(1)
+        self.apply_glass()
         self._label(False)
+
+    def apply_glass(self, mode: str | None = None):
+        """Round glass buttons in the current theme (call again after a theme switch)."""
+        t = style.tokens(mode or style.current_mode())
+        dark = t['bg'] < '#808080'
+        glass = 'rgba(255,255,255,0.10)' if dark else 'rgba(255,255,255,0.65)'
+        hover = 'rgba(255,255,255,0.18)' if dark else 'rgba(255,255,255,0.95)'
+        rim = 'rgba(255,255,255,0.22)' if dark else 'rgba(0,0,0,0.12)'
+        for b in (self.prev_btn, self.next_btn):
+            b.setFixedSize(30, 30)
+        self.play_btn.setMinimumSize(84, 30)
+        self.setStyleSheet(
+            f"QToolButton{{background:{glass};border:1px solid {rim};border-radius:15px;color:{t['ink']};padding:0 10px;}}"
+            f"QToolButton:hover{{background:{hover};border-color:{t['accent']};}}"
+            f"QToolButton:checked{{background:{t['accent']};border-color:{t['accent']};color:#ffffff;}}")
 
     def _label(self, playing):
         self.play_btn.setText("⏸ Pause" if playing else "▶ Play")

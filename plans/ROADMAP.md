@@ -1,30 +1,30 @@
-# Roadmap: cold-spray feature plan (status after session 1)
+# Roadmap: where each feature stands (2026-10-27, end of session 4)
 
-Source of truth: tracker in `plans/2026-10-27-feature-plan.md` §5 and the reports in `plans/reports/`. This page states only what those reports say. Session 2 (A3, G1, E1b, F2b, A2b, T1, R1-R3, DOC1/2) is running; its results are not reflected here yet.
+This is the status by feature. The next steps and open decisions are in [NEXT_SESSION.md](NEXT_SESSION.md), and the per-agent detail is in `reports/`.
 
-## Feature by feature
+**Branches:**
+- **`main`:** sessions 1–3.
+- **`surface-patterns`:** session 4 and the optimisation run, built on `main`. **Not merged into `main` yet.** Its full suite passes: 619 passed, 3 xfailed.
+- **Nothing is pushed.**
 
-| Feature | Works now (on main) | Left | Risks |
+| Feature | Works now | Left | Risks |
 |---|---|---|---|
-| **A Constraints + datum planes** | A1: pure solver `cad/constraints.py`, all 9 types, conflict status, DOF from Jacobian rank, < 50 ms, agrees with `constrain()`. A2: XY/XZ/YZ datum planes in the cell view (`sim/datums.py`), toggle + offset menu, follow tilt/rotation, `pick_name` gives `"datum:XZ"`. | A3 constraint UI (running). A2: 3D labels, size from faceplate (fixed 600 mm now; A2b running), real cell-view pick flow (A3). | Cell-view face picking is new. Status is only ok/conflicting (over-constraint is an info flag). |
-| **B Infill patterns** | B1: `planner/patterns.py` with zigzag, oneway, concentric, spiral, crosshatch, islands; ≥ 95 % coverage tests; zigzag identical to old. B2: `plan_layers` uses `PATTERNS[proc.infill_pattern]`; path coloured by `Move.tag`. | Per-pattern move-count snapshots and reach/collision per pattern (T1 running). Contour seam rotation (changes KRL hashes, needs its own WP). GUI check of tag colours. | Seam rotation will change the regression hashes on purpose. |
-| **C Contour tilt** | C1: `planner/contour_tilt.py`, outward lean incl. holes, smoothed normals, 20° ± 0.5° on test_block, reach 100 %; tilt 0 is byte-identical. | Optional cap on orientation change per move (45° step at a 90° corner). | Wrist flips / singularities: watch in Simulate. |
-| **D Coat faces + Surface mode** | D1: `Part.coat_faces`, pick/Shift/Ctrl, grow-to-tangent, highlight. D2: `planner/surface.py` conformal raster, coats, tilt limit, overrun turns. D3: `MODES["surface"]`, routing in `plan_part`, clear error for empty selection. | End-to-end run on test_repair with reach, collisions, KRL (T1 running). Auto-position in surface mode not exercised. Invalidate the toolpath when coat faces change. | Surface turns are straight gun-on LINs with no lift; unbridged pieces joined without lift; could pass close to a convex surface. |
-| **E Simple / Advanced UI** | E1: mode registry `widgets.advanced()`, `ModeToggle` in the header, persisted with QSettings. WP0: generic process form (combo/check/spin). | Register advanced process-form rows (E1b running). E2: sweep Part/Position/Simulate/Export, shortcuts, tooltips, README, screenshots. | Simple mode must never hide a changed value without a chip. |
-| **F Purge point** | F1: `planner/purge.py` `add_purge` (start, end, every N layers), WORLD-fixed at any tilt, dwell in KRL, spray stays on between purge and part; hooked into all three `plan_part` returns. F2: purge Section in Position step, ghost gun marker, reach chip. | Save to cell.yaml (F2b running). Drag marker, "Move gun here" IK preview, custom direction / `approach_mm` widget. `plan_part` test with a real PurgeConfig. | Purge transit has the spray on in free space; `auto_position` now also tries to reach the purge point. Spray direction default is a CHECK. |
-| **G Turns off the part** | Surface mode already has overrun turns (D2). `turn_mode`/`turn_plane` config fields exist (WP0). | G1 overrun / beyond_plane for layer rasters (running, `planner/turns.py`); `turn_plane` picker in the form. | Greedy ordering must not jump across the part. |
+| **Constraints and datum planes** | <ul><li>Solver: all 9 types, conflict status, degrees of freedom left (`cad/constraints.py`).</li><li>XY/XZ/YZ datum planes in the cell view.</li><li>Constraints panel in Position, with part faces picked in the 3D view (*surface-patterns*).</li></ul> | <ul><li>Save constraints with the Part step choices.</li><li>Pick references (datum, faceplate) in 3D too.</li><li>Check by hand that real mouse picking works; the tests use a stub.</li></ul> | — |
+| **Infill patterns** | <ul><li>zigzag, oneway, concentric, spiral, crosshatch and islands in Layers.</li><li>Path coloured by move type.</li><li>`raster_start_deg` sets the first direction (*surface-patterns*).</li></ul> | <ul><li>Crosshatch with the default 90° step repeats a direction (0, 90, 90, 0): user decision.</li><li>Rotating the contour seam (changes KRL hashes).</li></ul> | — |
+| **Contour tilt** | Outward lean, holes included, smoothed normals. | Optional cap on the orientation change per move. | Wrist flips: T1 first. |
+| **Coat faces and Surface mode** | <ul><li>Pick, grow and clear coat faces.</li><li>Plane-cut zigzag.</li><li>Separate regions joined by jumps.</li><li>Turns lift by jump height.</li><li>Any infill pattern on a region that faces one way, with fallback to zigzag (*surface-patterns*).</li></ul> | <ul><li>Split a wrapping region per CAD face so the end face gets the pattern.</li><li>The zigzag still sprays across holes.</li><li>Pattern step-over is measured in the flattened plane.</li><li>`wp/P8` (turn clearance) is slow and clashes with jump height 0: rework or drop.</li></ul> | Blends tilted past `surface_max_tilt_deg` are skipped (4,284 points on WearPlate2). |
+| **Gun hold** | <ul><li>Gun angle.</li><li>Minimal-twist hold: no winding, wrist up or towards the robot (*surface-patterns*).</li></ul> | A Simulate check for A4/A6 travel against a cable wind-up limit. | Cables and powder line are not in the CAD. |
+| **Simple / Advanced UI** | Header toggle; the Toolpath and Position steps follow it. | `wp/E2p` (Part step): its test hangs. Final UI sweep. | — |
+| **Purge point** | <ul><li>Purge visits (start, end, every N layers), ghost marker, reach chip, save to `cell.yaml`.</li><li>Suggest purge point at the filtration unit (*surface-patterns*).</li></ul> | <ul><li>Drag the marker.</li><li>Confirm the spray is on between layers (user).</li></ul> | `spray_dir` default is a CHECK. The purge transit is sprayed. |
+| **Turns off the part** | `turn_mode`: inside, overrun, or beyond a datum plane (`planner/turns.py`). | `turn_plane` picker in the form. | — |
+| **Solver** | Arm, gun angle and lean, re-route, and E1-per-layer levers; the "Solve problems" button; unfixed items block Save. | <ul><li>Cancel inside a lever.</li><li>Solver rows in the export confirm.</li><li>Following E1 beyond 1000 mm in the collision check.</li></ul> | E1 changes are PTP moves on the robot. |
+| **KRL base on the part** | Face + edge pick; LIN points relative to it under `BASE_DATA[part_base_number]`; header values; check list (*surface-patterns*). | Other ways to define it (3 points, typed values) if wanted. | Must be taught on the real part. |
+| **Parts fixed in the cell** | Mounted: Fixed in the cell. The table is held at 0, there are no table checks, and Auto position searches E1 only (*surface-patterns*). | Nothing known. | The table is driven to 0 by the program. |
+| **Speed** (`OPTIMISATION_PLAN.md`) | <ul><li>Gun hold, sampling, IK and collision forward kinematics are vectorised, with identical output.</li><li>Generate and Auto position run on a worker thread with a plan cache.</li></ul> | <ul><li>**Arcs and merged LINs:** `wp/O5`, partial; its report is `reports/O5-1.md`.</li><li>Reach IK still runs on the GUI thread.</li><li>Background collision checker.</li><li>Faster Layers planning for tall parts.</li></ul> | CIRC orientation on the robot (`#PATH`): T1 check. |
 
-## Recommended order for the remaining work
-1. **Merge and review session 2** (R1-R3 findings, then A3, G1, E1b, F2b, A2b, T1, DOC1, DOC2). Rerun the suite on main; KRL hashes must stay unchanged unless a WP says why.
-2. **Clean-up:** remove the `getattr(proc/cell, ..., default)` fallbacks (B2, C1, D3, F1, F2, A1) now the config fields are on main.
-3. **Resume what is still partial** after session 2: F2 drag / IK preview / custom direction, D2 lift on turns, D1 coat-change invalidation, B2 seam rotation (own WP, update hashes), C1 orientation cap if the wrist is jerky.
-4. **Human GUI check** (`.\run`): patterns + contour tilt on test_block, datum planes, coat faces + Surface mode, purge marker, constraints on test_tube, turns past the YZ plane, Simple/Advanced toggle.
-5. **E2 final UI sweep**, alone, after everything above has merged.
-6. **Robot-cell verification** (README "Before running on the real robot", plan §6):
-   - Gun TCP from CAD: check `clock_deg` / nozzle length in `tool.yaml`, or paste the taught TOOL_DATA.
-   - BASE_DATA taught at the turntable faceplate centre (`cell.yaml`).
-   - Gantry: E1 = 0 matches the CAD carriage position; travel limits.
-   - Turntable: +E2 tilt direction, +E5 turn direction, axis limits and max speeds, and whether it is coupled to BASE 1 (`turntable.coupled`).
-   - Kinematics: compare pendant X/Y/Z/A/B/C with our FK at several joint positions.
-   - **Purge `spray_dir` default: CHECK on the cell** (marked in `cell.yaml`), and check collision results for the purge moves (spray on in free space).
-   - Every new motion first in T1, spray off, well clear of the part.
+## Order
+1. **Check `surface-patterns` by hand in the app, then merge it into `main`.** See the NEXT_SESSION check list.
+2. **Finish `wp/O5`:** arcs and merged LINs, which the user asked for.
+3. **Open user decisions:** listed in NEXT_SESSION.
+4. **`wp/E2p` and `wp/P8`:** fix and merge, or drop.
+5. **Robot cell checks:** the README section "Before running on the real robot", each in T1 first.

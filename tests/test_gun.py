@@ -47,11 +47,35 @@ def test_gun_angle_turns_from_wrist_up():
     assert np.isclose(up[0], best[0] * np.cos(np.radians(60)), atol=1e-6)
 
 
-def test_near_vertical_spray_keeps_planner_roll():
-    cell, wrist = load_cell(), [0.0, 1.0, 0.0]
-    pose = spray_frame((0, 0, 30), (0, 0, -1), (1, 0, 0))
-    path = Toolpath("t", [Move(pose, 50.0, axes={"E2": 0.0})])                 # table flat: gun points down
-    assert np.allclose(level_gun(path, cell, wrist).moves[0].pose, pose)
+def _wrist_world(path, cell, wrist):
+    return np.array([base_world(cell, a)[:3, :3] @ m.pose[:3, :3] @ wrist
+                     for m, a in zip(path.moves, path.axis_values())])
+
+
+def test_vertical_spray_never_turns_with_travel():
+    """Gun pointing down (table flat), a square loop and zig-zag strokes: the gun keeps one
+    attitude, wrist towards the robot, instead of following the travel direction."""
+    cell, wrist = load_cell(), np.array([0.0, 1.0, 0.0])
+    travel = [(1, 0, 0), (0, 1, 0), (-1, 0, 0), (0, -1, 0), (1, 0, 0), (-1, 0, 0)]
+    path = Toolpath("t", [Move(spray_frame((10.0 * k, 0, 30), (0, 0, -1), d), 50.0, axes={"E2": 0.0})
+                          for k, d in enumerate(travel)])
+    w = _wrist_world(level_gun(path, cell, wrist), cell, wrist)
+    assert np.allclose(w, w[0], atol=1e-9)
+    assert abs(w[0][2]) < 1e-9 and w[0] @ [0.0, 1.0, 0.0] > 0.9      # horizontal, towards the robot (+Y)
+
+
+def test_tilting_spray_carries_the_attitude_without_winding():
+    """Spray swinging round a cone about vertical (a dome, blends): the wrist twist over
+    a full circle stays small instead of a 360 degree turn."""
+    cell, wrist = load_cell(), np.array([0.0, 1.0, 0.0])
+    moves = []
+    for t in np.radians(np.arange(0, 721, 10)):                       # twice round, 30 deg off vertical
+        x = np.array([np.sin(np.radians(30)) * np.cos(t), np.sin(np.radians(30)) * np.sin(t),
+                      -np.cos(np.radians(30))])
+        moves.append(Move(spray_frame((0, 0, 30), x, (-np.sin(t), np.cos(t), 0)), 50.0, axes={"E2": 0.0}))
+    w = _wrist_world(level_gun(Toolpath("t", moves), cell, wrist), cell, wrist)
+    heading = np.unwrap(np.arctan2(w[:, 1], w[:, 0]))
+    assert np.ptp(np.degrees(heading)) < 120                          # no full turn
 
 
 def test_plan_part_with_wrist_levels_layers():

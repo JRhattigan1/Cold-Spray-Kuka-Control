@@ -46,10 +46,10 @@ def _reach(end, u, plane, z):
 
 
 def extend_strokes(strokes, region, proc, plane=None, z=0.0):
-    mode = getattr(proc, "turn_mode", "inside")
+    mode = proc.turn_mode
     if mode == "inside":
         return strokes
-    o = float(getattr(proc, "overrun_mm", 0.0))
+    o = proc.overrun_mm
     # ends at a hole edge stay put: extending them would spray across the hole onto the part
     filled = unary_union([Polygon(g.exterior) for g in getattr(region, "geoms", [region])]).buffer(1e-3)
     out = []

@@ -1,5 +1,7 @@
 """Step 2 Position: the part on the faceplate, substrate plate, table and gantry, auto position."""
 
+import traceback
+
 import numpy as np
 from scipy.spatial.transform import Rotation
 from pydantic import ValidationError
@@ -15,7 +17,8 @@ from coldspray.cad.part import (
 from coldspray.cell import robroot
 from coldspray.gui.constraints_panel import ConstraintsPanel
 from coldspray.gui.stepper import TOOLPATH
-from coldspray.gui import widgets
+from coldspray.gui import plan_jobs, widgets
+from coldspray.gui.steps.part import capsule, glass_card
 from coldspray.gui.widgets import Chip, Section, primary_button, spin, wrap_label
 from coldspray.models import PurgeConfig
 from coldspray.pipeline import check_placement, plan_part
@@ -31,12 +34,25 @@ class PositionStep:
     def _build_position_panel(self) -> QWidget:
         inner = QWidget()
         layout = QVBoxLayout(inner)
+        layout.setSpacing(12)
 
         self.cell_part_label = wrap_label()
         layout.addWidget(self.cell_part_label)
 
-        place_box = self.placement_section = Section("Placement on the faceplate")
-        grid = QFormLayout()
+        place_box = self.placement_section = Section("Placement")
+        self.mount = QComboBox()
+        self.mount.addItem("On the turntable", False)
+        self.mount.addItem("Fixed in the cell", True)
+        self.mount.setToolTip("Fixed in the cell: the part is held off the table (fixture, stand) anywhere the\n"
+                              "robot can reach. The table stays at 0 and is only an obstacle; no plate.\n"
+                              "Placement is from the faceplate centre with the table at 0")
+        self.mount.currentIndexChanged.connect(self._mount_changed)
+        mount_row = QFormLayout()
+        mount_row.addRow("Mounted", self.mount)
+        place_box.add(mount_row)
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(6)
         self.place = {}
         for key, lo, hi, unit, tip in (
                 ("X", -500, 500, " mm", "Along the faceplate X axis"),
@@ -50,8 +66,10 @@ class PositionStep:
             box.valueChanged.connect(self._placement_typed)
             self.place[key] = box
             if key in "XYA":
-                grid.addRow(key, box)
-        place_box.add(grid)
+                n = grid.count() // 2
+                grid.addWidget(QLabel(key), n // 2, (n % 2) * 2)
+                grid.addWidget(box, n // 2, (n % 2) * 2 + 1)
+        place_box.add(glass_card(grid))
         for key in "ZBC":                        # Advanced only, shown in Simple while non-zero
             place_box.add(self._adv_field(key, self.place[key], 0.0))
         self.keep_on_plate = QCheckBox("Keep on plate")
@@ -76,8 +94,9 @@ class PositionStep:
         reset_btn.clicked.connect(self._reset_placement)
         buttons = QGridLayout()
         buttons.setContentsMargins(0, 0, 0, 0)
+        buttons.setSpacing(8)
         for k, btn in enumerate((snap_btn, drop_btn, centre_btn, reset_btn)):
-            buttons.addWidget(btn, k // 2, k % 2)
+            buttons.addWidget(capsule(btn), k // 2, k % 2)
         place_box.add(widgets.advanced(self._holder(buttons)))
         self.face_label = wrap_label()
         place_box.add(self.face_label)
@@ -90,6 +109,7 @@ class PositionStep:
         layout.addWidget(place_box)
         self.constraints = ConstraintsPanel()
         self.constraints.changed.connect(lambda: self.part is not None and self._set_placement(self.part.placement))
+        self.constraints.message.connect(lambda m: self._status(m))
         layout.addWidget(widgets.advanced(self.constraints))
 
         sub_box = self.sub_section = Section("Substrate plate")
@@ -147,6 +167,7 @@ class PositionStep:
         self.auto_btn.setToolTip("Choose table tilt and gantry E1 so the gun is as level as allowed\n"
                                  "and the whole path is reachable (also done when a part is loaded)")
         self.auto_btn.clicked.connect(self._auto_position)
+        capsule(self.auto_btn)
         cell_box.add(self.auto_btn)
         layout.addWidget(cell_box)
         layout.addWidget(self._build_purge_section())
@@ -203,10 +224,11 @@ class PositionStep:
             return
         ignored = [b for b, r in enumerate(self.roles) if r == "ignore"]
         self.part = src.without(ignored)
+        self.part.fixed_in_cell = self._fixed()
         self.part.placement = self._start_placement(self.part)
         self.cell_key = key
         self.constraints.set_part(self.part, self.substrate)
-        has_base = self.part.base_face is not None
+        has_base = self.part.base_face is not None and not self._fixed()
         self.keep_on_plate.blockSignals(True)
         self.keep_on_plate.setChecked(has_base)
         self.keep_on_plate.setEnabled(has_base)
@@ -215,15 +237,14 @@ class PositionStep:
         self.scene.set_part(self.part)
         self.scene.set_constrained(self._kept())
         self.scene.highlight_face(self.part.start_face)
+        self.constraints.set_scene(self.scene)            # rows pick their faces in this view
         self.cell_part_label.setText(f"<b>{src.name}</b>: {self.part.n_bodies} bodies in the cell"
                                      if self.part.n_bodies > 1 else f"<b>{src.name}</b>")
         self._enter_setup()
         self._show_placement()
-        found = self._auto_position(quiet=True)
-        self.scene.focus_on_part()
+        self.scene.focus_on_part()           # Auto position only runs from its button
         self.plotter.render()
-        if found:
-            self._status(f"{src.name} in the cell: adjust the placement if needed, then Next: Toolpath")
+        self._status(f"{src.name} in the cell: place it, or use Auto position, then Next: Toolpath")
 
     def _start_placement(self, part):
         """Standing on the base face if one is set, else as in the CAD; centred on the table."""
@@ -244,30 +265,61 @@ class PositionStep:
             return False
         a, mode = self.assets, self.mode.currentData()
         cell = self._work_cell()
-        if mode == "layers":       # spray against the build direction
+        if self._fixed():          # the table stays at 0: only E1 is searched
+            tilts = [0.0]
+        elif mode == "layers":     # spray against the build direction
             gun_dir = -build_frame(self.part)[:3, 2]
             tilts = layer_tilts(cell, gun_dir, self.rotation.value())
         else:
             tilts = [self.tilt.value()]
 
-        wrist = wrist_side(a.robot.tool)
+        wrist, substrate = wrist_side(a.robot.tool), self.substrate
+        rotation, roll, coats, e1 = self.rotation.value(), self.roll.value(), self.coats.value(), self.e1.value()
+        ident, part, cache = id(self.part), plan_jobs.snapshot(self.part), getattr(self, "plan_cache", None)
 
-        def plan(tilt):
-            return plan_part(self.part, proc, mode=mode, tilt_deg=tilt, rotation_deg=self.rotation.value(),
-                             coats=self.coats.value(), cell=cell, substrate=self.substrate,
-                             roll_deg=self.roll.value(), wrist=wrist)[1]
+        def plan(tilt):                      # on the plan worker: no widgets here
+            kw = dict(mode=mode, tilt_deg=tilt, rotation_deg=rotation, coats=coats, cell=cell,
+                      substrate=substrate, roll_deg=roll, wrist=wrist)
+            return plan_jobs.cached_plan(cache, plan_jobs.plan_key(ident, part, proc, kw),
+                                         lambda: plan_part(part, proc, **kw))[1]
 
-        def progress(f):                     # runs here on the GUI thread: keep Cancel clickable
-            self.job.update(f)
-            QApplication.processEvents()
+        background = getattr(self, "plan_pool", None) is not None
+        if background:
+            if plan_jobs.busy(self):
+                return None
+            lines = []
+            log, progress = lines.append, self.job.set_fraction
+        else:
+            def progress(f):                 # runs here on the GUI thread: keep Cancel clickable
+                self.job.update(f)
+                QApplication.processEvents()
+            log = self._status
+        cancel = self.job.is_cancelled
 
-        self.job.start("Auto position...")
-        try:
-            pos = auto_position(plan, a.robot, cell, tilts, e1_now=self.e1.value(), log=self._status,
-                                progress=progress, cancel=self.job.is_cancelled, rolls=(0.0,))
-        except ValueError as e:              # placement not plannable yet
+        def work():
+            return auto_position(plan, a.robot, cell, tilts, e1_now=e1, log=log,
+                                 progress=progress, cancel=cancel, rolls=(0.0,))
+
+        self._auto_result = None
+        plan_jobs.run(self, "Auto position...", work, lambda pos, err: self._auto_positioned(pos, err, quiet))
+        if background:
+            self.plan_lines = lines          # the poll shows the latest log line
+            return None
+        return self._auto_result
+
+    def _auto_positioned(self, pos, err, quiet) -> bool:
+        """GUI thread: apply the Auto position result (tilt, E1) and report it."""
+        self._auto_result = False
+        if isinstance(err, ValueError):      # placement not plannable yet
             self.job.finish()
-            self._status(f"Auto position skipped: {e}")
+            self._status(f"Auto position skipped: {err}")
+            return False
+        if err is not None:                  # a planning bug: report it, don't take the app down
+            self.job.finish()
+            traceback.print_exception(err)
+            self._status(f"Auto position failed: {type(err).__name__}: {err}")
+            if not quiet:
+                QMessageBox.warning(self, "Auto position", f"Auto position failed:\n{type(err).__name__}: {err}")
             return False
         cancelled = self.job.is_cancelled()
         self.job.finish("Auto position cancelled" if cancelled else "")
@@ -289,9 +341,40 @@ class PositionStep:
         if pos.note:
             msg += f". {pos.note}"
         self._status(msg)
-        return pos.reach == 1.0
+        self._auto_result = pos.reach == 1.0
+        return self._auto_result
 
     # --- placement --------------------------------------------------------------
+    def _fixed(self) -> bool:
+        """The part is held in the cell, not on the turntable."""
+        return bool(self.mount.currentData())
+
+    def _mount_changed(self, *_):
+        """Turntable or fixed in the cell: a fixed part has no plate, the table stays at 0
+        and the placement boxes reach across the cell."""
+        fixed = self._fixed()
+        if fixed:
+            for box in (self.tilt, self.rotation):
+                box.blockSignals(True)
+                box.setValue(0.0)
+                box.blockSignals(False)
+            self.keep_on_plate.setChecked(False)
+            self.sub_check.setChecked(False)
+        for box in (self.tilt, self.rotation, self.sub_check):
+            box.setEnabled(not fixed)
+        self.keep_on_plate.setEnabled(not fixed and self.part is not None and self.part.base_face is not None)
+        reach = 6000 if fixed else 500
+        for key in "XYZ":
+            self.place[key].setRange(-reach, reach if key != "Z" else 2 * reach)
+        for p in (getattr(self, "source", None), self.part):
+            if p is not None:
+                p.fixed_in_cell = fixed
+        if self.result is not None:
+            self._invalidate(TOOLPATH)
+        if self.part is not None:
+            self._show_placement()
+        self._enter_setup()
+
     def _floor(self) -> float:
         """Height the part stands on: plate top, or the faceplate."""
         return self.substrate.top if self.substrate else 0.0
@@ -343,7 +426,7 @@ class PositionStep:
         text += (f"<br>Layers grow from start face {part.start_face} (green)" if part.start_face is not None
                  else "<br>Layers build up from the bottom of the build body")
         try:
-            check_placement(placed_vertices(self.part), self.substrate, self.mode.currentData())
+            check_placement(placed_vertices(self.part), self.substrate, self.mode.currentData(), self._fixed())
         except ValueError as e:
             text += f"<br><span style='color:#d93025'>{e}</span>"
         self.face_label.setText(text)
@@ -449,6 +532,11 @@ class PositionStep:
         self.purge_goto_btn.setToolTip("Preview: put the robot at the purge pose (gantry at the current E1)")
         self.purge_goto_btn.clicked.connect(self._purge_goto)
         form.addRow(self.purge_goto_btn)
+        self.purge_suggest_btn = QPushButton("Suggest purge point")
+        self.purge_suggest_btn.setToolTip("Point in front of the filtration unit, spraying into it; "
+                                          "stepped back until the robot reaches it")
+        self.purge_suggest_btn.clicked.connect(self._purge_suggest)
+        form.addRow(self.purge_suggest_btn)
         purge_chip = Chip()
         box.add(purge_chip)
         box.add(widgets.advanced(self._holder(form), chip=purge_chip, changed=self._purge_nondefault))
@@ -547,6 +635,28 @@ class PositionStep:
         """Can the robot put the gun at `pose` (WORLD) with the gantry at the current E1?"""
         sols = self._purge_ik(pose)
         return None if sols is None else bool(sols)
+
+    def _purge_suggest(self):
+        """Fill the point and direction from `suggest_purge` (still editable afterwards)."""
+        from coldspray.planner.purge import suggest_purge
+        a = getattr(self, "assets", None)
+        if a is None or getattr(a, "meshes", None) is None:
+            self._status("Suggest purge point: no cell CAD loaded")
+            return
+        try:
+            point, d = suggest_purge(self._work_cell(), a.meshes, a.robot, self.e1.value())
+        except ValueError as e:
+            self._status(str(e))
+            return
+        self._purge_loading = True
+        for box, v in zip(self.purge_xyz, point):
+            box.setValue(float(v))
+        for box, v in zip(self.purge_custom, d):
+            box.setValue(float(v))
+        self.purge_dir.setCurrentText("Custom")
+        self._purge_loading = False
+        self._purge_changed()
+        self._status("Purge point suggested in front of the filtration unit")
 
     def _purge_goto(self):
         """Show the robot at the purge pose (first IK solution), or say why not."""

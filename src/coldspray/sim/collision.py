@@ -28,7 +28,7 @@ import numpy as np
 import pyvista as pv
 import trimesh
 
-from coldspray.cell import base_world, robroot, turntable_motion
+from coldspray.cell import base_world, robroot, turntable_axes, turntable_motion
 from coldspray.kinematics.robot import HOME_DEG, Robot
 from coldspray.models import CellConfig
 from coldspray.sim.cell_model import OPTIONAL, CellMeshes
@@ -174,21 +174,37 @@ class CollisionChecker:
             if mesh is not None:
                 self.env.add_object(name, trimesh.Trimesh(*mesh, process=False))
 
-    def _place(self, q, axes):
-        """Move robot, gun and turntable bodies to joints `q` / table `axes`."""
-        frames = self.robot.link_frames(q)
+    def _precompute(self, joints) -> tuple[np.ndarray, np.ndarray | None]:
+        """Robot-frame link moves (n, 6, 4, 4) = frames @ inv(CAD frames) and gun
+        frames (n, 4, 4) = flange @ to_flange (None without a gun), for all rows."""
+        links = self.robot.link_frames_batch(joints) @ np.linalg.inv(self.cad_frames)
+        guns = None
+        if self.gun is not None:
+            guns = self.robot.flange(joints) @ self.gun.to_flange
+        return links, guns
+
+    def _table(self, axes):
+        tilt, face = turntable_motion(self.cell, axes)
+        return tilt, face, base_world(self.cell, axes)
+
+    def _place(self, q, axes, pre=None, table=None):
+        """Move robot, gun and turntable bodies to joints `q` / table `axes`.
+        `pre`: (link moves, gun frame) for this sample and `table`: its _table(), if precomputed."""
+        if pre is None:
+            lk, gn = self._precompute(np.asarray(q, float)[None])
+            pre = lk[0], None if gn is None else gn[0]
+        links, guns = pre
         for k, name in enumerate(LINK_NAMES):
-            m = self.world_from_robot @ frames[k] @ np.linalg.inv(self.cad_frames[k])
+            m = self.world_from_robot @ links[k]
             self.arm.set_transform(name, m)
             if name != "A6":
                 self.own.set_transform(name, m)
         if self.gun is not None:
-            g = self.world_from_robot @ self.robot.flange(q) @ self.gun.to_flange
+            g = self.world_from_robot @ guns
             for name in ("gun", "nozzle"):
                 if name in self.tool._objs:
                     self.tool.set_transform(name, g)
-        tilt, face = turntable_motion(self.cell, axes)
-        base = base_world(self.cell, axes)
+        tilt, face, base = table if table is not None else self._table(axes)
         for name, m in (("turntable", tilt), ("faceplate", face)) + tuple((w, base) for w in WORKPIECE):
             if name in self.env._objs:
                 self.env.set_transform(name, m)
@@ -205,12 +221,12 @@ class CollisionChecker:
                              f"(more than {self.reach_mm - ROBOT_REACH_MM:.0f} mm): build a new checker")
         self.set_placement(root)
 
-    def check(self, q, axes) -> set[tuple[str, str]]:
+    def check(self, q, axes, _pre=None, _table=None) -> set[tuple[str, str]]:
         """Colliding (moving body, other body) pairs at joints `q` and table `axes`
         (and gantry, if `axes` sets it)."""
         if self.cell.gantry is not None and self.cell.gantry.axis in axes:
             self._follow_e1(axes[self.cell.gantry.axis])
-        self._place(q, axes)
+        self._place(q, axes, _pre, _table)
         pairs = set()
         for mgr in (self.arm, self.tool):
             hit, names = mgr.in_collision_other(self.env, return_names=True)
@@ -240,6 +256,10 @@ class CollisionChecker:
         report = max(1, len(samples) // 200)              # at most ~200 progress calls
         if progress is not None:
             progress(0.0)
+        valid = [i for i in samples if not np.isnan(joints[i, 0])]
+        links, guns = self._precompute(np.asarray(joints)[valid]) if valid else (None, None)
+        row = {i: r for r, i in enumerate(valid)}
+        tables = {}                                       # one table pose per distinct (tilt, rotation)
         for k, i in enumerate(samples):
             if cancel is not None and cancel():
                 return hits
@@ -247,7 +267,12 @@ class CollisionChecker:
                 progress(k / len(samples))
             if np.isnan(joints[i, 0]):
                 continue
-            pairs = self.check(joints[i], axes_per_sample(i))
+            axes = axes_per_sample(i)
+            tkey = turntable_axes(self.cell, axes)
+            if tkey not in tables:
+                tables[tkey] = self._table(axes)
+            r = row[i]
+            pairs = self.check(joints[i], axes, (links[r], None if guns is None else guns[r]), tables[tkey])
             if pairs:
                 hits.append(Collision(i, pairs))
         if progress is not None:

@@ -7,14 +7,14 @@ import numpy as np
 from pydantic import ValidationError
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
+    QApplication, QCheckBox, QFrame, QComboBox, QDoubleSpinBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
     QSpinBox, QVBoxLayout, QWidget,
 )
 
 from coldspray.cad.part import build_mesh, other_mesh
 from coldspray.cell import robroot
 from coldspray.gui.stepper import SIMULATE, TOOLPATH
-from coldspray.gui import widgets
+from coldspray.gui import plan_jobs, style, widgets
 from coldspray.gui.widgets import Chip, Section, primary_button, wrap_label
 from coldspray.kinematics.robot import Robot
 from coldspray.models import ProcessConfig, field_level, load_process, save_process
@@ -164,6 +164,88 @@ def estimate_time_s(path, proc: ProcessConfig) -> float:
     return total
 
 
+def _glass_css(name: str, radius: int = 14) -> str:
+    t = style.tokens(style.current_mode())
+    return (f"QFrame#{name} {{ background: {t['panel']}; border: 1px solid {t['line']}; border-radius: {radius}px; }}"
+            f"QFrame#{name} QLabel {{ background: transparent; }}")
+
+
+class SegmentedCapsule(QFrame):
+    """Glass segmented capsule that mirrors a QComboBox (the combo stays the data API)."""
+
+    def __init__(self, combo: QComboBox):
+        super().__init__()
+        self.setObjectName("segcap")
+        self.combo, self.buttons = combo, []
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(3, 3, 3, 3)
+        lay.setSpacing(2)
+        for i in range(combo.count()):
+            b = QPushButton(combo.itemText(i))
+            b.setCheckable(True)
+            b.setCursor(Qt.PointingHandCursor)
+            b.clicked.connect(lambda _=False, i=i: combo.setCurrentIndex(i))
+            lay.addWidget(b, 1)
+            self.buttons.append(b)
+        combo.currentIndexChanged.connect(self._sync)
+        combo.hide()
+        self._sync()
+
+    def _sync(self, *_):
+        t = style.tokens(style.current_mode())
+        self.setStyleSheet(
+            f"QFrame#segcap {{ background: {t['soft']}; border: 1px solid {t['line']}; border-radius: 16px; }}"
+            f"QPushButton {{ background: transparent; border: none; border-radius: 13px; padding: 5px 10px; color: {t['muted']}; }}"
+            f"QPushButton:checked {{ background: {t['accent']}; color: #ffffff; font-weight: 600; }}")
+        for i, b in enumerate(self.buttons):
+            b.setChecked(i == self.combo.currentIndex())
+
+
+class StatTiles(QWidget):
+    """Summary as glass stat tiles; keeps the QLabel.setText API used by generate."""
+
+    def __init__(self):
+        super().__init__()
+        self._lay = QHBoxLayout(self)
+        self._lay.setContentsMargins(0, 0, 0, 0)
+        self._tiles = {}
+        self._text = ""
+        for key, cap in (("moves", "Moves"), ("time", "Time"), ("layers", "Layers")):
+            f = QFrame()
+            f.setObjectName("tile_" + key)
+            f.setStyleSheet(_glass_css("tile_" + key))
+            v = QVBoxLayout(f)
+            v.setContentsMargins(10, 8, 10, 8)
+            val, lab = QLabel("-"), QLabel(cap)
+            val.setStyleSheet(f"font-size: 18px; font-weight: 600; color: {style.tokens(style.current_mode())['accent']};")
+            lab.setStyleSheet(f"color: {style.tokens(style.current_mode())['muted']};")
+            v.addWidget(val)
+            v.addWidget(lab)
+            self._lay.addWidget(f)
+            self._tiles[key] = (f, val)
+        self.setVisible(False)
+
+    def text(self):
+        return self._text
+
+    def clear(self):
+        """As QLabel.clear: nothing to show (a new part or setup)."""
+        self.setText("")
+
+    def setText(self, text: str):
+        import re
+        self._text = text
+        pats = {"moves": r"([\d,]+)\s+moves", "time": r"≈\s*([\d.]+)\s*min", "layers": r"([\d,]+)\s+(?:layers|coats)"}
+        shown = False
+        for key, pat in pats.items():
+            m = re.search(pat, text)
+            frame, val = self._tiles[key]
+            frame.setVisible(bool(m) or key != "layers")
+            val.setText((m.group(1) + (" min" if key == "time" else "")) if m else "-")
+            shown = shown or bool(m)
+        self.setVisible(bool(text))
+
+
 class ToolpathStep:
     def _build_toolpath_panel(self) -> QWidget:
         inner = QWidget()
@@ -180,7 +262,8 @@ class ToolpathStep:
         self.coats = QSpinBox()
         self.coats.setRange(1, 500)
         self.coats.setToolTip("Revolve: number of complete coats; each backs off by the layer thickness")
-        pform.addRow("Mode", self.mode)
+        pform.addRow("Mode", SegmentedCapsule(self.mode))
+        pform.addRow(self.mode)
         pform.addRow("Coats", self.coats)
         plan_box.add(pform)
         layout.addWidget(plan_box)
@@ -188,6 +271,10 @@ class ToolpathStep:
         proc_box = self.process_section = Section("Process")
         self.advanced_section = Section("Advanced", open=False)
         self.process_form, advanced_form = QFormLayout(), QFormLayout()
+        for f in (self.process_form, advanced_form):
+            f.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            f.setHorizontalSpacing(12)
+            f.setVerticalSpacing(8)
         self.fields = {}
         self.process_defaults = proc = load_process()
         for name, info in ProcessConfig.model_fields.items():
@@ -205,18 +292,26 @@ class ToolpathStep:
                 advanced_form.addRow(advanced_row(text, box, getattr(proc, name)))
         proc_box.add(self.process_form)
         self.advanced_section.add(advanced_form)
+        proc_box.setObjectName("procglass")
+        proc_box.setAttribute(Qt.WA_StyledBackground, True)
+        proc_box.setStyleSheet(_glass_css("procglass", 16).replace("QFrame#", "QWidget#", 1))
         layout.addWidget(proc_box)
         layout.addWidget(self.advanced_section)
         widgets.on_mode_changed(lambda _mode: self._sync_advanced())
         self._process_changed()
 
         self.generate_btn = primary_button("Generate toolpath", self.generate)
+        _t = style.tokens(style.current_mode())
+        self.generate_btn.setMinimumHeight(40)
+        self.generate_btn.setStyleSheet(
+            f"QPushButton {{ background: {_t['accent']}; color: #ffffff; border: none; border-radius: 20px; padding: 8px 18px; font-size: 14px; }}"
+            f"QPushButton:disabled {{ background: {_t['soft']}; color: {_t['muted']}; }}")
         self.save_settings_btn = QPushButton("Save as default")
         self.save_settings_btn.setToolTip("Write these process values to config/process.yaml")
         self.save_settings_btn.clicked.connect(self._save_settings)
         layout.addWidget(self.generate_btn)
         layout.addWidget(self.save_settings_btn)
-        self.summary = wrap_label()
+        self.summary = StatTiles()
         layout.addWidget(self.summary)
 
         layout.addWidget(primary_button("Next: Simulate  →", lambda: self.go_to(SIMULATE)))
@@ -269,29 +364,49 @@ class ToolpathStep:
         except ValidationError as e:
             QMessageBox.warning(self, "Invalid parameter", str(e))
             return
+        if plan_jobs.busy(self):
+            return
+        t0 = time.time()
+        a = self.assets
+        tool = a.tool.model_copy(deep=True)
+        if tool.gun:
+            tool.gun.nozzle = self.nozzle.currentData()
+        robot = Robot(a.robot.cfg, tool)
+        gun = make_gun(tool, a.gun_mesh)
+        cell = self._work_cell()
+        mode = self.mode.currentData()
+        kw = dict(mode=mode, tilt_deg=self.tilt.value(), rotation_deg=self.rotation.value(),
+                  coats=self.coats.value(), cell=cell, substrate=self.substrate, roll_deg=self.roll.value(),
+                  wrist=wrist_side(robot.tool))
+        part = plan_jobs.snapshot(self.part)       # values read here: the worker touches no widget
+        key = plan_jobs.plan_key(id(self.part), part, proc, kw)
+        cache = getattr(self, "plan_cache", None)
+
+        def work():
+            return plan_jobs.cached_plan(cache, key, lambda: plan_part(part, proc, **kw))
+
+        self.check_id += 1                 # an older collision check / solve no longer applies
+        self.poll_timer.stop()
+        self.check_future = self.solve_future = None
+        self._status("Planning...")
+        plan_jobs.run(self, "Planning...", work,
+                      lambda out, err: self._planned(out, err, t0, proc, cell, robot, gun, mode),
+                      abandon_on_cancel=True)
+
+    def _planned(self, out, err, t0, proc, cell, robot, gun, mode):
+        """GUI thread: the plan is back; reach check (IK), scene, summary, collision check."""
+        a = self.assets
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            t0 = time.time()
-            a = self.assets
-            tool = a.tool.model_copy(deep=True)
-            if tool.gun:
-                tool.gun.nozzle = self.nozzle.currentData()
-            robot = Robot(a.robot.cfg, tool)
-            gun = make_gun(tool, a.gun_mesh)
-            self.scene.set_gun(robot, gun)
-
-            cell = self._work_cell()
-            self.scene.set_placement(robroot(cell), gantry_offset(cell))
-
-            name, mode = self.part.name, self.mode.currentData()
-            self._status("Planning...")
-            summary, path = plan_part(self.part, proc, mode=mode, tilt_deg=self.tilt.value(),
-                                      rotation_deg=self.rotation.value(), coats=self.coats.value(), cell=cell,
-                                      substrate=self.substrate, roll_deg=self.roll.value(),
-                                      wrist=wrist_side(robot.tool))
+            if err is not None:
+                raise err
+            summary, path = out
             if not path.moves:
                 raise ValueError("No toolpath: the part gave no layers (is it thinner than one layer?)")
+            self.job.label.setText("Checking reach...")
             self._status("Checking reach...")
+            self.scene.set_gun(robot, gun)
+            self.scene.set_placement(robroot(cell), gantry_offset(cell))
             part_mesh, fixture_mesh = build_mesh(self.part), other_mesh(self.part)
             substrate_mesh = self._substrate_mesh()
             joints = self.scene.set_path(path, cell, part=part_mesh, substrate=substrate_mesh,
@@ -302,10 +417,13 @@ class ToolpathStep:
             self.result_mode = mode
         except Exception as e:
             QApplication.restoreOverrideCursor()
+            self.job.finish("Generate failed")
             QMessageBox.warning(self, "Could not generate toolpath", str(e))
             self._status("Generate failed")
             return
         QApplication.restoreOverrideCursor()
+        self.job.finish()
+        name = self.part.name
 
         self.slider.blockSignals(True)
         self.slider.setRange(0, self.scene.n_points - 1)

@@ -191,10 +191,15 @@ MODES = {
 }
 
 
-def check_placement(vertices, substrate: Substrate | None, mode="layers"):
+def check_placement(vertices, substrate: Substrate | None, mode="layers", fixed=False):
     """Raises ValueError (with a message for the user) if the placed part
     (all bodies) can't be sprayed. No substrate: the floor is the faceplate.
-    A part held above the floor (fixture, riser) is fine."""
+    A part held above the floor (fixture, riser) is fine. A part `fixed` in the
+    cell (not on the turntable) can be anywhere: reach and collisions decide."""
+    if fixed:
+        if mode == "revolve":
+            raise ValueError("Revolve spins the turntable: mount the part on the turntable")
+        return
     floor, what = (substrate.top, "the substrate plate") if substrate else (0.0, "the faceplate")
     zmin = vertices[:, 2].min()
     if zmin < floor - 0.1:
@@ -214,7 +219,10 @@ def plan_part(part: Part, proc: ProcessConfig, mode="layers", tilt_deg=0.0, rota
     (the spray is unchanged). With `wrist` (tool frame, see planner/gun.py) and
     a cell, the gun is first levelled - wrist above it - and `roll_deg` is the
     gun angle from there; without, `roll_deg` is added to the planner's roll."""
-    check_placement(placed_vertices(part), substrate, mode)
+    fixed = part.fixed_in_cell
+    check_placement(placed_vertices(part), substrate, mode, fixed)
+    if fixed:                                   # the table stays at 0: BASE is a fixed frame in the cell
+        tilt_deg = rotation_deg = 0.0
     v, faces = build_mesh(part)
     tt = cell.turntable if cell else None
     tilt_axis, rot_axis = (tt.tilt.axis, tt.rotation.axis) if tt else ("E2", "E5")
@@ -228,7 +236,7 @@ def plan_part(part: Part, proc: ProcessConfig, mode="layers", tilt_deg=0.0, rota
                      and abs(b.pose[2, 3] - a.pose[2, 3]) > 1e-9)
         return f"{coats} coat(s), {passes + coats} passes", _hold_gun(add_purge(path, cell), cell, roll_deg, wrist)
     if mode == "surface":                       # the picked faces, on any body
-        coat = getattr(part, "coat_faces", set())
+        coat = part.coat_faces
         if not coat:
             raise ValueError("Surface mode needs faces to coat: go back to the Part step and pick"
                              " them with \"Coat faces\"")
@@ -236,10 +244,12 @@ def plan_part(part: Part, proc: ProcessConfig, mode="layers", tilt_deg=0.0, rota
         table = {tilt_axis: tilt_deg, rot_axis: rotation_deg} if tt else {}
         mask = np.isin(part.face_ids, sorted(coat))
         path = plan_surface(placed_vertices(part), part.faces, mask, proc, part.name, table,
-                            coats=getattr(proc, "surface_coats", 1),
-                            max_tilt_deg=getattr(proc, "surface_max_tilt_deg", 60.0))
-        n = getattr(proc, "surface_coats", 1)
-        return f"{len(coat)} face(s), {n} coat(s)", _hold_gun(add_purge(path, cell), cell, roll_deg, wrist)
+                            coats=proc.surface_coats,
+                            max_tilt_deg=proc.surface_max_tilt_deg)
+        n = proc.surface_coats
+        note = (f"; {path.zigzag_regions} region(s) wrap round, zigzagged instead"
+                if path.zigzag_regions else "")
+        return f"{len(coat)} face(s), {n} coat(s){note}", _hold_gun(add_purge(path, cell), cell, roll_deg, wrist)
     # Layers grow away from the start face, or up from the bottom of the build
     # body (on the plate, or on the component a repair patch sits on)
     to_base = build_frame(part)

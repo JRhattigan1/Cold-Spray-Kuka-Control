@@ -8,10 +8,10 @@ from dataclasses import dataclass
 from typing import Callable
 
 import shiboken6
-from PySide6.QtCore import QSettings, Qt, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtCore import QEasingCurve, QPointF, QRectF, QSettings, Qt, QVariantAnimation, Signal
+from PySide6.QtGui import QBrush, QColor, QFont, QLinearGradient, QPainter, QPen
 from PySide6.QtWidgets import (
-    QButtonGroup, QDoubleSpinBox, QFrame, QHBoxLayout, QLabel, QLayout, QPushButton, QSizePolicy, QVBoxLayout,
+    QButtonGroup, QDoubleSpinBox, QFrame, QGraphicsDropShadowEffect, QHBoxLayout, QLabel, QLayout, QPushButton, QSizePolicy, QVBoxLayout,
     QWidget,
 )
 
@@ -24,14 +24,31 @@ def _repolish(widget):
     widget.style().polish(widget)
 
 
+def _tok() -> dict:
+    """Colour tokens for the theme the app is showing now (read from the live palette)."""
+    from PySide6.QtGui import QGuiApplication
+    from coldspray.gui.style import tokens
+    app = QGuiApplication.instance()
+    dark = app is not None and app.palette().window().color().lightness() < 128
+    return tokens("dark" if dark else "light")
+
+
+def _rgba(hex_colour: str, alpha: float) -> QColor:
+    c = QColor(hex_colour)
+    c.setAlphaF(alpha)
+    return c
+
+
 class Chip(QLabel):
-    """A small rounded status label. `kind`: good | bad | warn | crash | neutral."""
+    """A capsule status label with a tinted translucent fill. `kind`: good | bad | warn | crash | neutral."""
 
     def __init__(self, text: str = "", kind: str = "neutral", parent=None):
         super().__init__(text, parent)
         self.setObjectName("chip")
         self.setAlignment(Qt.AlignCenter)
         self.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+        self.setStyleSheet("QLabel#chip { background: transparent; border: none; padding: 2px 10px; "
+                           "font-weight: 600; }")
         self.set_kind(kind)
 
     def set_kind(self, kind: str):
@@ -39,17 +56,71 @@ class Chip(QLabel):
             raise ValueError(f"chip kind must be one of {CHIP_KINDS}")
         self.kind = kind
         self.setProperty("kind", kind)
-        _repolish(self)
+        self.update()
 
     def set(self, text: str, kind: str = "neutral"):
         self.setText(text)
         self.set_kind(kind)
         self.setVisible(bool(text))
 
+    def paintEvent(self, event):
+        t = _tok()
+        base = t["muted"] if self.kind == "neutral" else t[self.kind]
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        radius = r.height() / 2
+        p.setPen(Qt.NoPen)
+        p.setBrush(_rgba(base, 0.16))
+        p.drawRoundedRect(r, radius, radius)
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(_rgba(base, 0.45), 1))
+        p.drawRoundedRect(r, radius, radius)
+        p.setPen(QColor(base))
+        p.setFont(self.font())
+        p.drawText(self.rect(), Qt.AlignCenter, self.text())
+        p.end()
+
+
+class _Chevron(QWidget):
+    """A small chevron that rotates smoothly between folded (right) and open (down)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(16, 16)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self._angle = 0.0
+        self._anim = QVariantAnimation(self)
+        self._anim.setDuration(180)
+        self._anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._anim.valueChanged.connect(self._set_angle)
+
+    def _set_angle(self, v):
+        self._angle = float(v)
+        self.update()
+
+    def set_open(self, on: bool, animate: bool):
+        target = 90.0 if on else 0.0
+        self._anim.stop()
+        if animate:
+            self._anim.setStartValue(self._angle)
+            self._anim.setEndValue(target)
+            self._anim.start()
+        else:
+            self._set_angle(target)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.translate(self.width() / 2, self.height() / 2)
+        p.rotate(self._angle)
+        p.setPen(QPen(QColor(_tok()["muted"]), 1.8, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        p.drawPolyline([QPointF(-2, -4), QPointF(2, 0), QPointF(-2, 4)])
+        p.end()
 
 
 class Section(QWidget):
-    """A folding group: header (▾/▸ and title, optional chip on the right) over a body.
+    """A folding glass card: header (chevron and title, optional chip on the right) over a body.
 
     Add content with `add(widget_or_layout)` or straight to `.body` (a QVBoxLayout).
     """
@@ -60,6 +131,9 @@ class Section(QWidget):
         super().__init__(parent)
         self.setObjectName("section")
         self.title = title
+        # the card is painted here; header and body stay see-through
+        self.setStyleSheet("QFrame#sectionHeader, QFrame#sectionBody { background: transparent; border: none; }"
+                           "QPushButton#sectionToggle { background: transparent; border: none; text-align: left; }")
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
@@ -67,7 +141,9 @@ class Section(QWidget):
         self.header = QFrame()
         self.header.setObjectName("sectionHeader")
         hl = QHBoxLayout(self.header)
-        hl.setContentsMargins(6, 3, 6, 3)
+        hl.setContentsMargins(12, 6, 10, 6)
+        hl.setSpacing(6)
+        self.chevron = _Chevron()
         self.toggle_btn = QPushButton()
         self.toggle_btn.setObjectName("sectionToggle")
         self.toggle_btn.setCheckable(True)
@@ -77,9 +153,11 @@ class Section(QWidget):
         font = self.toggle_btn.font()
         font.setBold(True)
         self.toggle_btn.setFont(font)
+        self.toggle_btn.setText(title)
         self.toggle_btn.toggled.connect(self.set_open)
         self.chip = Chip()
         self.chip.setVisible(False)
+        hl.addWidget(self.chevron)
         hl.addWidget(self.toggle_btn, 1)
         hl.addWidget(self.chip)
         outer.addWidget(self.header)
@@ -87,11 +165,45 @@ class Section(QWidget):
         self.content = QFrame()
         self.content.setObjectName("sectionBody")
         self.body = QVBoxLayout(self.content)
-        self.body.setContentsMargins(8, 6, 8, 8)
+        self.body.setContentsMargins(12, 4, 12, 12)
         outer.addWidget(self.content)
+
+        self._fold = QVariantAnimation(self)
+        self._fold.setDuration(180)
+        self._fold.setEasingCurve(QEasingCurve.OutCubic)
+        self._fold.valueChanged.connect(lambda v: self.content.setMaximumHeight(int(v)))
+        self._fold.finished.connect(self._fold_done)
+
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(24)
+        shadow.setOffset(0, 4)
+        shadow.setColor(QColor(0, 0, 0, 40))
+        self.setGraphicsEffect(shadow)
 
         self._open = None
         self.set_open(open)
+
+    def paintEvent(self, event):
+        t = _tok()
+        dark = QColor(t["bg"]).lightness() < 128
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        sheen = QLinearGradient(r.topLeft(), r.bottomLeft())
+        sheen.setColorAt(0, QColor(255, 255, 255, 22 if dark else 170))
+        sheen.setColorAt(1, QColor(255, 255, 255, 8 if dark else 110))
+        p.setPen(Qt.NoPen)
+        p.setBrush(_rgba(t["panel"], 0.62))
+        p.drawRoundedRect(r, 14, 14)
+        p.setBrush(sheen)
+        p.drawRoundedRect(r, 14, 14)
+        edge = QLinearGradient(r.topLeft(), r.bottomLeft())    # hairline: bright on top, faint below
+        edge.setColorAt(0, QColor(255, 255, 255, 70 if dark else 230))
+        edge.setColorAt(1, _rgba(t["line"], 0.7))
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(QBrush(edge), 1))
+        p.drawRoundedRect(r, 14, 14)
+        p.end()
 
     def add(self, item):
         """Add a widget or a layout to the body; returns it."""
@@ -105,15 +217,30 @@ class Section(QWidget):
         """Chip on the right of the header (stays visible when folded); empty text hides it."""
         self.chip.set(text, kind)
 
+    def _fold_done(self):
+        self.content.setMaximumHeight(16777215)
+        self.content.setVisible(bool(self._open))
+
     def set_open(self, on: bool):
         on = bool(on)
         self.toggle_btn.blockSignals(True)
         self.toggle_btn.setChecked(on)
         self.toggle_btn.blockSignals(False)
-        self.toggle_btn.setText(f"{'▾' if on else '▸'}  {self.title}")
-        self.content.setVisible(on)
+        animate = self._open is not None and self.isVisible() and on != self._open
+        self.chevron.set_open(on, animate)
+        self._fold.stop()
+        if animate:
+            full = self.content.sizeHint().height()
+            start = 0 if on else self.content.height()
+            self.content.setMaximumHeight(start)
+            self.content.show()
+            self._fold.setStartValue(start)
+            self._fold.setEndValue(full if on else 0)
+            self._fold.start()
+        else:
+            self.content.setMaximumHeight(16777215)
+            self.content.setVisible(on)
         self.header.setProperty("open", on)
-        _repolish(self.header)
         if on != self._open:
             self._open = on
             self.toggled.emit(on)
@@ -122,11 +249,50 @@ class Section(QWidget):
         return bool(self._open)
 
 
+class _PrimaryButton(QPushButton):
+    """Orange gradient capsule."""
+
+    def paintEvent(self, event):
+        t = _tok()
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        radius = r.height() / 2
+        acc = QColor(t["accent"])
+        hi, lo = acc.lighter(118), acc.darker(112)
+        if not self.isEnabled():
+            hi.setAlphaF(0.4)
+            lo.setAlphaF(0.4)
+        elif self.isDown():
+            hi, lo = lo, acc.darker(125)
+        elif self.underMouse():
+            hi, lo = hi.lighter(108), acc
+        g = QLinearGradient(r.topLeft(), r.bottomLeft())
+        g.setColorAt(0, hi)
+        g.setColorAt(1, lo)
+        p.setPen(Qt.NoPen)
+        p.setBrush(g)
+        p.drawRoundedRect(r, radius, radius)
+        gloss = QLinearGradient(r.topLeft(), r.bottomLeft())    # glossy top edge
+        gloss.setColorAt(0, QColor(255, 255, 255, 90))
+        gloss.setColorAt(0.5, QColor(255, 255, 255, 0))
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(QBrush(gloss), 1))
+        p.drawRoundedRect(r, radius, radius)
+        p.setPen(QColor("#ffffff") if self.isEnabled() else QColor(255, 255, 255, 170))
+        p.setFont(self.font())
+        p.drawText(self.rect(), Qt.AlignCenter, self.text())
+        p.end()
+
 
 def primary_button(text: str, slot=None) -> QPushButton:
-    """A main action button (Next, Generate): bold, `primary` property set for the theme."""
-    btn = QPushButton(text)
+    """A main action button (Next, Generate): orange gradient capsule, `primary` property set."""
+    btn = _PrimaryButton(text)
     btn.setProperty("primary", True)
+    btn.setAttribute(Qt.WA_Hover, True)
+    btn.setCursor(Qt.PointingHandCursor)
+    btn.setMinimumHeight(30)
+    btn.setStyleSheet('QPushButton[primary="true"] { background: transparent; border: none; padding: 4px 18px; }')
     font = QFont(btn.font())
     font.setBold(True)
     btn.setFont(font)

@@ -1,5 +1,7 @@
 # Feature plan: placement constraints, new toolpaths, purge point, simple/advanced UI
 
+> **Historical (finished).** Every work package here is merged into `main`, except `wp/E2p` and `wp/P8`. The §5 tracker and §8 run log stopped being updated during session 2. For where things stand now, see [ROADMAP.md](ROADMAP.md); for what to do next, see [NEXT_SESSION.md](NEXT_SESSION.md). The rest of this file is kept as the record of how the work was planned.
+
 Date: 2026-10-27 · Repo: Cold-Spray-Kuka-Control · Base commit: `2b3505f`
 
 > First action once this plan is approved: copy this file to

@@ -33,6 +33,7 @@ class Robot:
         self._to_opw = np.linalg.inv(self.tool) @ np.linalg.inv(self._opw_to_kuka)   # TCP pose -> OPW flange
 
     def flange(self, joints_deg) -> np.ndarray:
+        """Flange pose for joints (6,), or poses (n, 4, 4) for (n, 6)."""
         return opw.forward(self.params, np.radians(joints_deg)) @ self._opw_to_kuka
 
     def fk(self, joints_deg) -> np.ndarray:
@@ -56,12 +57,20 @@ class Robot:
 
     def _in_limits(self, tcp_pose) -> np.ndarray:
         """(n, 6) in-limit solutions, in OPW order with A6 -360 / 0 / +360 variants."""
-        target = np.asarray(tcp_pose) @ self._to_opw
-        sols = np.degrees(np.asarray(opw.inverse(self.params, target), dtype=float)).reshape(-1, 6)
-        cands = np.repeat(sols, 3, axis=0)
-        cands[:, 5] += np.tile([-360.0, 0.0, 360.0], len(sols))
-        ok = np.all((cands >= self.limits[:, 0]) & (cands <= self.limits[:, 1]), axis=1)
-        return cands[ok]
+        cands = self._candidates(np.asarray(tcp_pose, dtype=float)[None])[0]
+        return cands[~np.isnan(cands[:, 0])]
+
+    def _candidates(self, tcp_poses) -> np.ndarray:
+        """(n, 24, 6) solutions for n TCP poses: the 8 OPW branches, each with A6
+        -360 / 0 / +360, in OPW order. Unreachable or out-of-limit rows are NaN."""
+        targets = np.asarray(tcp_poses, dtype=float).reshape(-1, 4, 4) @ self._to_opw
+        sols = np.degrees(opw.inverse_all(self.params, targets))           # (n, 8, 6)
+        cands = np.repeat(sols, 3, axis=1)
+        cands[:, :, 5] += np.tile([-360.0, 0.0, 360.0], 8)
+        with np.errstate(invalid="ignore"):
+            ok = np.all((cands >= self.limits[:, 0]) & (cands <= self.limits[:, 1]), axis=2)
+        cands[~ok] = np.nan
+        return cands
 
     def ik_path(self, poses, seed_deg=HOME_DEG, hint=None) -> np.ndarray:
         """Joint angles for a sequence of TCP poses, each solved from the
@@ -69,13 +78,20 @@ class Robot:
         Unreachable poses give a row of NaN.
         """
         out = np.full((len(poses), 6), np.nan)
+        if not len(poses):
+            return out
+        cands = self._candidates(np.asarray(poses, dtype=float))               # (n, 24, 6)
+        valid = ~np.isnan(cands[:, :, 0])
+        any_ok = valid.any(axis=1)
+        filled = np.where(np.isnan(cands), np.inf, cands)
         seed = np.asarray(seed_deg, dtype=float)
-        for i, pose in enumerate(poses):
-            if hint is not None and not np.isnan(hint[i, 0]):
+        use_hint = np.zeros(len(poses), bool) if hint is None else ~np.isnan(np.asarray(hint)[:, 0])
+        for i in range(len(poses)):
+            if use_hint[i]:
                 seed = np.asarray(hint[i], dtype=float)     # solver's chosen configuration
-            sols = self.ik(pose, seed)
-            if sols:
-                out[i] = seed = sols[0]
+            if any_ok[i]:
+                c = filled[i]
+                out[i] = seed = c[np.argmin(np.max(np.abs(c - seed), axis=1))]
         return out
 
     def link_frames(self, joints_deg) -> list[np.ndarray]:
@@ -84,31 +100,20 @@ class Robot:
         Each frame turns with its own joint, so a link's CAD geometry drawn at
         pose q0 moves to pose q by  link_frames(q)[k] @ inv(link_frames(q0)[k]).
         """
+        return list(self.link_frames_batch(np.asarray(joints_deg, float)[None])[0])
+
+    def link_frames_batch(self, joints_deg) -> np.ndarray:
+        """link_frames for every row of (n, 6) joints at once: (n, 6, 4, 4)."""
         p = self.params
-        q = np.radians(joints_deg) * p.signs + p.offsets
-
-        def rz(t):
-            m = np.eye(4)
-            m[:2, :2] = [[np.cos(t), -np.sin(t)], [np.sin(t), np.cos(t)]]
-            return m
-
-        def ry(t):
-            m = np.eye(4)
-            m[[0, 0, 2, 2], [0, 2, 0, 2]] = [np.cos(t), np.sin(t), -np.sin(t), np.cos(t)]
-            return m
-
-        def tr(x, y, z):
-            m = np.eye(4)
-            m[:3, 3] = [x, y, z]
-            return m
-
-        t1 = rz(q[0])
-        t2 = t1 @ tr(p.a1, p.b, p.c1) @ ry(q[1])
-        t3 = t2 @ tr(0, 0, p.c2) @ ry(q[2])
-        t4 = t3 @ tr(p.a2, 0, p.c3) @ rz(q[3])  # A4 turns about the forearm, at the wrist centre
-        t5 = t4 @ ry(q[4])
-        t6 = t5 @ rz(q[5])
-        return [t1, t2, t3, t4, t5, t6]
+        q = np.radians(np.asarray(joints_deg, float)) * p.signs + p.offsets
+        n = len(q)
+        t1 = _rz(q[:, 0])
+        t2 = t1 @ _tr(p.a1, p.b, p.c1, n) @ _ry(q[:, 1])
+        t3 = t2 @ _tr(0, 0, p.c2, n) @ _ry(q[:, 2])
+        t4 = t3 @ _tr(p.a2, 0, p.c3, n) @ _rz(q[:, 3])  # A4 turns about the forearm, at the wrist centre
+        t5 = t4 @ _ry(q[:, 4])
+        t6 = t5 @ _rz(q[:, 5])
+        return np.stack([t1, t2, t3, t4, t5, t6], axis=1)
 
     def link_points(self, joints_deg) -> np.ndarray:
         """Key points along the arm (robot frame) for drawing:
@@ -126,3 +131,25 @@ class Robot:
     def within_limits(self, joints_deg) -> bool:
         q = np.asarray(joints_deg)
         return bool(np.all(q >= self.limits[:, 0]) and np.all(q <= self.limits[:, 1]))
+
+
+def _rz(t):
+    m = np.zeros(t.shape + (4, 4))
+    c, s = np.cos(t), np.sin(t)
+    m[..., 0, 0], m[..., 0, 1], m[..., 1, 0], m[..., 1, 1] = c, -s, s, c
+    m[..., 2, 2] = m[..., 3, 3] = 1.0
+    return m
+
+
+def _ry(t):
+    m = np.zeros(t.shape + (4, 4))
+    c, s = np.cos(t), np.sin(t)
+    m[..., 0, 0], m[..., 0, 2], m[..., 2, 0], m[..., 2, 2] = c, s, -s, c
+    m[..., 1, 1] = m[..., 3, 3] = 1.0
+    return m
+
+
+def _tr(x, y, z, n):
+    m = np.broadcast_to(np.eye(4), (n, 4, 4)).copy()
+    m[:, :3, 3] = [x, y, z]
+    return m

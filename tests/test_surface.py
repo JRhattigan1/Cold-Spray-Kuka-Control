@@ -130,3 +130,88 @@ def test_separate_faces_are_separate_regions_with_a_jump():
     gaps = [np.linalg.norm(b.pose[:3, 3] - a.pose[:3, 3]) for a, b in zip(path.moves, path.moves[1:])
             if a.tag == b.tag == "infill"]
     assert max(gaps) < 5.0                     # within a stroke: resampled points, never across the slot
+
+
+def _tube_end(part):
+    v = placed_vertices(part)
+    top = v[:, 2].max()
+    return _face_mask(part, lambda c, n: (n[:, 2] > 0.99) & np.isclose(c[:, 2], top)) + (top,)
+
+
+@pytest.mark.parametrize("pattern", ["oneway", "concentric", "spiral", "crosshatch", "islands"])
+def test_patterns_fill_a_flat_face(pattern):
+    """Any infill pattern on the tube's annular end: contour then pattern, gun straight
+    down at the standoff, and no spray over the bore (only overruns and jumps cross it)."""
+    proc = load_process().model_copy(update={"infill_pattern": pattern})
+    part = load_part("test_tube")
+    v, mask, top = _tube_end(part)
+    axis = v[:, :2].mean(0)
+    path = plan_surface(v, part.faces, mask, proc)
+    assert path.zigzag_regions == 0 and path.skipped_points == 0
+    tags = [m.tag for m in path.moves]
+    assert "contour" in tags and "infill" in tags and tags.index("contour") < tags.index("infill")
+    sprayed = [m for m in path.moves if m.tag in ("contour", "infill")]
+    assert all(np.allclose(m.pose[:3, 0], [0, 0, -1], atol=1e-6) for m in sprayed)
+    assert all(abs(m.pose[2, 3] - top - proc.standoff_mm) < 1e-6 for m in sprayed)
+    r = np.array([np.linalg.norm(m.pose[:2, 3] - axis) for m in sprayed])
+    if pattern in ("concentric", "spiral", "islands"):          # no overrun: every point on the face
+        assert r.min() > 40 and r.max() < 60
+    else:                                                       # raster: only the overrun leaves it
+        on = r[(r > 40) & (r < 60)]
+        assert len(on) > 0.8 * len(r)
+
+
+def test_concentric_rings_on_the_tube_end():
+    proc = load_process().model_copy(update={"infill_pattern": "concentric"})
+    part = load_part("test_tube")
+    v, mask, _ = _tube_end(part)
+    axis = v[:, :2].mean(0)
+    path = plan_surface(v, part.faces, mask, proc)
+    r = np.array([np.linalg.norm(m.pose[:2, 3] - axis) for m in path.moves if m.tag in ("contour", "infill")])
+    rings = np.unique(np.round(r))       # contour 2 mm in, then step-over apart from both edges
+    assert {42, 44, 46, 48, 52, 54, 56, 58} <= set(rings.astype(int))
+    assert sum(t == "jump" for t in (m.tag for m in path.moves)) < 30    # no slivers at the centre line
+
+
+def test_crosshatch_coats_cross():
+    proc = load_process().model_copy(update={"infill_pattern": "crosshatch", "contour_passes": 0})
+    box = trimesh.creation.box([40, 30, 20])
+    mask = box.face_normals[:, 2] > 0.9
+    path = plan_surface(box.vertices, box.faces, mask, proc, coats=2)
+    infill = [m for m in path.moves if m.tag == "infill"]
+    y = np.array([m.pose[:3, 1] for m in infill])           # gun y: along the stroke
+    along_x = np.abs(y[:, 0]) > 0.99
+    assert along_x.any() and (np.abs(y[:, 1]) > 0.99).any()
+    assert along_x[:len(y) // 4].all() and not along_x[-len(y) // 4:].any()   # coat 1 along X, coat 2 across
+
+
+def test_wrapping_region_falls_back_to_zigzag():
+    """The whole tube side can't be flattened: it is zigzagged as before, and counted."""
+    part = load_part("test_tube")
+    v = placed_vertices(part)
+    axis = v[:, :2].mean(0)
+    v, mask = _face_mask(part, lambda c, n: (np.abs(n[:, 2]) < 0.1)
+                         & (np.linalg.norm(c[:, :2] - axis, axis=1) > 50))
+    zig = plan_surface(v, part.faces, mask, load_process())
+    conc = plan_surface(v, part.faces, mask, load_process().model_copy(update={"infill_pattern": "concentric"}))
+    assert conc.zigzag_regions == 1 and zig.zigzag_regions == 0
+    assert len(conc.moves) == len(zig.moves)
+
+
+@pytest.mark.parametrize("angle", [0.0, 30.0, 90.0])
+def test_raster_start_angle(angle):
+    """raster_start_deg turns the first raster from the default direction, in Layers
+    patterns (from BASE X) and in the Surface zigzag (from the longest side)."""
+    from shapely.geometry import box as rect
+    from coldspray.planner.patterns import zigzag
+    proc = load_process().model_copy(update={"raster_start_deg": angle})
+    seg = zigzag(rect(-50, -40, 50, 40), proc, 0)
+    d = seg[0][-1] - seg[0][0]
+    assert np.isclose(abs(np.degrees(np.arctan2(d[1], d[0]))) % 180, angle % 180, atol=1e-6) or \
+        np.isclose(180 - abs(np.degrees(np.arctan2(d[1], d[0]))), angle, atol=1e-6)
+    top = trimesh.creation.box([40, 30, 20])
+    path = plan_surface(top.vertices, top.faces, top.face_normals[:, 2] > 0.9,
+                        proc.model_copy(update={"overrun_mm": 0.0}))
+    y = np.array([m.pose[:3, 1] for m in path.moves if m.tag == "infill"])     # gun Y: along the stroke
+    a = np.degrees(np.arctan2(y[:, 1], y[:, 0])) % 180
+    assert np.allclose(np.minimum(a, 180 - a), min(angle % 180, 180 - angle % 180), atol=1e-6)

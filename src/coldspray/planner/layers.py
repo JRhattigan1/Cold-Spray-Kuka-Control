@@ -39,7 +39,7 @@ def plan_layers(layers: list[Layer], proc: ProcessConfig, name="part", table_axe
     the gun then sprays along the (tilted) faceplate normal. `to_base` (BASE <- layer
     frame, default identity) maps the BASE turn plane of beyond_plane into the layer frame."""
     path = Toolpath(name)
-    plane = parse_plane(getattr(proc, "turn_plane", ""))
+    plane = parse_plane(proc.turn_plane)
     if plane is not None and to_base is not None:
         r, t = np.asarray(to_base, float)[:3, :3], np.asarray(to_base, float)[:3, 3]
         plane = (r.T @ (np.asarray(plane[0], float) - t), r.T @ np.asarray(plane[1], float))
@@ -53,17 +53,17 @@ def plan_layers(layers: list[Layer], proc: ProcessConfig, name="part", table_axe
         strokes = contour_loops(layer.region, proc)
         n_contour = len(strokes)
         start = strokes[0][0] if strokes else np.zeros(2)
-        pattern = PATTERNS[getattr(proc, "infill_pattern", "zigzag")]
+        pattern = PATTERNS[proc.infill_pattern]
         infill = pattern(infill_area, proc, layer.index, start=start)
-        extended = (getattr(proc, "turn_mode", "inside") != "inside"
-                    and getattr(proc, "infill_pattern", "zigzag") in RASTER_PATTERNS)
+        extended = (proc.turn_mode != "inside"
+                    and proc.infill_pattern in RASTER_PATTERNS)
         if extended:
             infill = extend_strokes(infill, infill_area, proc, plane, z=z)
         strokes += infill
         if not strokes:
             continue
         tilted = {}                                             # stroke index -> poses at height z
-        if getattr(proc, "contour_tilt_deg", 0) > 0:
+        if proc.contour_tilt_deg > 0:
             for k in range(n_contour):
                 strokes[k], tilted[k] = tilted_ring_poses(strokes[k], layer.region, layer.z_bottom, proc,
                                                           proc.contour_tilt_deg)

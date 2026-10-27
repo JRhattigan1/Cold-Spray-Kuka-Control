@@ -32,6 +32,11 @@ PALETTES = {
         "accent": "#e8590c", "accent_soft": "#fde8dc",
         "good": "#1f8a4c", "warn": "#b7791f", "bad": "#c53030", "crash": "#b8326b", "steep": "#d4a017",
         "view": "#dfe5ea", "view_line": "#9aa7b3",
+        # Liquid Glass tokens (CSS rgba strings, QSS only)
+        "glass": "rgba(255,255,255,0.62)", "glass_strong": "rgba(255,255,255,0.82)", "glass_hi": "rgba(255,255,255,0.90)",
+        "glass_edge": "rgba(255,255,255,0.70)", "glass_line": "rgba(29,35,41,0.10)", "glass_shadow": "rgba(29,35,41,0.18)", "glass_hover": "rgba(255,255,255,0.92)",
+        "accent_a": "#ff8a3d", "accent_b": "#e8590c", "accent_glow": "rgba(232,89,12,0.35)",
+        "r_s": "10px", "r_m": "14px", "r_l": "18px", "r_pill": "999px",
     },
     "dark": {
         "bg": "#14181c", "panel": "#1b2026", "line": "#2e353d", "soft": "#232a31",
@@ -39,6 +44,10 @@ PALETTES = {
         "accent": "#ff7a33", "accent_soft": "#3a2418",
         "good": "#4cc27f", "warn": "#e0a23a", "bad": "#f06a6a", "crash": "#e06aa0", "steep": "#e8c04a",
         "view": "#252c33", "view_line": "#5d6a76",
+        "glass": "rgba(40,48,57,0.55)", "glass_strong": "rgba(34,41,49,0.80)", "glass_hi": "rgba(255,255,255,0.14)",
+        "glass_edge": "rgba(255,255,255,0.16)", "glass_line": "rgba(255,255,255,0.10)", "glass_shadow": "rgba(0,0,0,0.45)", "glass_hover": "rgba(255,255,255,0.12)",
+        "accent_a": "#ff9a52", "accent_b": "#ff7a33", "accent_glow": "rgba(255,122,51,0.40)",
+        "r_s": "10px", "r_m": "14px", "r_l": "18px", "r_pill": "999px",
     },
 }
 
@@ -111,7 +120,7 @@ def _mix(a: str, b: str, t: float) -> str:
 
 def palette(mode: str = "system") -> QPalette:
     t = PALETTES[resolve(mode)]
-    c = {k: QColor(v) for k, v in t.items()}
+    c = {k: QColor(v) for k, v in t.items() if str(v).startswith("#")}
     pal = QPalette()
     roles = {
         QPalette.Window: c["bg"], QPalette.WindowText: c["ink"], QPalette.Base: c["panel"],
@@ -321,6 +330,79 @@ QScrollBar::handle { background: @line; border-radius: 4px; min-height: 24px; mi
 QScrollBar::handle:hover { background: @muted; }
 QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }
 QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
+"""
+
+
+_QSS += """
+/* ---- Liquid Glass layer: translucent surfaces, hairline highlights, capsules, orange accents ---- */
+QScrollArea, QScrollArea > QWidget > QWidget { background: @glass; }
+QGroupBox { background: @glass; border: 1px solid @glass_edge; border-radius: @r_m; margin-top: 16px; padding: 10px; }
+QFrame#sectionHeader { background: @glass_strong; border: 1px solid @glass_edge;
+    border-top-left-radius: @r_m; border-top-right-radius: @r_m; }
+QFrame#sectionHeader[open="false"] { border-radius: @r_m; }
+QFrame#sectionBody { background: @glass; border: 1px solid @glass_edge; border-top: none;
+    border-bottom-left-radius: @r_m; border-bottom-right-radius: @r_m; }
+QWidget#stepBar { background: @glass_strong; border-bottom: 1px solid @glass_line; }
+QFrame#pill { background: @glass; border: 1px solid @glass_edge; border-radius: 11px; }
+QFrame#pill:hover { background: @glass_hover; border-color: @accent_a; }
+QFrame#pill[current="true"] { border: 1px solid @accent_b; background: @accent_soft; }
+QLabel#chip, QLabel[chip] { background: @glass; border: 1px solid @glass_edge; border-radius: 9px; }
+QPushButton { background: @glass; border: 1px solid @glass_edge; border-bottom: 1px solid @glass_line;
+    border-radius: 13px; padding: 0px 14px; }
+QPushButton:hover { background: @glass_hover; border-color: @accent_a; }
+QPushButton:pressed { background: @glass_strong; padding-top: 1px; }
+QPushButton:focus { border: 1px solid @accent; }
+QPushButton:checked { border: 1px solid @accent; color: @accent; background: @accent_soft; }
+QPushButton[primary="true"] { border: 1px solid @accent_glow; border-radius: 13px; color: #ffffff;
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @accent_a, stop:1 @accent_b); }
+QPushButton[primary="true"]:hover { border-color: @accent_a;
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @accent_a, stop:1 @accent_hover); }
+QPushButton[primary="true"]:pressed { background: @accent_b; padding-top: 1px; }
+QPushButton[primary="true"]:disabled { background: @line; border-color: @line; color: @muted; }
+QPushButton:disabled { background: @glass; color: @muted; }
+QPushButton:flat { background: transparent; border: none; }
+QPushButton[step="true"] { background: @glass; border-radius: 11px; }
+QToolButton { border-radius: @r_s; }
+QToolButton:hover { background: @glass_hover; border-color: @glass_edge; }
+QToolButton:checked { background: @accent_soft; border-color: @accent; }
+QWidget#viewToolbar QToolButton { background: @glass_strong; border: 1px solid @glass_edge; border-radius: @r_s; }
+QWidget#viewToolbar QToolButton:hover { background: @glass_hover; }
+QWidget#viewToolbar QToolButton:checked { border-color: @accent; background: @accent_soft; }
+QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox { background: @glass_strong; border: 1px solid @glass_line;
+    border-radius: 13px; padding: 0px 10px; }
+QSpinBox, QDoubleSpinBox { padding-right: 20px; }
+QLineEdit:hover, QSpinBox:hover, QDoubleSpinBox:hover, QComboBox:hover { border-color: @accent_a; background: @glass_hover; }
+QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus { border: 1px solid @accent; }
+QLineEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, QComboBox:disabled { background: @soft; color: @muted; }
+QSpinBox::up-button, QDoubleSpinBox::up-button { border-top-right-radius: 13px; border-left: none; }
+QSpinBox::down-button, QDoubleSpinBox::down-button { border-bottom-right-radius: 13px; border-left: none; }
+QComboBox { padding-right: 22px; }
+QComboBox QAbstractItemView { background: @glass_strong; border: 1px solid @glass_edge; border-radius: @r_s;
+    selection-background-color: @accent_soft; selection-color: @ink; padding: 4px; }
+QCheckBox::indicator { border-radius: 5px; background: @glass_strong; }
+QCheckBox::indicator:checked { border-color: @accent_b;
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @accent_a, stop:1 @accent_b); }
+QRadioButton::indicator:checked { background: @glass_strong; }
+QListView, QTreeView, QTableView { background: @glass; border: 1px solid @glass_edge; border-radius: @r_m; }
+QTabWidget::pane { background: @glass; border: 1px solid @glass_edge; border-radius: @r_m; }
+QTabBar::tab { background: @glass; border: 1px solid @glass_edge; border-radius: 12px; padding: 4px 14px;
+    margin: 2px 3px 2px 0; }
+QTabBar::tab:hover { background: @glass_hover; }
+QTabBar::tab:selected { background: @glass_strong; color: @ink; border: 1px solid @accent; }
+QMenuBar { background: @glass_strong; border-bottom: 1px solid @glass_line; }
+QMenuBar::item:selected { background: @glass_hover; border-radius: 10px; }
+QMenu { background: @glass_strong; border: 1px solid @glass_edge; border-radius: @r_m; padding: 6px; }
+QMenu::item { border-radius: 9px; }
+QMenu::separator { background: @glass_line; }
+QToolTip { background: @glass_strong; color: @ink; border: 1px solid @glass_edge; border-radius: @r_s; padding: 5px 9px; }
+QStatusBar { background: @glass_strong; border-top: 1px solid @glass_line; }
+QProgressBar::chunk { border-radius: 3px;
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 @accent_a, stop:1 @accent_b); }
+QSlider::sub-page:horizontal { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 @accent_a, stop:1 @accent_b); }
+QScrollBar:vertical { width: 8px; }
+QScrollBar:horizontal { height: 8px; }
+QScrollBar::handle { background: @glass_shadow; border-radius: 4px; margin: 1px; }
+QScrollBar::handle:hover { background: @accent_a; }
 """
 
 

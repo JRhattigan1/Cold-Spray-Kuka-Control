@@ -1,4 +1,4 @@
-﻿"""Lever `e1`: move the gantry (E1) per layer to a position where the layer is clear.
+"""Lever `e1`: move the gantry (E1) per layer to a position where the layer is clear.
 
 For each layer (planner.purge.layer_ends) that has problem points, other E1 values
 inside cell.gantry.limits_mm are tried in 250 mm steps, nearest the current one

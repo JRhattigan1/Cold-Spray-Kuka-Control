@@ -9,6 +9,11 @@ plate, or the faceplate itself. The base face, if one is picked, points down
 (-Z) and the assembly's lowest point sits on the floor. The start face, if one
 is picked, is a flat face of the build body that the layers grow away from
 (e.g. the underside of a repair patch, against the component).
+
+The KRL base, if one is picked, is a frame on the part (part-CAD coords) that
+the program's points are written relative to, so it can be taught on the real
+part: +Z out of a flat face, +X along one of its straight edges, the origin at
+that edge's end (a corner). See `krl_base_frame`.
 """
 
 from dataclasses import dataclass, field, replace
@@ -50,6 +55,9 @@ class Part:
     start_face: int | None = None         # flat face of the build body the layers grow away from
     cylinders: dict[int, CylFace] = field(default_factory=dict)   # B-rep face index -> cylindrical face
     coat_faces: set[int] = field(default_factory=set)   # CAD faces to coat (surface mode), any body
+    krl_base: np.ndarray | None = None    # 4x4 part-CAD <- KRL base frame (None: the faceplate BASE)
+    krl_base_face: int | None = None      # the flat face it was picked on
+    fixed_in_cell: bool = False           # held in the cell, not on the turntable (table kept at 0)
 
     @property
     def n_bodies(self) -> int:
@@ -85,6 +93,8 @@ class Part:
                        base_face=self.base_face if self.base_face in present else None,
                        start_face=self.start_face if self.start_face in present else None,
                        coat_faces=self.coat_faces & present,
+                       krl_base=self.krl_base if self.krl_base_face in present else None,
+                       krl_base_face=self.krl_base_face if self.krl_base_face in present else None,
                        body_ids=renumber[self.body_ids[keep]] if len(kept) > 1 else None,
                        build_body=int(renumber[self.build_body]) if len(kept) > 1 else 0)
 
@@ -114,6 +124,41 @@ def grow_tangent(part: Part, faces, max_deg: float = 10.0) -> set[int]:
             if g not in out:
                 out.add(g)
                 todo.append(g)
+    return out
+
+
+def krl_base_frame(part: Part, face_id: int, click) -> np.ndarray:
+    """Part-CAD <- KRL base picked by a click (part-CAD point) on flat face `face_id`:
+    +Z the face's outward normal, +X along the face's straight edge nearest the
+    click, the origin at the end of that edge nearest the click."""
+    z = np.asarray(part.planar[face_id].normal, float)
+    z /= np.linalg.norm(z)
+    mesh = trimesh.Trimesh(part.vertices, part.faces[part.face_ids == face_id])   # merges vertices
+    v, edges = mesh.vertices, mesh.edges_sorted
+    _, index, count = np.unique(edges, axis=0, return_index=True, return_counts=True)
+    rim = edges[index[count == 1]]                  # the face's outline (and hole) segments
+    click = np.asarray(click, float)
+    a, ab = v[rim[:, 0]], v[rim[:, 1]] - v[rim[:, 0]]
+    t = np.clip(np.einsum("ij,ij->i", click - a, ab) / np.einsum("ij,ij->i", ab, ab), 0, 1)
+    k = int(np.argmin(np.linalg.norm(a + t[:, None] * ab - click, axis=1)))
+    d = ab[k] / np.linalg.norm(ab[k])
+    # the whole straight edge: rim segments that continue it in line
+    line, grown = {int(rim[k, 0]), int(rim[k, 1])}, True
+    while grown:
+        grown = False
+        for i, j in rim:
+            if (i in line) != (j in line) and all(np.linalg.norm(np.cross(v[p] - a[k], d)) < 1e-3 for p in (i, j)):
+                line |= {int(i), int(j)}
+                grown = True
+    line = list(line)
+    along = v[line] @ d
+    lo, hi = v[line[int(np.argmin(along))]], v[line[int(np.argmax(along))]]
+    origin, other = (lo, hi) if np.linalg.norm(click - lo) <= np.linalg.norm(click - hi) else (hi, lo)
+    x = other - origin
+    x = (x - (x @ z) * z) / np.linalg.norm(x - (x @ z) * z)
+    out = np.eye(4)
+    out[:3, :3] = np.column_stack([x, np.cross(z, x), z])
+    out[:3, 3] = origin
     return out
 
 

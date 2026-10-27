@@ -7,11 +7,12 @@ only visible bodies can be picked. Drawn in part-CAD coordinates.
 """
 
 import numpy as np
+import pyvista as pv
 from vtkmodules.vtkRenderingCore import vtkCellPicker
 
 from coldspray.sim.viewer import BUILD_FACE, FIXTURE, PART, VIEW_DIRS, _aim, _bounds_centre, _polydata, _section_plane
 
-BASE_FACE = "#1a73e8"
+BASE_FACE = "#c2410c"
 COAT_FACE = "#f28c28"   # faces chosen for surface coating
 IGNORED = "#c9ccd1"
 ROLES = ("build", "fixture", "ignore")
@@ -30,9 +31,11 @@ class PartView:
         self._pick_cb = self._pick_obs = None
         self._keep = False               # coat-face picking: keep picking after each click
         self.coat_actor, self.coat_faces = None, set()   # the coat faces, highlighted together
+        self.frame_actors: list = []     # the KRL base's X / Y / Z arrows
+        self.pick_point = None           # part-CAD point of the last pick click
         self.section_plane = None        # vtkPlane while the section is on
         self.section_axis = "x"
-        pl.set_background("white")
+        pl.set_background("#eef1f4", top="#d3dbe2")
         pl.enable_anti_aliasing("msaa")
         pl.add_axes()
         self.hint = pl.add_text("", position="upper_left", font_size=10, color="black")
@@ -42,6 +45,7 @@ class PartView:
         for a in self.actors + list(self.highlights.values()):
             self.pl.remove_actor(a)
         self.highlight_coat(set())
+        self.show_frame(None)
         self.part, self.actors, self.triangles, self.highlights, self.highlighted = part, [], [], {}, {}
         self.roles, self.visible = list(roles), [True] * len(roles)
         for b in range(part.n_bodies):
@@ -160,6 +164,20 @@ class PartView:
                 self._apply_section()
         self.pl.render()
 
+    def show_frame(self, t: np.ndarray | None):
+        """Draw the KRL base `t` (part-CAD <- base) as red X, green Y and blue Z arrows; None clears it."""
+        for a in self.frame_actors:
+            self.pl.remove_actor(a)
+        self.frame_actors = []
+        if t is not None and self.part is not None:
+            size = 0.15 * float(np.ptp(self.part.vertices, axis=0).max())
+            for k, color in enumerate(("red", "green", "blue")):
+                arrow = pv.Arrow(t[:3, 3], t[:3, k], scale=size, tip_radius=0.08, shaft_radius=0.03)
+                actor = self.pl.add_mesh(arrow, color=color)
+                actor.SetPickable(False)
+                self.frame_actors.append(actor)
+        self.pl.render()
+
     # --- picking ----------------------------------------------------------------
     def start_pick(self, callback, hint="", keep=False) -> bool:
         """The next left click on a visible body calls `callback(face_id, body)`
@@ -192,11 +210,14 @@ class PartView:
                 picker.AddPickList(actor)
         if picker.Pick(x, y, 0, self.pl.renderer) and picker.GetCellId() >= 0:
             body = next(b for b, a in enumerate(self.actors) if a is picker.GetActor())
-            self.pick_triangle(int(self.triangles[body][picker.GetCellId()]))
+            self.pick_triangle(int(self.triangles[body][picker.GetCellId()]), picker.GetPickPosition())
 
-    def pick_triangle(self, tri: int):
+    def pick_triangle(self, tri: int, point=None):
         """Report the CAD face and body of part triangle `tri`; stop picking
-        unless it was started with `keep`."""
+        unless it was started with `keep`. `point` (part-CAD, where the click hit)
+        is kept in `pick_point`; by default the triangle's centre."""
+        self.pick_point = np.asarray(point if point is not None else
+                                     self.part.vertices[self.part.faces[tri]].mean(0), float)
         callback = self._pick_cb
         if not self._keep:
             self.cancel_pick()
