@@ -59,7 +59,7 @@ Style rules: match the existing code. That means short modules, dense code, and 
 ## 2. How the agentic run works
 
 ### 2.1 Roles
-- **Worker agent**: owns one work package (WP) for one 45-minute slot.
+- **Worker agent**: owns one work package (WP) for one **30-minute** slot (WP0 had 45 minutes; cut to 30 from wave 1 on, 2026-10-27, to fit the morning).
 - **Review agent**: runs between waves. It reviews, tests and merges, updates the tracker (§5) and writes resume briefs.
 - **Human (Joe)**: approves this plan and does the GUI smoke test after each wave in §6, which is optional but recommended.
 
@@ -73,7 +73,7 @@ Style rules: match the existing code. That means short modules, dense code, and 
    GUI tests use `QT_QPA_PLATFORM=offscreen`; copy the pattern in `tests/test_view_bar.py`.
 4. **Work order:** pure logic and tests first, then wiring, then GUI. Commit on `wp/<WP>` after every green step, with small commits and the attribution trailer. Never push. Never commit to `main`.
 5. **Stay in your lane:** edit only the files your WP lists. If you need a change elsewhere, write it down in the report under "needs from other WPs" and don't make it. Exception: one-line hooks explicitly allowed by the WP.
-6. **Time:** run `date` between steps. **At 35 minutes, stop coding.** Get to a commit where the tests pass. If you can't, revert the half-done change, and if it's worth keeping, stash it to a `wp/<WP>-wip` branch.
+6. **Time:** run `date` between steps. **At 22 minutes, stop coding.** Get to a commit where the tests pass. If you can't, revert the half-done change, and if it's worth keeping, stash it to a `wp/<WP>-wip` branch.
 7. **Report:** write `plans/reports/<WP>-<attempt>.md` using the template in §2.4 and commit it on your branch. The report is your final message as well.
 
 ### 2.3 Review agent protocol (after each wave)
@@ -105,7 +105,7 @@ Branch: wp/<WP> · last commit: <sha> · time used: <min>
 
 ## 3. Work packages
 
-Each WP lists its owned files and acceptance criteria. "New" means a new file. The WPs are sized for 45 minutes; the big ones are split into parts. All new config fields go in **WP0**, so later WPs never edit `models.py` or `process.yaml` concurrently.
+Each WP lists its owned files and acceptance criteria. "New" means a new file. The WPs were sized for 45 minutes; with 30-minute slots expect the larger ones (A1, A3, B1, D2, F2, E2) to end partial and be resumed. All new config fields go in **WP0**, so later WPs never edit `models.py` or `process.yaml` concurrently.
 
 ### WP0: Foundations and shared formats (wave 0, run alone)
 Prepares every shared format so the later parallel WPs don't collide.
