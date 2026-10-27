@@ -97,10 +97,8 @@ class PartStep:
         krl_box = self.krl_section = Section("KRL base (optional)")
         self.krl_btn = QPushButton("Pick KRL base")
         self.krl_btn.setCheckable(True)
-        self.krl_btn.setToolTip("Write the program relative to a base on the part, taught on the real part.
-"
-                                "Click a flat face near a corner, beside the edge to use as X:
-"
+        self.krl_btn.setToolTip("Write the program relative to a base on the part, taught on the real part.\n"
+                                "Click a flat face near a corner, beside the edge to use as X:\n"
                                 "+Z out of the face, +X along that edge, origin at the corner")
         self.krl_btn.toggled.connect(self._pick_krl_base)
         clear_krl = QPushButton("Clear")
