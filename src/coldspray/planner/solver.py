@@ -87,7 +87,7 @@ def find_issues(path: Toolpath, ctx: Context):
     o = ctx.opts
     s = path.sample(o.sample_mm, o.angle_step_deg)
     seed = ctx.cell.home_deg if ctx.seed is None else ctx.seed
-    joints = ctx.robot.ik_path(robot_targets(s, ctx.cell), seed_deg=seed)
+    joints = ctx.robot.ik_path(robot_targets(s, ctx.cell), seed_deg=seed, hint=path.hint_for(s.move_index))
     issues = [Issue(i, int(s.move_index[i]), "unreachable") for i in np.flatnonzero(np.isnan(joints[:, 0]))]
     if ctx.checker is not None:
         for i in np.flatnonzero(~np.isnan(joints[:, 0])):

@@ -45,6 +45,12 @@ class Toolpath:
     name: str
     moves: list[Move] = field(default_factory=list)
     skipped_points: int = 0           # points a planner dropped (e.g. surface tilt limit)
+    joint_hint: np.ndarray | None = None   # (n_moves, 6) joints to seed IK from (solver; NaN = none)
+
+    def hint_for(self, move_index) -> np.ndarray | None:
+        """`joint_hint` per sample (rows by move), or None if there is none or it no longer fits."""
+        h = self.joint_hint
+        return None if h is None or len(h) != len(self.moves) else h[np.asarray(move_index)]
 
     def axis_values(self) -> list[dict[str, float]]:
         """External axis values in force at each move (carried forward)."""
@@ -57,13 +63,13 @@ class Toolpath:
     def transformed(self, t: np.ndarray) -> "Toolpath":
         """Copy with every pose replaced by `t @ pose` (everything else kept)."""
         return Toolpath(self.name, [replace(m, pose=t @ m.pose, axes=dict(m.axes)) for m in self.moves],
-                        self.skipped_points)
+                        self.skipped_points, self.joint_hint)
 
     def rolled(self, deg: float) -> "Toolpath":
         """Copy with the gun turned `deg` about its spray axis (tool X) at every pose."""
         r = frame(c=deg)
         return Toolpath(self.name, [replace(m, pose=m.pose @ r, axes=dict(m.axes)) for m in self.moves],
-                        self.skipped_points)
+                        self.skipped_points, self.joint_hint)
 
     def sample(self, step: float = 5.0, angle_step: float = 2.0) -> Samples:
         """Points every ~`step` mm (and every ~`angle_step` degrees of external

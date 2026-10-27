@@ -13,7 +13,7 @@ The path is not changed geometrically. The result carries `joint_hint`, an
 `Robot.ik_path(..., hint=)` to seed from.
 """
 
-import copy
+from dataclasses import replace
 
 import numpy as np
 
@@ -82,6 +82,4 @@ def fix_arm(path, issues, ctx):
     for i in range(len(sols)):
         if pick[i] is not None:
             hint[s.move_index[i]] = sols[i][pick[i]]       # last sample of a move wins
-    out = copy.copy(path)
-    out.joint_hint = hint
-    return out
+    return replace(path, joint_hint=hint)
