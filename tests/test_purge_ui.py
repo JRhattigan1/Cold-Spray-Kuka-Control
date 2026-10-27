@@ -72,3 +72,31 @@ def test_disabled_hides_marker_and_far_point_is_out_of_reach(host):
     host.purge_on.setChecked(False)
     assert not host.scene.purge_marker.visible
     assert host.purge_section.chip.text() == "off"
+
+
+def test_custom_direction_boxes(host):
+    host.purge_on.setChecked(True)
+    host.purge_dir.setCurrentText("Custom")
+    assert not host.purge_custom[0].isHidden()
+    for box, v in zip(host.purge_custom, (0.0, 0.6, -0.8)):
+        box.setValue(v)
+    assert np.allclose(settings(host)["spray_dir"], (0.0, 0.6, -0.8))
+    host.purge_dir.setCurrentText("+X")
+    assert host.purge_custom[0].isHidden()
+    assert np.allclose(settings(host)["spray_dir"], DIRECTION_PRESETS["+X"])
+
+
+def test_save_button_writes_cell_yaml(host, tmp_path, monkeypatch):
+    import shutil
+    import coldspray.config_io as cio
+    from coldspray.models import CONFIG_DIR
+    shutil.copyfile(CONFIG_DIR / "cell.yaml", tmp_path / "cell.yaml")
+    monkeypatch.setattr(cio, "CONFIG_DIR", tmp_path)
+    msgs = []
+    host._status = msgs.append
+    host.purge_on.setChecked(True)
+    host.purge_dwell.setValue(9)
+    host.purge_save_btn.click()
+    saved = load_cell(tmp_path / "cell.yaml").purge
+    assert saved.enabled and saved.dwell_s == 9
+    assert msgs and "saved" in msgs[0]
