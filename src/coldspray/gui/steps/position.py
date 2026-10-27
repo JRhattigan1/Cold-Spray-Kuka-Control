@@ -19,6 +19,7 @@ from coldspray.gui import widgets
 from coldspray.gui.widgets import Chip, Section, primary_button, spin, wrap_label
 from coldspray.models import PurgeConfig
 from coldspray.pipeline import check_placement, plan_part
+from coldspray.planner.gun import wrist_side
 from coldspray.planner.position import auto_position, layer_tilts
 from coldspray.sim.cell_model import OPTIONAL
 from coldspray.sim.markers import DIRECTION_PRESETS, marker_pose, preset_for
@@ -128,19 +129,22 @@ class PositionStep:
         self.tilt = spin(0, 1, 0, " °", tip="Turntable tilt for this program (90° = faceplate facing the tailstock)")
         self.rotation = spin(0, 1, 0, " °", tip="Turntable rotation for Layers mode (Revolve turns the table itself)")
         self.e1 = spin(0, 1, 0, " mm", tip="Gantry position for this program (+E1 moves towards the turntable)")
-        self.roll = spin(-180, 180, 0, " °", tip="Gun turned about its spray axis (changes how the wrist reaches;\n"
-                                                 "the spray itself is unchanged)")
+        self.roll = spin(-180, 180, 0, " °", tip="Gun turned about its spray axis from the usual set-up, wrist\n"
+                                                 "above the gun (0°). Held for the whole job; the spray is unchanged")
         cform.addRow("Nozzle", self.nozzle)
         for box in (self.e1, self.tilt, self.rotation, self.roll):
             box.setKeyboardTracking(False)
             box.valueChanged.connect(self._enter_setup)
         self.nozzle.currentIndexChanged.connect(self._enter_setup)
         cell_box.add(widgets.advanced(self._holder(cform)))
-        for text, box in (("Table tilt", self.tilt), ("Table rotation", self.rotation),
-                          ("Gantry E1", self.e1), ("Gun roll", self.roll)):
+        for text, box in (("Table tilt", self.tilt), ("Table rotation", self.rotation), ("Gantry E1", self.e1)):
             cell_box.add(self._adv_field(text, box, 0.0))
+        angle = QFormLayout()
+        angle.setContentsMargins(0, 0, 0, 0)
+        angle.addRow("Gun angle", self.roll)
+        cell_box.add(angle)
         self.auto_btn = QPushButton("Auto position (gun level)")
-        self.auto_btn.setToolTip("Choose table tilt, gun roll and gantry E1 so the gun is as level as allowed\n"
+        self.auto_btn.setToolTip("Choose table tilt and gantry E1 so the gun is as level as allowed\n"
                                  "and the whole path is reachable (also done when a part is loaded)")
         self.auto_btn.clicked.connect(self._auto_position)
         cell_box.add(self.auto_btn)
@@ -229,7 +233,7 @@ class PositionStep:
         return drop_on_plate(part, self._floor())
 
     def _auto_position(self, *_, quiet=False) -> bool:
-        """Set table tilt, gun roll and E1 for a level gun and a reachable path.
+        """Set table tilt and E1 for a level gun and a reachable path; the gun angle is kept.
         `quiet`: report problems in the status bar only. False if nothing fully reachable was found."""
         if self.scene is None or self.part is None:
             return False
@@ -246,9 +250,12 @@ class PositionStep:
         else:
             tilts = [self.tilt.value()]
 
+        wrist = wrist_side(a.robot.tool)
+
         def plan(tilt):
             return plan_part(self.part, proc, mode=mode, tilt_deg=tilt, rotation_deg=self.rotation.value(),
-                             coats=self.coats.value(), cell=cell, substrate=self.substrate)[1]
+                             coats=self.coats.value(), cell=cell, substrate=self.substrate,
+                             roll_deg=self.roll.value(), wrist=wrist)[1]
 
         def progress(f):                     # runs here on the GUI thread: keep Cancel clickable
             self.job.update(f)
@@ -257,7 +264,7 @@ class PositionStep:
         self.job.start("Auto position...")
         try:
             pos = auto_position(plan, a.robot, cell, tilts, e1_now=self.e1.value(), log=self._status,
-                                progress=progress, cancel=self.job.is_cancelled)
+                                progress=progress, cancel=self.job.is_cancelled, rolls=(0.0,))
         except ValueError as e:              # placement not plannable yet
             self.job.finish()
             self._status(f"Auto position skipped: {e}")
@@ -266,14 +273,14 @@ class PositionStep:
         self.job.finish("Auto position cancelled" if cancelled else "")
         if pos.reach < 0:                    # cancelled before anything was tried
             return False
-        for box, value in ((self.tilt, pos.tilt_deg), (self.roll, pos.roll_deg), (self.e1, pos.e1_mm)):
+        for box, value in ((self.tilt, pos.tilt_deg), (self.e1, pos.e1_mm)):
             if value is not None:
                 box.blockSignals(True)
                 box.setValue(value)
                 box.blockSignals(False)
         widgets.refresh()                    # signals were blocked: update the "changed" chips
         self._enter_setup()
-        msg = (f"Auto position: tilt {pos.tilt_deg:.0f}°, gun roll {pos.roll_deg:.0f}°"
+        msg = (f"Auto position: tilt {pos.tilt_deg:.0f}°"
                + (f", E1 {pos.e1_mm:.0f} mm" if pos.e1_mm is not None else ""))
         if pos.reach < 1.0:
             msg += f": best found reaches only {pos.reach:.0%} of the path"

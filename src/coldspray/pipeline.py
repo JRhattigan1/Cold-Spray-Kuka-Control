@@ -13,6 +13,7 @@ import numpy as np
 from coldspray.cad.part import Part, Substrate, build_frame, build_mesh, drop_on_plate, placed_vertices
 from coldspray.cad.slicer import slice_mesh
 from coldspray.models import CellConfig, ProcessConfig
+from coldspray.planner.gun import level_gun
 from coldspray.planner.layers import plan_layers
 from coldspray.planner.purge import add_purge
 from coldspray.planner.revolve import plan_revolve
@@ -116,11 +117,13 @@ def check_placement(vertices, substrate: Substrate | None, mode="layers"):
 
 def plan_part(part: Part, proc: ProcessConfig, mode="layers", tilt_deg=0.0, rotation_deg=0.0,
               coats=1, cell: CellConfig | None = None, substrate: Substrate | None = Substrate(),
-              roll_deg=0.0):
+              roll_deg=0.0, wrist=None):
     """Returns (summary, toolpath in BASE) for the build body. `summary` is a
     short description for the user. `substrate` None: no plate, the part
     stands on the faceplate. `roll_deg` turns the gun about its spray axis
-    (for reach; the spray is unchanged)."""
+    (the spray is unchanged). With `wrist` (tool frame, see planner/gun.py) and
+    a cell, the gun is first levelled - wrist above it - and `roll_deg` is the
+    gun angle from there; without, `roll_deg` is added to the planner's roll."""
     check_placement(placed_vertices(part), substrate, mode)
     v, faces = build_mesh(part)
     tt = cell.turntable if cell else None
@@ -133,7 +136,7 @@ def plan_part(part: Part, proc: ProcessConfig, mode="layers", tilt_deg=0.0, rota
                             tilt_axis=tilt_axis, rotation_axis=rot_axis).transformed(up)
         passes = sum(1 for a, b in zip(path.moves, path.moves[1:]) if b.gun_on and a.gun_on
                      and abs(b.pose[2, 3] - a.pose[2, 3]) > 1e-9)
-        return f"{coats} coat(s), {passes + coats} passes", add_purge(path, cell).rolled(roll_deg)
+        return f"{coats} coat(s), {passes + coats} passes", _hold_gun(add_purge(path, cell), cell, roll_deg, wrist)
     if mode == "surface":                       # the picked faces, on any body
         coat = getattr(part, "coat_faces", set())
         if not coat:
@@ -146,7 +149,7 @@ def plan_part(part: Part, proc: ProcessConfig, mode="layers", tilt_deg=0.0, rota
                             coats=getattr(proc, "surface_coats", 1),
                             max_tilt_deg=getattr(proc, "surface_max_tilt_deg", 60.0))
         n = getattr(proc, "surface_coats", 1)
-        return f"{len(coat)} face(s), {n} coat(s)", add_purge(path, cell).rolled(roll_deg)
+        return f"{len(coat)} face(s), {n} coat(s)", _hold_gun(add_purge(path, cell), cell, roll_deg, wrist)
     # Layers grow away from the start face, or up from the bottom of the build
     # body (on the plate, or on the component a repair patch sits on)
     to_base = build_frame(part)
@@ -154,4 +157,12 @@ def plan_part(part: Part, proc: ProcessConfig, mode="layers", tilt_deg=0.0, rota
     table = {tilt_axis: tilt_deg, rot_axis: rotation_deg} if tt else {}
     path = plan_layers(layers, proc, part.name, table_axes=table, to_base=to_base).transformed(to_base)
     start = f" from start face {part.start_face}" if part.start_face is not None else ""
-    return f"{len(layers)} layers{start}", add_purge(path, cell).rolled(roll_deg)
+    return f"{len(layers)} layers{start}", _hold_gun(add_purge(path, cell), cell, roll_deg, wrist)
+
+
+def _hold_gun(path, cell, roll_deg, wrist):
+    """The gun's turn about its spray axis: levelled (wrist up) plus `roll_deg`
+    when the tool's wrist side is known, else the planner's roll plus `roll_deg`."""
+    if wrist is not None and cell is not None:
+        return level_gun(path, cell, wrist, roll_deg)
+    return path.rolled(roll_deg)

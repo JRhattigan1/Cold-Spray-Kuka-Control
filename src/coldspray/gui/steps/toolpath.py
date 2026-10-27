@@ -19,6 +19,7 @@ from coldspray.gui.widgets import Chip, Section, primary_button, wrap_label
 from coldspray.kinematics.robot import Robot
 from coldspray.models import ProcessConfig, field_level, load_process, save_process
 from coldspray.pipeline import MODES, plan_part
+from coldspray.planner.gun import wrist_side
 from coldspray.sim.scene import gantry_offset, make_gun
 
 UNITS = {"_mm_s": " mm/s", "_mm": " mm", "_deg": " °", "_s": " s"}
@@ -286,7 +287,8 @@ class ToolpathStep:
             self._status("Planning...")
             summary, path = plan_part(self.part, proc, mode=mode, tilt_deg=self.tilt.value(),
                                       rotation_deg=self.rotation.value(), coats=self.coats.value(), cell=cell,
-                                      substrate=self.substrate, roll_deg=self.roll.value())
+                                      substrate=self.substrate, roll_deg=self.roll.value(),
+                                      wrist=wrist_side(robot.tool))
             if not path.moves:
                 raise ValueError("No toolpath: the part gave no layers (is it thinner than one layer?)")
             self._status("Checking reach...")

@@ -4,8 +4,9 @@ whole path reachable.
 The gun must not point far down (bad for the equipment), so Layers builds are
 tilted towards the gun: at tilt t the gun points (90 - t) degrees below
 horizontal. Turning the gun about its own spray axis ("roll") doesn't change
-the spray but decides whether the wrist can reach, so it is searched together
-with the gantry position E1.
+the spray but decides whether the wrist can reach. The GUI holds the gun at a
+set angle (wrist above, planner/gun.py) and searches only tilt and E1; pass
+several `rolls` to search the roll together with the gantry position E1.
 """
 
 from dataclasses import dataclass
@@ -85,11 +86,15 @@ def _reach(robot, cell, world, roll, e1, seed) -> float:
 
 
 def auto_position(plan, robot, cell: CellConfig, tilts, e1_now=None, e1_step=500.0, log=print,
-                  progress=None, cancel=None) -> Position:
+                  progress=None, cancel=None, rolls=ROLLS) -> Position:
     """`plan(tilt)` -> Toolpath in BASE (roll 0). For each tilt in order, find the
     gun roll and E1 that reach the whole path, preferring settings whose
     neighbours reach too (margin) and then E1 near `e1_now`. Returns the first
     fully reachable setting, or the best partial one found.
+
+    `rolls`: gun turns about the spray axis to try (degrees, added to the
+    planned poses); pass `(0.0,)` when the plan already holds the gun at a set
+    angle (planner/gun.py) so only tilt and E1 are searched.
 
     `progress(fraction)`: called with rising values 0..1 during the search (1.0 at
     the end). `cancel()`: polled often; when it returns True the search stops and
@@ -108,7 +113,7 @@ def auto_position(plan, robot, cell: CellConfig, tilts, e1_now=None, e1_step=500
     best = Position(tilts[0], 0.0, e1_now if cell.gantry else None, -1.0)
     n_fine = 4
     note, purge_ok = "", None
-    per_tilt = len(ROLLS) * len(e1s) + n_fine + 1          # grid cells, final checks, planning
+    per_tilt = len(rolls) * len(e1s) + n_fine + 1          # grid cells, final checks, planning
     total, done = max(1, len(tilts) * per_tilt), 0
 
     def tick(units=1):
@@ -133,7 +138,7 @@ def auto_position(plan, robot, cell: CellConfig, tilts, e1_now=None, e1_step=500
         purge = all_world[is_purge]
         if len(purge) and purge_ok is None:             # fixed in WORLD: the same for every tilt
             purge_ok = any(_reaches_all(robot, np.linalg.inv(robroot(cell, e1)) @ purge @ frame(c=roll), seed)
-                           for roll in ROLLS for e1 in e1s)
+                           for roll in rolls for e1 in e1s)
             if not purge_ok:
                 pt = getattr(getattr(cell, "purge", None), "point", purge[0][:3, 3])
                 note = ("Purge point ({:.0f}, {:.0f}, {:.0f}) mm is out of reach at every gun roll"
@@ -145,21 +150,21 @@ def auto_position(plan, robot, cell: CellConfig, tilts, e1_now=None, e1_step=500
         coarse = _spread(part_world, COARSE_POINTS)
         if purge_ok:
             coarse = np.concatenate([coarse, purge])    # every purge pose, not just a sample
-        ok = np.zeros((len(ROLLS), len(e1s)), bool)
-        for r, roll in enumerate(ROLLS):
+        ok = np.zeros((len(rolls), len(e1s)), bool)
+        for r, roll in enumerate(rolls):
             for e, e1 in enumerate(e1s):
                 if stop():
                     return best
                 ok[r, e] = _reaches_all(robot, np.linalg.inv(robroot(cell, e1)) @ coarse @ frame(c=roll), seed)
                 tick()
         order = sorted(zip(*np.nonzero(ok)),
-                       key=lambda rc: (-_margin(ok, *rc), abs((e1s[rc[1]] or 0.0) - e1_now), abs(ROLLS[rc[0]])))
+                       key=lambda rc: (-_margin(ok, *rc), abs((e1s[rc[1]] or 0.0) - e1_now), abs(rolls[rc[0]])))
         for r, e in order[:n_fine]:
             if stop():
                 return best
-            reach = _reach(robot, cell, world, ROLLS[r], e1s[e], seed)
+            reach = _reach(robot, cell, world, rolls[r], e1s[e], seed)
             tick()
-            cand = Position(tilt, float(ROLLS[r]), None if e1s[e] is None else float(e1s[e]), reach, note)
+            cand = Position(tilt, float(rolls[r]), None if e1s[e] is None else float(e1s[e]), reach, note)
             if reach > best.reach:
                 best = cand
             if reach == 1.0:

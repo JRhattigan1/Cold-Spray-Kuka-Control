@@ -156,7 +156,8 @@ def test_simple_mode_shows_only_the_essentials(panel):
     for k in "ZBC":
         assert not h.place[k].isVisible(), k
     assert h.keep_on_plate.isVisible() and h.auto_btn.isVisible() and h.purge_on.isVisible()
-    for w in (h.e1, h.tilt, h.roll, h.nozzle, h.snap_btn, h.purge_dwell, h.purge_xyz[0],
+    assert h.roll.isVisible()                       # the gun angle is always set by the user
+    for w in (h.e1, h.tilt, h.nozzle, h.snap_btn, h.purge_dwell, h.purge_xyz[0],
               h.purge_save_btn, h.sub_check, h.constraints, *h.group_checks.values()):
         assert not w.isVisible(), w
     widgets.set_mode(widgets.ADVANCED)
@@ -193,7 +194,9 @@ def test_auto_position_status_shows_note(panel, monkeypatch):
     h = panel
     msgs = []
     h._status, h.part, h.scene = msgs.append, object(), object()
-    h.assets = types.SimpleNamespace(robot=None, cell=None)
+    from coldspray.kinematics.robot import Robot
+    from coldspray.models import load_robot, load_tool
+    h.assets = types.SimpleNamespace(robot=Robot(load_robot(), load_tool()), cell=None)
     h.mode = types.SimpleNamespace(currentData=lambda: "surface")
     h.coats = types.SimpleNamespace(value=lambda: 1)
     h.read_process = lambda: None
