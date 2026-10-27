@@ -28,6 +28,7 @@ from coldspray.toolpath.model import Toolpath
 
 SPRAY = "#f28c28"
 TRAVEL = "#9aa0a6"
+TAG_COLOURS = {"contour": "#c2185b", "infill": SPRAY, "turn": "#fbc02d", "jump": "#5f6b77"}  # path line colour by Move.tag
 BAD = "#d93025"
 CRASH = "#c2185b"
 KUKA_ORANGE = "#ff6a13"
@@ -399,6 +400,7 @@ class Scene:
         self.gun_down = gun_down_deg(self.base_frames @ s.poses)
         self.steep = (self.gun_down > gun_limit_deg + 1e-6) if gun_limit_deg is not None             else np.zeros(len(s), bool)
         self.gun_on, self.path_name, self.n_points = s.gun_on, path.name, len(s)
+        self.tags = np.array([path.moves[i].tag for i in s.move_index], dtype=object)
         pts = s.poses[:, :3, 3]           # BASE coordinates
 
         add = self.path_actors.append
@@ -617,7 +619,13 @@ class Scene:
         keep = np.ones(len(pts), bool)
         if mode != "all" and self.n_layers:
             keep = self.layer_of <= n if mode == "upto" else self.layer_of == n
-        for mask, color, width in ((s.gun_on, SPRAY, 3), (~s.gun_on, TRAVEL, 1)):
+        groups = [(s.gun_on, SPRAY, 3), (~s.gun_on, TRAVEL, 1)]
+        tags = getattr(self, "tags", None)
+        if tags is not None and len(tags) == len(pts) and s.gun_on.any() and np.isin(tags, list(TAG_COLOURS)).any():
+            tagged = np.isin(tags, list(TAG_COLOURS))     # colour by Move.tag; untagged keep spray/travel colours
+            groups = [(tags == t, c, 1 if t == "jump" else 3) for t, c in TAG_COLOURS.items()]
+            groups += [(s.gun_on & ~tagged, SPRAY, 3), (~s.gun_on & ~tagged, TRAVEL, 1)]
+        for mask, color, width in groups:
             segs = [i for i in range(1, len(pts)) if mask[i] and keep[i]]
             if segs:
                 lines = np.hstack([[2, i - 1, i] for i in segs])
