@@ -2,6 +2,18 @@
 
 **Start here.** This replaces the old session hand-offs and run-sheet; git history has them. The feature plan is `plans/2026-10-27-feature-plan.md`. Its §5 tracker, §8 run log and `plans/ROADMAP.md` are **out of date**, so trust this file. Each agent's detail is in `plans/reports/<ID>-1.md`.
 
+## Optimisation run (`plans/OPTIMISATION_PLAN.md`), started 2026-10-27
+- **Wave 1:** six agents in worktrees `cs-O<n>` on branches `wp/O<n>`, made from `surface-patterns` at `245d7f7`.
+  - **O1:** `level_gun` (Sonnet).
+  - **O2:** `path.sample` (Sonnet).
+  - **O3:** vectorised IK (Opus).
+  - **O4:** collision FK (Sonnet).
+  - **O6:** worker threads and a plan cache (Opus).
+  - **O7:** purge suggestion (Sonnet).
+- **Reports:** `plans/reports/O<n>-1.md` on each branch.
+- **Merging:** merge into `surface-patterns` with `--no-ff`, then run the full suite.
+- **Wave 2:** O5, arcs (`CIRC`) and merged LINs (Opus). It runs after O2, because both change `Toolpath.sample`.
+
 ## Session 4 (2026-10-27): branch `surface-patterns`, not merged
 Two features, committed together on `surface-patterns` (from `main` at `3324d09`).
 
