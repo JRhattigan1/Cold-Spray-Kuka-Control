@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 from coldspray.cad.part import build_mesh, other_mesh
 from coldspray.cell import robroot
 from coldspray.gui.stepper import SIMULATE, TOOLPATH
-from coldspray.gui import widgets
+from coldspray.gui import plan_jobs, widgets
 from coldspray.gui.widgets import Chip, Section, primary_button, wrap_label
 from coldspray.kinematics.robot import Robot
 from coldspray.models import ProcessConfig, field_level, load_process, save_process
@@ -269,29 +269,49 @@ class ToolpathStep:
         except ValidationError as e:
             QMessageBox.warning(self, "Invalid parameter", str(e))
             return
+        if plan_jobs.busy(self):
+            return
+        t0 = time.time()
+        a = self.assets
+        tool = a.tool.model_copy(deep=True)
+        if tool.gun:
+            tool.gun.nozzle = self.nozzle.currentData()
+        robot = Robot(a.robot.cfg, tool)
+        gun = make_gun(tool, a.gun_mesh)
+        cell = self._work_cell()
+        mode = self.mode.currentData()
+        kw = dict(mode=mode, tilt_deg=self.tilt.value(), rotation_deg=self.rotation.value(),
+                  coats=self.coats.value(), cell=cell, substrate=self.substrate, roll_deg=self.roll.value(),
+                  wrist=wrist_side(robot.tool))
+        part = plan_jobs.snapshot(self.part)       # values read here: the worker touches no widget
+        key = plan_jobs.plan_key(id(self.part), part, proc, kw)
+        cache = getattr(self, "plan_cache", None)
+
+        def work():
+            return plan_jobs.cached_plan(cache, key, lambda: plan_part(part, proc, **kw))
+
+        self.check_id += 1                 # an older collision check / solve no longer applies
+        self.poll_timer.stop()
+        self.check_future = self.solve_future = None
+        self._status("Planning...")
+        plan_jobs.run(self, "Planning...", work,
+                      lambda out, err: self._planned(out, err, t0, proc, cell, robot, gun, mode),
+                      abandon_on_cancel=True)
+
+    def _planned(self, out, err, t0, proc, cell, robot, gun, mode):
+        """GUI thread: the plan is back; reach check (IK), scene, summary, collision check."""
+        a = self.assets
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            t0 = time.time()
-            a = self.assets
-            tool = a.tool.model_copy(deep=True)
-            if tool.gun:
-                tool.gun.nozzle = self.nozzle.currentData()
-            robot = Robot(a.robot.cfg, tool)
-            gun = make_gun(tool, a.gun_mesh)
-            self.scene.set_gun(robot, gun)
-
-            cell = self._work_cell()
-            self.scene.set_placement(robroot(cell), gantry_offset(cell))
-
-            name, mode = self.part.name, self.mode.currentData()
-            self._status("Planning...")
-            summary, path = plan_part(self.part, proc, mode=mode, tilt_deg=self.tilt.value(),
-                                      rotation_deg=self.rotation.value(), coats=self.coats.value(), cell=cell,
-                                      substrate=self.substrate, roll_deg=self.roll.value(),
-                                      wrist=wrist_side(robot.tool))
+            if err is not None:
+                raise err
+            summary, path = out
             if not path.moves:
                 raise ValueError("No toolpath: the part gave no layers (is it thinner than one layer?)")
+            self.job.label.setText("Checking reach...")
             self._status("Checking reach...")
+            self.scene.set_gun(robot, gun)
+            self.scene.set_placement(robroot(cell), gantry_offset(cell))
             part_mesh, fixture_mesh = build_mesh(self.part), other_mesh(self.part)
             substrate_mesh = self._substrate_mesh()
             joints = self.scene.set_path(path, cell, part=part_mesh, substrate=substrate_mesh,
@@ -302,10 +322,13 @@ class ToolpathStep:
             self.result_mode = mode
         except Exception as e:
             QApplication.restoreOverrideCursor()
+            self.job.finish("Generate failed")
             QMessageBox.warning(self, "Could not generate toolpath", str(e))
             self._status("Generate failed")
             return
         QApplication.restoreOverrideCursor()
+        self.job.finish()
+        name = self.part.name
 
         self.slider.blockSignals(True)
         self.slider.setRange(0, self.scene.n_points - 1)

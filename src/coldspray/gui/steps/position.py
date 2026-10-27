@@ -17,7 +17,7 @@ from coldspray.cad.part import (
 from coldspray.cell import robroot
 from coldspray.gui.constraints_panel import ConstraintsPanel
 from coldspray.gui.stepper import TOOLPATH
-from coldspray.gui import widgets
+from coldspray.gui import plan_jobs, widgets
 from coldspray.gui.widgets import Chip, Section, primary_button, spin, wrap_label
 from coldspray.models import PurgeConfig
 from coldspray.pipeline import check_placement, plan_part
@@ -263,31 +263,53 @@ class PositionStep:
         else:
             tilts = [self.tilt.value()]
 
-        wrist = wrist_side(a.robot.tool)
+        wrist, substrate = wrist_side(a.robot.tool), self.substrate
+        rotation, roll, coats, e1 = self.rotation.value(), self.roll.value(), self.coats.value(), self.e1.value()
+        ident, part, cache = id(self.part), plan_jobs.snapshot(self.part), getattr(self, "plan_cache", None)
 
-        def plan(tilt):
-            return plan_part(self.part, proc, mode=mode, tilt_deg=tilt, rotation_deg=self.rotation.value(),
-                             coats=self.coats.value(), cell=cell, substrate=self.substrate,
-                             roll_deg=self.roll.value(), wrist=wrist)[1]
+        def plan(tilt):                      # on the plan worker: no widgets here
+            kw = dict(mode=mode, tilt_deg=tilt, rotation_deg=rotation, coats=coats, cell=cell,
+                      substrate=substrate, roll_deg=roll, wrist=wrist)
+            return plan_jobs.cached_plan(cache, plan_jobs.plan_key(ident, part, proc, kw),
+                                         lambda: plan_part(part, proc, **kw))[1]
 
-        def progress(f):                     # runs here on the GUI thread: keep Cancel clickable
-            self.job.update(f)
-            QApplication.processEvents()
+        background = getattr(self, "plan_pool", None) is not None
+        if background:
+            if plan_jobs.busy(self):
+                return None
+            lines = []
+            log, progress = lines.append, self.job.set_fraction
+        else:
+            def progress(f):                 # runs here on the GUI thread: keep Cancel clickable
+                self.job.update(f)
+                QApplication.processEvents()
+            log = self._status
+        cancel = self.job.is_cancelled
 
-        self.job.start("Auto position...")
-        try:
-            pos = auto_position(plan, a.robot, cell, tilts, e1_now=self.e1.value(), log=self._status,
-                                progress=progress, cancel=self.job.is_cancelled, rolls=(0.0,))
-        except ValueError as e:              # placement not plannable yet
+        def work():
+            return auto_position(plan, a.robot, cell, tilts, e1_now=e1, log=log,
+                                 progress=progress, cancel=cancel, rolls=(0.0,))
+
+        self._auto_result = None
+        plan_jobs.run(self, "Auto position...", work, lambda pos, err: self._auto_positioned(pos, err, quiet))
+        if background:
+            self.plan_lines = lines          # the poll shows the latest log line
+            return None
+        return self._auto_result
+
+    def _auto_positioned(self, pos, err, quiet) -> bool:
+        """GUI thread: apply the Auto position result (tilt, E1) and report it."""
+        self._auto_result = False
+        if isinstance(err, ValueError):      # placement not plannable yet
             self.job.finish()
-            self._status(f"Auto position skipped: {e}")
+            self._status(f"Auto position skipped: {err}")
             return False
-        except Exception as e:               # a planning bug: report it, don't take the app down
+        if err is not None:                  # a planning bug: report it, don't take the app down
             self.job.finish()
-            traceback.print_exc()
-            self._status(f"Auto position failed: {type(e).__name__}: {e}")
+            traceback.print_exception(err)
+            self._status(f"Auto position failed: {type(err).__name__}: {err}")
             if not quiet:
-                QMessageBox.warning(self, "Auto position", f"Auto position failed:\n{type(e).__name__}: {e}")
+                QMessageBox.warning(self, "Auto position", f"Auto position failed:\n{type(err).__name__}: {err}")
             return False
         cancelled = self.job.is_cancelled()
         self.job.finish("Auto position cancelled" if cancelled else "")
@@ -309,7 +331,8 @@ class PositionStep:
         if pos.note:
             msg += f". {pos.note}"
         self._status(msg)
-        return pos.reach == 1.0
+        self._auto_result = pos.reach == 1.0
+        return self._auto_result
 
     # --- placement --------------------------------------------------------------
     def _fixed(self) -> bool:

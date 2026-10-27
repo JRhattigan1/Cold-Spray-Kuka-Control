@@ -18,7 +18,7 @@ from pyvistaqt import QtInteractor
 
 from coldspray.cad.part import Substrate
 from coldspray.cell import robroot, table_axis_names
-from coldspray.gui import icons, style, theme, view_toolbar
+from coldspray.gui import icons, plan_jobs, style, theme, view_toolbar
 from coldspray.gui.progress import JobProgress
 from coldspray.gui.stepper import EXPORT, PART, POSITION, SIMULATE, TOOLPATH, StepBar
 from coldspray.gui.steps import ExportStep, PartStep, PositionStep, SimulateStep, ToolpathStep
@@ -63,6 +63,12 @@ class MainWindow(QMainWindow, PartStep, PositionStep, ToolpathStep, SimulateStep
         self.check_future = None
         self.check_id = 0
         self.poll_timer = QTimer(self, interval=200, timeout=self._poll_check)
+
+        # Planning (Generate, Auto position) runs on its own worker, so a collision check doesn't hold it up
+        self.plan_pool = ThreadPoolExecutor(max_workers=1)
+        self.plan_job = None
+        self.plan_cache = plan_jobs.new_cache()
+        self.plan_timer = QTimer(self, interval=100, timeout=lambda: plan_jobs.poll(self))
 
         # SpaceMouse (if one is plugged in): flies the camera, or moves the part in setup
         self.spacemouse = None
@@ -354,7 +360,10 @@ class MainWindow(QMainWindow, PartStep, PositionStep, ToolpathStep, SimulateStep
         if self.spacemouse:
             self.spacemouse.close()
         self.check_id += 1            # let a running check finish without effect
+        self.plan_timer.stop()
+        self.plan_job = None
         self.pool.shutdown(wait=False, cancel_futures=True)
+        self.plan_pool.shutdown(wait=False, cancel_futures=True)
         self.plotter.close()
         self.part_plotter.close()
         super().closeEvent(event)
