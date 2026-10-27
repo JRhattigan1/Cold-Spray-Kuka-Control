@@ -60,3 +60,22 @@ def test_layers_generate_and_export(win):
     win.go_to(SIMULATE)
     win.go_to(EXPORT)
     assert not [d for d in win.dialogs if d[0] != "question"], win.dialogs
+
+
+@pytest.mark.slow
+def test_fixed_in_cell_generates_off_the_table(win):
+    """Mounted "Fixed in the cell": the table locks at 0, the plate goes, and a part moved
+    well off the faceplate still generates a toolpath."""
+    from coldspray.gui.stepper import POSITION, TOOLPATH
+    win._set_part("test_block")
+    win.go_to(POSITION)
+    win.tilt.setValue(30.0)
+    win.mount.setCurrentIndex(win.mount.findData(True))
+    assert win.tilt.value() == 0.0 and not win.tilt.isEnabled()
+    assert win.substrate is None and win.part.fixed_in_cell and win.source.fixed_in_cell
+    win.place["X"].setValue(900.0)                    # past the 500 mm faceplate
+    win.place["Z"].setValue(-200.0)                   # below its surface
+    assert "faceplate" not in win.face_label.text()
+    win.go_to(TOOLPATH)
+    win.generate()
+    assert win.result is not None, win.dialogs

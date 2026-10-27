@@ -37,7 +37,17 @@ class PositionStep:
         self.cell_part_label = wrap_label()
         layout.addWidget(self.cell_part_label)
 
-        place_box = self.placement_section = Section("Placement on the faceplate")
+        place_box = self.placement_section = Section("Placement")
+        self.mount = QComboBox()
+        self.mount.addItem("On the turntable", False)
+        self.mount.addItem("Fixed in the cell", True)
+        self.mount.setToolTip("Fixed in the cell: the part is held off the table (fixture, stand) anywhere the\n"
+                              "robot can reach. The table stays at 0 and is only an obstacle; no plate.\n"
+                              "Placement is from the faceplate centre with the table at 0")
+        self.mount.currentIndexChanged.connect(self._mount_changed)
+        mount_row = QFormLayout()
+        mount_row.addRow("Mounted", self.mount)
+        place_box.add(mount_row)
         grid = QFormLayout()
         self.place = {}
         for key, lo, hi, unit, tip in (
@@ -205,10 +215,11 @@ class PositionStep:
             return
         ignored = [b for b, r in enumerate(self.roles) if r == "ignore"]
         self.part = src.without(ignored)
+        self.part.fixed_in_cell = self._fixed()
         self.part.placement = self._start_placement(self.part)
         self.cell_key = key
         self.constraints.set_part(self.part, self.substrate)
-        has_base = self.part.base_face is not None
+        has_base = self.part.base_face is not None and not self._fixed()
         self.keep_on_plate.blockSignals(True)
         self.keep_on_plate.setChecked(has_base)
         self.keep_on_plate.setEnabled(has_base)
@@ -244,7 +255,9 @@ class PositionStep:
             return False
         a, mode = self.assets, self.mode.currentData()
         cell = self._work_cell()
-        if mode == "layers":       # spray against the build direction
+        if self._fixed():          # the table stays at 0: only E1 is searched
+            tilts = [0.0]
+        elif mode == "layers":     # spray against the build direction
             gun_dir = -build_frame(self.part)[:3, 2]
             tilts = layer_tilts(cell, gun_dir, self.rotation.value())
         else:
@@ -299,6 +312,36 @@ class PositionStep:
         return pos.reach == 1.0
 
     # --- placement --------------------------------------------------------------
+    def _fixed(self) -> bool:
+        """The part is held in the cell, not on the turntable."""
+        return bool(self.mount.currentData())
+
+    def _mount_changed(self, *_):
+        """Turntable or fixed in the cell: a fixed part has no plate, the table stays at 0
+        and the placement boxes reach across the cell."""
+        fixed = self._fixed()
+        if fixed:
+            for box in (self.tilt, self.rotation):
+                box.blockSignals(True)
+                box.setValue(0.0)
+                box.blockSignals(False)
+            self.keep_on_plate.setChecked(False)
+            self.sub_check.setChecked(False)
+        for box in (self.tilt, self.rotation, self.sub_check):
+            box.setEnabled(not fixed)
+        self.keep_on_plate.setEnabled(not fixed and self.part is not None and self.part.base_face is not None)
+        reach = 6000 if fixed else 500
+        for key in "XYZ":
+            self.place[key].setRange(-reach, reach if key != "Z" else 2 * reach)
+        for p in (getattr(self, "source", None), self.part):
+            if p is not None:
+                p.fixed_in_cell = fixed
+        if self.result is not None:
+            self._invalidate(TOOLPATH)
+        if self.part is not None:
+            self._show_placement()
+        self._enter_setup()
+
     def _floor(self) -> float:
         """Height the part stands on: plate top, or the faceplate."""
         return self.substrate.top if self.substrate else 0.0
@@ -350,7 +393,7 @@ class PositionStep:
         text += (f"<br>Layers grow from start face {part.start_face} (green)" if part.start_face is not None
                  else "<br>Layers build up from the bottom of the build body")
         try:
-            check_placement(placed_vertices(self.part), self.substrate, self.mode.currentData())
+            check_placement(placed_vertices(self.part), self.substrate, self.mode.currentData(), self._fixed())
         except ValueError as e:
             text += f"<br><span style='color:#d93025'>{e}</span>"
         self.face_label.setText(text)

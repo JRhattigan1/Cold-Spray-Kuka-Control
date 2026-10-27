@@ -191,10 +191,15 @@ MODES = {
 }
 
 
-def check_placement(vertices, substrate: Substrate | None, mode="layers"):
+def check_placement(vertices, substrate: Substrate | None, mode="layers", fixed=False):
     """Raises ValueError (with a message for the user) if the placed part
     (all bodies) can't be sprayed. No substrate: the floor is the faceplate.
-    A part held above the floor (fixture, riser) is fine."""
+    A part held above the floor (fixture, riser) is fine. A part `fixed` in the
+    cell (not on the turntable) can be anywhere: reach and collisions decide."""
+    if fixed:
+        if mode == "revolve":
+            raise ValueError("Revolve spins the turntable: mount the part on the turntable")
+        return
     floor, what = (substrate.top, "the substrate plate") if substrate else (0.0, "the faceplate")
     zmin = vertices[:, 2].min()
     if zmin < floor - 0.1:
@@ -214,7 +219,10 @@ def plan_part(part: Part, proc: ProcessConfig, mode="layers", tilt_deg=0.0, rota
     (the spray is unchanged). With `wrist` (tool frame, see planner/gun.py) and
     a cell, the gun is first levelled - wrist above it - and `roll_deg` is the
     gun angle from there; without, `roll_deg` is added to the planner's roll."""
-    check_placement(placed_vertices(part), substrate, mode)
+    fixed = getattr(part, "fixed_in_cell", False)
+    check_placement(placed_vertices(part), substrate, mode, fixed)
+    if fixed:                                   # the table stays at 0: BASE is a fixed frame in the cell
+        tilt_deg = rotation_deg = 0.0
     v, faces = build_mesh(part)
     tt = cell.turntable if cell else None
     tilt_axis, rot_axis = (tt.tilt.axis, tt.rotation.axis) if tt else ("E2", "E5")

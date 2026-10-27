@@ -57,6 +57,7 @@ class Part:
     coat_faces: set[int] = field(default_factory=set)   # CAD faces to coat (surface mode), any body
     krl_base: np.ndarray | None = None    # 4x4 part-CAD <- KRL base frame (None: the faceplate BASE)
     krl_base_face: int | None = None      # the flat face it was picked on
+    fixed_in_cell: bool = False           # held in the cell, not on the turntable (table kept at 0)
 
     @property
     def n_bodies(self) -> int:

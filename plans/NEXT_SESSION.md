@@ -41,6 +41,26 @@ Two features, committed together on `surface-patterns` (from `main` at `3324d09`
   - The user may later want other ways to define it (3 points, typed values). They chose "face and edge for now".
   - Picking happens in part-CAD with `vtkCellPicker.GetPickPosition()`. Check the click point is right when the section view is on.
 
+**3. Later the same session (user requests, all on `surface-patterns`):**
+- **Auto position only runs from its button.** Running it on entering Position in Layers mode froze the app for minutes on WearPlate2 (406 mm tall, about 800 layers). Planning errors now show a message instead of closing the app.
+- **The gun never winds round (cables and powder line out of the back).** `planner/gun.py:level_gun` is now minimal twist:
+  - the first pose is wrist-up, or turned towards the robot when the gun sprays near vertically;
+  - every later pose carries the previous wrist direction over by the smallest tilt.
+  - Loops and zigzags no longer turn the gun with the travel direction. Layers and Revolve come out unchanged, and the KRL hashes are unchanged.
+  - Not done: a Simulate check that A4/A6 stay within a cable wind-up limit.
+- **`raster_start_deg`** (a basic field) sets the first raster direction. In Layers patterns it is measured from BASE X; in the Surface zigzag, from the selection's longest side.
+- **"Mounted: Fixed in the cell"** in Position (`Part.fixed_in_cell`):
+  - the table is held at 0, and there is no plate and no faceplate check;
+  - the placement boxes reach ±6 m;
+  - Auto position searches only E1;
+  - Revolve is refused.
+  - KRL is written relative to the part's KRL base if one is picked, else BASE 1, which is a fixed frame while the table stays at 0. The table axes are written as 0 on every point.
+  - Tests: `tests/test_fixed_part.py` and `test_workflow.py::test_fixed_in_cell_generates_off_the_table`.
+- **WearPlate2 (Downloads), Surface mode** (top face 39, angled face 34 and the blends: 17 faces with normal y < −0.3):
+  - it plans in 25–60 s on the GUI thread, which is slow; the planning needs to move to a worker thread or get faster;
+  - 4284 points are skipped by the 60° tilt limit on the blends;
+  - it is one wrapping region, so a non-zigzag pattern falls back to zigzag.
+
 **Next:**
 1. **Done:** the full suite on `surface-patterns` (`1f9ec45`) passed 590 plus 3 xfails in 12 minutes.
    - That commit fixed a launch crash: the KRL base tooltip had raw newlines inside a string.
