@@ -63,7 +63,7 @@ def pair_summary(hits: dict[int, set], top: int = 3) -> str:
     return text + (f" and {len(pairs) - top} more" if len(pairs) > top else "")
 
 
-def simulate_checks(scene, cell, collision_state) -> list[Check]:
+def simulate_checks(scene, cell, collision_state, solve_report=None) -> list[Check]:
     """Reach, gun angle and collision rows for the toolpath shown in `scene`."""
     if not getattr(scene, "n_points", 0):
         return [Check("toolpath", "todo", "No toolpath yet", "Generate a toolpath in step 3")]
@@ -102,6 +102,26 @@ def simulate_checks(scene, cell, collision_state) -> list[Check]:
                              min(hits), len(hits)))
         else:
             out.append(Check("collisions", "ok", "No collisions found"))
+    if solve_report is not None:
+        out.extend(solve_checks(solve_report))
+    return out
+
+
+def solve_checks(report) -> list[Check]:
+    """Rows for a SolveReport: what the solver fixed, and each problem point it could not."""
+    out = []
+    for line in report.fixed:
+        out.append(Check("solve_fixed", "ok", "Solver: " + line))
+    if report.unfixed:
+        first = report.unfixed[0]
+        shown = "; ".join(f"point {i.sample} ({i.kind}{': ' + i.detail if i.detail else ''})"
+                          for i in report.unfixed[:5])
+        more = f" and {len(report.unfixed) - 5} more" if len(report.unfixed) > 5 else ""
+        out.append(Check("solve_unfixed", "bad", f"{len(report.unfixed)} problem points could not be fixed",
+                         "Left as planned; export is blocked until they are dealt with: " + shown + more,
+                         first.sample, len(report.unfixed)))
+    elif not report.fixed:
+        out.append(Check("solve_none", "ok", "Solver: nothing to fix"))
     return out
 
 
@@ -139,9 +159,9 @@ def robot_checks(cell, tool) -> list[Check]:
     return out
 
 
-def export_checks(scene, cell, tool, collision_state) -> list[Check]:
+def export_checks(scene, cell, tool, collision_state, solve_report=None) -> list[Check]:
     """The simulate checks plus the robot-side items for the "Before the robot" list."""
-    return simulate_checks(scene, cell, collision_state) + robot_checks(cell, tool)
+    return simulate_checks(scene, cell, collision_state, solve_report) + robot_checks(cell, tool)
 
 
 def open_items(checks) -> list[Check]:
