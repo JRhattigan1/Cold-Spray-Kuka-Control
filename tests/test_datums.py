@@ -11,7 +11,7 @@ import pyvista as pv
 from coldspray.cell import base_world, robroot
 from coldspray.kinematics.robot import Robot
 from coldspray.models import load_cell, load_robot, load_tool
-from coldspray.sim.datums import Datums, datum_matrix, datum_plane
+from coldspray.sim.datums import Datums, datum_matrix, datum_plane, label_matrix
 from coldspray.sim.viewer import Scene
 
 
@@ -76,3 +76,26 @@ def test_datum_menu_toggles_planes():
     assert np.allclose(scene.datums.plane("datum:YZ")[0], (12.5, 0, 0))
     act.setChecked(False)
     assert not scene.datums.visible("YZ")
+
+
+def test_datum_labels_and_size():
+    pl = pv.Plotter(off_screen=True, window_size=(200, 150))
+    d = Datums(pl)
+    assert d.size == 600.0 and not d.labels["XZ"].GetVisibility()
+    d.set_visible("XZ", True)
+    assert d.labels["XZ"].GetVisibility() and not d.labels["XZ"].GetPickable()
+    assert not d.labels["XY"].GetVisibility()
+    d.set_offset("XZ", 30)
+    lm = np.asarray(d.labels["XZ"].user_matrix)
+    assert np.allclose(lm, np.asarray(d.actors["XZ"].user_matrix) @ label_matrix("XZ", 600))
+    # the label lies in its plane (y = offset) inside the square
+    lo = (lm @ np.array([0, 0, 0, 1.0]))[:3]
+    assert np.isclose(lo[1], 30) and abs(lo[0]) < 300 and abs(lo[2]) < 300
+    assert np.isclose(np.linalg.norm(lm[:3, 1]), 0.06 * 600)
+    d.set_size(200)
+    b = d.actors["XZ"].mapper.dataset.bounds
+    assert np.isclose(b[1] - b[0], 200) and np.isclose(b[5] - b[4], 200)
+    lo = (np.asarray(d.labels["XZ"].user_matrix) @ np.array([0, 0, 0, 1.0]))[:3]
+    assert abs(lo[0]) < 100 and abs(lo[2]) < 100
+    d.set_visible("XZ", False)
+    assert not d.labels["XZ"].GetVisibility()

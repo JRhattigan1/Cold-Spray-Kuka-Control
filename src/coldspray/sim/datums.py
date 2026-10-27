@@ -11,6 +11,9 @@ import pyvista as pv
 NORMALS = {"XY": (0.0, 0.0, 1.0), "XZ": (0.0, 1.0, 0.0), "YZ": (1.0, 0.0, 0.0)}
 COLOURS = {"XY": "#4f8fd6", "XZ": "#5cb85c", "YZ": "#d9534f"}
 PREFIX = "datum:"
+# in-plane axes (u = text right, v = text up) for each plane's label
+LABEL_AXES = {"XY": ((1, 0, 0), (0, 1, 0)), "XZ": ((1, 0, 0), (0, 0, 1)), "YZ": ((0, 1, 0), (0, 0, 1))}
+LABEL_FRACTION = 0.06                     # label height as a fraction of plane size
 
 
 def _key(name: str) -> str:
@@ -33,24 +36,53 @@ def datum_matrix(name: str, offset: float = 0.0) -> np.ndarray:
     return m
 
 
+def label_matrix(name: str, size: float) -> np.ndarray:
+    """4x4 placing a unit-height text (drawn in XY, centred) in the plane's
+    corner (+u, +v), lying in the plane, in the plane's local frame."""
+    u, v = (np.array(a, float) for a in LABEL_AXES[_key(name)])
+    h = LABEL_FRACTION * size
+    m = np.eye(4)
+    m[:3, 0], m[:3, 1], m[:3, 2] = u * h, v * h, np.cross(u, v) * h
+    m[:3, 3] = (u + v) * (0.5 * size - 1.5 * h)
+    return m
+
+
 class Datums:
     """The three translucent planes in a plotter, hidden until toggled on."""
 
     def __init__(self, pl: pv.Plotter, size: float = 600.0):
         self.offsets = {k: 0.0 for k in NORMALS}
         self.frame = np.eye(4)            # BASE in WORLD
+        self.size = float(size)
         self.actors = {}
+        self.labels = {}                  # text actors, toggled with their plane, never pickable
         for k, n in NORMALS.items():
-            a = pl.add_mesh(pv.Plane(center=(0, 0, 0), direction=n, i_size=size, j_size=size),
-                            color=COLOURS[k], opacity=0.18, show_edges=True, edge_color=COLOURS[k])
+            a = pl.add_mesh(self._plane_mesh(k), color=COLOURS[k], opacity=0.18,
+                            show_edges=True, edge_color=COLOURS[k])
             a.SetVisibility(False)
             a.SetPickable(False)
             self.actors[k] = a
+            t = pl.add_mesh(pv.Text3D(k, depth=0.0), color=COLOURS[k])
+            t.SetVisibility(False)
+            t.SetPickable(False)
+            self.labels[k] = t
         self._place()
+
+    def _plane_mesh(self, k: str) -> pv.PolyData:
+        return pv.Plane(center=(0, 0, 0), direction=NORMALS[k], i_size=self.size, j_size=self.size)
 
     def _place(self):
         for k, a in self.actors.items():
-            a.user_matrix = self.frame @ datum_matrix(k, self.offsets[k])
+            m = self.frame @ datum_matrix(k, self.offsets[k])
+            a.user_matrix = m
+            self.labels[k].user_matrix = m @ label_matrix(k, self.size)
+
+    def set_size(self, size: float):
+        """Edge length (mm) of each square plane, e.g. sized to the faceplate."""
+        self.size = float(size)
+        for k, a in self.actors.items():
+            a.mapper.dataset.copy_from(self._plane_mesh(k))
+        self._place()
 
     def set_frame(self, base_world: np.ndarray):
         """Follow the table: `base_world` is BASE in WORLD (cell.base_world)."""
@@ -66,6 +98,7 @@ class Datums:
         a = self.actors[_key(name)]
         a.SetVisibility(on)
         a.SetPickable(on)
+        self.labels[_key(name)].SetVisibility(on)
 
     def visible(self, name: str) -> bool:
         return bool(self.actors[_key(name)].GetVisibility())
