@@ -14,7 +14,8 @@ from PySide6.QtWidgets import QApplication
 from coldspray.cell import robroot
 from coldspray.gui.steps.position import PositionStep
 from coldspray.kinematics.robot import Robot
-from coldspray.models import load_cell, load_robot, load_tool
+from coldspray.gui import widgets
+from coldspray.models import PurgeConfig, load_cell, load_robot, load_tool
 from coldspray.sim.markers import DIRECTION_PRESETS, marker_pose
 from coldspray.sim.viewer import Scene
 
@@ -43,8 +44,7 @@ def host():
 
 
 def settings(h):
-    cfg = getattr(h.assets.cell, "purge", None)
-    return h.purge_cfg if cfg is None else cfg.model_dump()
+    return h.assets.cell.purge.model_dump()
 
 
 def test_values_update_settings_and_marker(host):
@@ -110,6 +110,55 @@ def test_move_gun_here(host, monkeypatch):
     host.purge_cfg["point"] = (1e5, 0.0, 0.0)
     host.purge_goto_btn.click()
     assert not poses and "out of reach" in msgs[-1]
-    host.purge_cfg["point"] = host.PURGE_DEFAULTS["point"]
+    host.purge_cfg["point"] = PurgeConfig(point=(-884.56, 400.0, 2000.0)).point
     host.purge_goto_btn.click()
     assert len(poses) == 1
+
+
+def test_no_f2_workarounds_left():
+    """F2 shims are gone now PurgeConfig is on main (P6)."""
+    import inspect
+    import coldspray.gui.steps.position as pos
+    src = inspect.getsource(pos)
+    assert "model_fields" not in src and "PURGE_DEFAULTS" not in src and "hasattr(" not in src
+
+
+class PanelHost(PositionStep):
+    """Enough of MainWindow to build the whole Position panel."""
+
+    def __init__(self):
+        from coldspray.cad.part import Substrate
+        self.substrate = Substrate()
+        self.part = None
+        self.scene = None
+        self.panel = self._build_position_panel()
+
+    def _enter_setup(self, *_):
+        pass
+
+
+@pytest.fixture
+def panel():
+    QApplication.instance() or QApplication([])
+    widgets._reset_mode_state()
+    h = PanelHost()
+    h.panel.show()
+    yield h
+    h.panel.close()
+    widgets._reset_mode_state()
+
+
+def test_simple_mode_shows_only_the_essentials(panel):
+    h = panel
+    widgets.set_mode(widgets.SIMPLE)
+    for k in "XYA":
+        assert h.place[k].isVisible(), k
+    for k in "ZBC":
+        assert not h.place[k].isVisible(), k
+    assert h.keep_on_plate.isVisible() and h.auto_btn.isVisible() and h.purge_on.isVisible()
+    for w in (h.e1, h.tilt, h.roll, h.nozzle, h.snap_btn, h.purge_dwell, h.purge_xyz[0],
+              h.purge_save_btn, h.sub_check, h.constraints, *h.group_checks.values()):
+        assert not w.isVisible(), w
+    widgets.set_mode(widgets.ADVANCED)
+    for w in (h.place["Z"], h.e1, h.snap_btn, h.purge_dwell, h.sub_check, h.constraints):
+        assert w.isVisible(), w
