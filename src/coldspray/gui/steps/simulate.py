@@ -2,18 +2,28 @@
 
 import numpy as np
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QSlider, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QPushButton, QSlider, QVBoxLayout, QWidget
 
 from coldspray.gui.checks import CheckList, export_checks, simulate_checks
 from coldspray.gui.stepper import EXPORT, SIMULATE
 from coldspray.gui.timeline import PlaybackControls, Timeline, sample_times
 from coldspray.gui import widgets
+from coldspray.cad.part import build_mesh, other_mesh
+from coldspray.sim.scene import make_gun
 from coldspray.gui.widgets import Chip, Section, primary_button, wrap_label
 
 CHECK_EVERY = 3        # collision-check every 3rd sampled point (~6 mm of travel)
 
 
+class _SolveCancelled(Exception):
+    """Raised from the solver's log callback on the worker after Cancel."""
+
+
 class SimulateStep:
+    solve_future = None      # background "Solve problems" run
+    solve_report = None      # its SolveReport (None until run; cleared by Generate)
+    solve_lines = ()         # solver log lines (appended by the worker)
+
     def _build_simulate_panel(self) -> QWidget:
         inner = QWidget()
         layout = QVBoxLayout(inner)
@@ -37,6 +47,12 @@ class SimulateStep:
         widgets.advanced(row, changed=lambda: not self.check_box.isChecked(), chip=self.collision_chip)
         self.check_box.toggled.connect(widgets.refresh)
         checks.add(row)
+        self.solve_btn = QPushButton("Solve problems")
+        self.solve_btn.setToolTip("Try to fix unreachable and colliding points: arm configuration, gun angle,\n"
+                                  "approach/jump/purge routes and gantry E1. What can't be fixed is listed.")
+        self.solve_btn.clicked.connect(self._solve)
+        self.solve_btn.setEnabled(False)
+        checks.add(self.solve_btn)
         self.sim_checks = CheckList()
         self.sim_checks.goTo.connect(self._goto)
         checks.add(self.sim_checks)
@@ -66,6 +82,11 @@ class SimulateStep:
         layout.addStretch(1)
         return inner
 
+    def _report(self):
+        """The solve report, only while it still belongs to the shown toolpath (Generate replaces it)."""
+        ok = self.result is not None and self.result[0] is getattr(self, "_solve_path", None)
+        return self.solve_report if ok else None
+
     def _collision_state(self):
         if not self.check_box.isChecked() or self.assets.meshes is None:
             return "off"
@@ -86,16 +107,21 @@ class SimulateStep:
             self.timeline.set_data(scene.n_points, spray=scene.gun_on, unreachable=~scene.reachable,
                                    collision=None, steep=scene.steep, times=self.times)
         self.timeline.set_collisions(scene.collisions)
-        checks = simulate_checks(scene, cell, state)
+        checks = simulate_checks(scene, cell, state, self._report())
         self.sim_checks.set_checks(checks)
         problems = sum(c.state not in ("ok", "todo") for c in checks)
         self.checks_section.set_chip("running" if state == "running" else
                                      f"{problems} to look at" if problems else "all clear",
                                      "neutral" if state == "running" else "crash" if problems else "good")
-        self.export_list.set_checks(export_checks(scene, cell, self.assets.tool, state))
+        self.export_list.set_checks(export_checks(scene, cell, self.assets.tool, state, self._report()))
         n_open = self.export_list.open_count()
         self.robot_section.set_chip(f"{n_open} open" if n_open else "", "warn")
         self.info.setText(self.summary_head)
+        busy = self.check_future is not None or self.solve_future is not None
+        self.solve_btn.setEnabled(not busy)
+        report = self._report()
+        unfixed = bool(report is not None and report.unfixed)
+        self.save_krl_btn.setEnabled(getattr(self, "unreachable", 0) == 0 and not unfixed)
         self._show_time()
 
     # --- collision checking (background) -------------------------------------------
@@ -127,13 +153,112 @@ class SimulateStep:
         self.poll_timer.start()
         self._update_info()
 
+    # --- solve problems (background, same worker) -----------------------------------
+    def _solve(self):
+        """Run planner.solver.solve on the collision worker (FCL objects live there);
+        the poll timer picks up the result. Nothing here touches widgets from the worker."""
+        if self.result is None or self.check_future is not None or self.solve_future is not None:
+            return
+        from coldspray.planner import solver
+
+        path, _, cell, robot = self.result
+        self.check_id += 1
+        job, use_checker, cancelled = self.check_id, self.check_box.isChecked(), self.job.is_cancelled
+        lines = []                     # worker appends only (thread-safe); the GUI thread reads it
+
+        def log(msg):
+            lines.append(msg)
+            if cancelled():
+                raise _SolveCancelled  # stop between levers; the old path is kept
+
+        def work():
+            if job != self.check_id:
+                return None            # superseded (new Generate / set-up) before it started
+            checker = self.checker if use_checker else None    # read on the worker, where it is built
+            ctx = solver.Context(robot, cell, checker, log=log)
+            try:
+                return (job, *solver.solve(path, ctx))
+            except _SolveCancelled:
+                return None
+
+        self.solve_lines = lines
+        self.job.start("Solving problems...")
+        self.solve_future = self.pool.submit(work)
+        self.solve_btn.setEnabled(False)
+        self.poll_timer.start()
+
+    def _poll_solve(self):
+        """GUI thread: show progress lines; once done, apply or drop the result."""
+        if not self.solve_future.done():
+            if self.solve_lines and not self.job.is_cancelled():
+                self.job.label.setText(self.solve_lines[-1])
+            self.job.poll()
+            return
+        future, self.solve_future = self.solve_future, None
+        cancelled = self.job.is_cancelled()
+        try:
+            out = future.result()
+        except Exception as e:
+            self.job.finish("Solve failed")
+            self._status(f"Solve failed: {e}")
+            self._update_info()
+            return
+        if out is None or out[0] != self.check_id or self.result is None:
+            if self.check_future is None:      # else the job bar belongs to a newer check
+                self.job.finish("Solve cancelled: toolpath unchanged" if cancelled else "")
+            self._update_info()
+            return
+        if cancelled:                           # finished anyway: still honour Cancel
+            self.job.finish("Solve cancelled: toolpath unchanged")
+            self._update_info()
+            return
+        _, new, report = out
+        self.job.finish(f"Solve: {len(report.fixed)} fixes, {len(report.unfixed)} problem points left")
+        self.solve_report, self._solve_path = report, new
+        if new is not self.result[0]:
+            self._show_solved(new)
+        else:
+            self._update_info()
+
+    def _show_solved(self, path):
+        """Replace the toolpath with the solver's and redo what Generate does after planning:
+        scene + IK (seeded from the path's joint hints), checks, program, collision check."""
+        _, proc, cell, robot = self.result
+        part_mesh, fixture_mesh = build_mesh(self.part), other_mesh(self.part)
+        substrate_mesh = self._substrate_mesh()
+        joints = self.scene.set_path(path, cell, part=part_mesh, substrate=substrate_mesh,
+                                     fixture=fixture_mesh, step=2.0, home=cell.home_deg, angle_step=5.0,
+                                     gun_limit_deg=cell.gun_max_down_deg)
+        self.result = (path, proc, cell, robot)
+        self.slider.blockSignals(True)
+        self.slider.setRange(0, self.scene.n_points - 1)
+        self.slider.setValue(min(self.slider.value(), self.scene.n_points - 1))
+        self.slider.blockSignals(False)
+        self.unreachable = int(np.isnan(joints[:, 0]).sum())
+        self.times, self.collision_failed, self.collisions = None, None, []
+        self._update_info()
+        self._show_program()
+        self.plotter.render()
+        self._invalidate(SIMULATE)              # a new toolpath: check and save it again
+        if self.check_box.isChecked() and self.assets.meshes is not None:
+            gun = make_gun(robot.tool, self.assets.gun_mesh)
+            self._start_collision_check(robot, gun, cell, part_mesh, substrate_mesh, fixture_mesh, joints)
+        else:
+            self._mark_done(SIMULATE)
+
     def _poll_check(self):
+        """Poll timer: the solve job and the collision check (either may be running)."""
+        if self.solve_future is not None:
+            self._poll_solve()
+        if self.solve_future is None and self.check_future is None:
+            self.poll_timer.stop()
         if self.check_future is None:
             return
         if not self.check_future.done():
             self.job.poll()
             return
-        self.poll_timer.stop()
+        if self.solve_future is None:
+            self.poll_timer.stop()
         future, self.check_future = self.check_future, None
         cancelled = self.job.is_cancelled()
         try:

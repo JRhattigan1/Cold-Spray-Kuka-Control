@@ -447,7 +447,8 @@ class Scene:
             roots = [robroot(cell, float(e)) for e in self.e1]
         self.root_frames = roots
         targets = [np.linalg.inv(r) @ b @ p for r, b, p in zip(roots, self.base_frames, s.poses)]
-        self.joints = self.robot.ik_path(targets, seed_deg=HOME_DEG if home is None else home)
+        self.joints = self.robot.ik_path(targets, seed_deg=HOME_DEG if home is None else home,
+                                         hint=path.hint_for(s.move_index))
         self.reachable = ~np.isnan(self.joints[:, 0])
         self.gun_down = gun_down_deg(self.base_frames @ s.poses)
         self.steep = (self.gun_down > gun_limit_deg + 1e-6) if gun_limit_deg is not None             else np.zeros(len(s), bool)
