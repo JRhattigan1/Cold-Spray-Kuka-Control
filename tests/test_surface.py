@@ -92,21 +92,21 @@ def test_coats_and_tilt_limit():
     assert sum(m.gun_on for m in tight.moves) < n1
 
 
-def test_turns_lift_off_convex_surface_by_standoff():
-    proc = load_process()
+def test_turns_lift_by_jump_height():
+    """Mid-turn the gun lifts a further jump_height_mm off the surface; at 0 there is no lift."""
     part = load_part("test_tube")
     v = placed_vertices(part)
     axis = v[:, :2].mean(0)
     v, mask = _face_mask(part, lambda c, n: (np.abs(n[:, 2]) < 0.1)
                          & (np.linalg.norm(c[:, :2] - axis, axis=1) > 50))
-    path = plan_surface(v, part.faces, mask, proc)
-    moves = path.moves
-    mids = [m for i, m in enumerate(moves[1:-1], 1)
-            if m.tag == "turn" and moves[i - 1].tag != "turn"]
-    assert mids
-    for m in mids:
-        r = np.linalg.norm(m.pose[:3, 3][:2] - axis)
-        assert r >= 60 + 2 * proc.standoff_mm - 0.5      # lifted a further standoff mid-turn
+    for jump in (20.0, 0.0):
+        proc = load_process().model_copy(update={"jump_height_mm": jump})
+        moves = plan_surface(v, part.faces, mask, proc).moves
+        turns = [m for m in moves if m.tag == "turn"]
+        assert turns
+        r = [np.linalg.norm(m.pose[:3, 3][:2] - axis) for m in turns]
+        assert max(r) >= 60 + proc.standoff_mm + jump - 0.5     # the highest turn point
+        assert max(r) <= 60 + proc.standoff_mm + jump + 0.5
 
 
 def test_separate_faces_are_separate_regions_with_a_jump():

@@ -240,14 +240,15 @@ def plan_surface(vertices, faces, coat_mask, proc: ProcessConfig, name="surface"
                 for q, nn in ((prev_p + prev_n * h, prev_n), (p[0] + n[0] * h, n[0]), (p[0], n[0])):
                     path.moves.append(Move(pose(q, nn, travel), proc.rapid_speed_mm_s, gun_on=True, tag="jump"))
             else:
-                # lift mid-turn: gun goes a further standoff_mm off the surface along the mean
-                # normal, so a turn over a convex part cannot graze it
-                nm = prev_n + n[0]
-                nm = nm / np.linalg.norm(nm) if np.linalg.norm(nm) > 1e-9 else n[0]
-                mid = (prev_p + p[0]) / 2 + nm * proc.standoff_mm
+                # turn to the next stroke, lifted mid-turn by jump_height_mm along the mean
+                # normal (0: straight across at spray height; the solver lifts any that collide)
                 travel = p[0] - prev_p
-                path.moves.append(Move(pose(mid, nm, travel), proc.traverse_speed_mm_s,
-                                       gun_on=True, tag="turn"))
+                if proc.jump_height_mm > 0:
+                    nm = prev_n + n[0]
+                    nm = nm / np.linalg.norm(nm) if np.linalg.norm(nm) > 1e-9 else n[0]
+                    mid = (prev_p + p[0]) / 2 + nm * proc.jump_height_mm
+                    path.moves.append(Move(pose(mid, nm, travel), proc.traverse_speed_mm_s,
+                                           gun_on=True, tag="turn"))
                 path.moves.append(Move(pose(p[0], n[0], travel),
                                        proc.traverse_speed_mm_s, gun_on=True, tag="turn"))
             for i in range(1, len(p)):
