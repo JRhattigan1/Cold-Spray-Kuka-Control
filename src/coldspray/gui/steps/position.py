@@ -381,6 +381,7 @@ class PositionStep:
         self.purge_dir.addItems([*DIRECTION_PRESETS, "Custom"])
         self.purge_dir.setToolTip("Spray direction at the purge point (WORLD)")
         self.purge_dwell = spin(0, 600, 5, " s", tip="Spray on at the point before moving off")
+        self.purge_approach = spin(0, 500, 100, " mm", tip="Approach / retract distance along the spray axis")
         self.purge_start = QCheckBox("At start")
         self.purge_end = QCheckBox("At end")
         self.purge_every = spin(0, 1000, 0, " layers", decimals=0, tip="Also go back every N layers (0: never)")
@@ -395,6 +396,7 @@ class PositionStep:
         self.purge_save_btn.setToolTip("Write these settings into the purge: block of cell.yaml")
         self.purge_save_btn.clicked.connect(self._purge_save)
         form.addRow("Dwell", self.purge_dwell)
+        form.addRow("Approach", self.purge_approach)
         form.addRow(self.purge_start)
         form.addRow(self.purge_end)
         form.addRow("Every", self.purge_every)
@@ -408,7 +410,7 @@ class PositionStep:
         self.purge_cfg = dict(self.PURGE_DEFAULTS)
         self._purge_loading = False
         self._purge_load()
-        for w in (*self.purge_xyz, *self.purge_custom, self.purge_dwell, self.purge_every):
+        for w in (*self.purge_xyz, *self.purge_custom, self.purge_dwell, self.purge_approach, self.purge_every):
             w.setKeyboardTracking(False)
             w.valueChanged.connect(self._purge_changed)
         for w in (self.purge_on, self.purge_start, self.purge_end):
@@ -438,6 +440,7 @@ class PositionStep:
         for box, v in zip(self.purge_custom, c["spray_dir"]):
             box.setValue(v)
         self.purge_dwell.setValue(c["dwell_s"])
+        self.purge_approach.setValue(c["approach_mm"])
         self.purge_start.setChecked(c["at_start"])
         self.purge_end.setChecked(c["at_end"])
         self.purge_every.setValue(c["every_n_layers"])
@@ -451,6 +454,7 @@ class PositionStep:
         name = self.purge_dir.currentText()
         c.update(enabled=self.purge_on.isChecked(), point=tuple(b.value() for b in self.purge_xyz),
                  spray_dir=DIRECTION_PRESETS.get(name) or self._purge_custom_dir(c["spray_dir"]), dwell_s=self.purge_dwell.value(),
+                 approach_mm=self.purge_approach.value(),
                  at_start=self.purge_start.isChecked(), at_end=self.purge_end.isChecked(),
                  every_n_layers=int(self.purge_every.value()))
         cell = self._purge_cell()
