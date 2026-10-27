@@ -18,7 +18,7 @@ import numpy as np
 from coldspray.cad.slicer import Layer
 from coldspray.models import ProcessConfig
 from coldspray.planner.patterns import (  # noqa: F401  (re-exported for old imports)
-    SIMPLIFY_MM, _order, _polygons, contour_loops, raster_segments)
+    PATTERNS, SIMPLIFY_MM, _order, _polygons, contour_loops, raster_segments)
 from coldspray.toolpath.model import Move, Toolpath, spray_frame
 
 DOWN = (0.0, 0.0, -1.0)
@@ -35,12 +35,12 @@ def plan_layers(layers: list[Layer], proc: ProcessConfig, name="part", table_axe
 
     for layer in layers:
         z = layer.z_bottom + proc.standoff_mm
-        angle = (layer.index * proc.raster_angle_step_deg) % 180
         infill_area = layer.region.buffer(-proc.contour_passes * proc.step_over_mm)
         strokes = contour_loops(layer.region, proc)
         n_contour = len(strokes)
         start = strokes[0][0] if strokes else np.zeros(2)
-        strokes += _order(raster_segments(infill_area, proc.step_over_mm, angle), start)
+        pattern = PATTERNS[getattr(proc, "infill_pattern", "zigzag")]
+        strokes += pattern(infill_area, proc, layer.index, start=start)
         if not strokes:
             continue
 
