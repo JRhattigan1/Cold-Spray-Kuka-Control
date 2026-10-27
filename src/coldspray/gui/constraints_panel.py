@@ -15,9 +15,10 @@ row's faces are highlighted on the part. Rows can still be set programmatically 
 import numpy as np
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
-from PySide6.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QLabel, QMenu, QPushButton, QToolButton, QWidget
+from PySide6.QtWidgets import QFrame, QCheckBox, QComboBox, QHBoxLayout, QLabel, QMenu, QPushButton, QToolButton, QWidget
 
 from coldspray.cad.constraints import TOL, Axis, Constraint, reference, solve
+from coldspray.gui.style import tokens
 from coldspray.gui.widgets import Section, spin
 
 TYPES = ("touch", "align", "distance", "parallel", "perpendicular", "angle", "centre", "centre_between", "fix")
@@ -30,6 +31,28 @@ def face_label(name: str) -> str:
     if name == PART_AXIS:
         return "Z axis"
     return f"F{name.split(':', 1)[1]}" if name.startswith("face:") else name
+
+
+def _rgba(hexcol: str, alpha: float) -> str:
+    h = hexcol.lstrip("#")
+    return f"rgba({int(h[0:2], 16)},{int(h[2:4], 16)},{int(h[4:6], 16)},{alpha})"
+
+
+def glass_qss() -> str:
+    """Liquid-glass look of a constraint row: translucent capsule, hairline border, orange accent."""
+    t = tokens()
+    return f"""
+    QFrame#glassRow {{ background:{_rgba(t['panel'], 0.55)}; border:1px solid {_rgba(t['line'], 0.9)};
+                       border-radius:16px; }}
+    QFrame#glassRow QLabel {{ background:transparent; }}
+    QLabel#faceTag {{ background:{_rgba(t['accent_soft'], 0.8)}; color:{t['ink']};
+                     border:1px solid {_rgba(t['accent'], 0.35)}; border-radius:10px; padding:1px 8px; }}
+    QToolButton#pickBtn {{ background:{_rgba(t['panel'], 0.7)}; border:1px solid {t['line']};
+                          border-radius:13px; min-height:24px; padding:0 8px; }}
+    QToolButton#pickBtn:hover {{ border-color:{t['accent']}; }}
+    QToolButton#pickBtn:checked {{ background:{_rgba(t['accent'], 0.28)}; border:1px solid {t['accent']};
+                                  color:{t['accent']}; }}
+    """
 
 
 class FaceField(QWidget):
@@ -46,8 +69,11 @@ class FaceField(QWidget):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(2)
         self.label = QLabel()
+        self.label.setObjectName("faceTag")
+        self.label.setAlignment(Qt.AlignCenter)
         self.label.setMinimumWidth(42)
         self.pick = QToolButton()
+        self.pick.setObjectName("pickBtn")
         self.pick.setText("Pick")
         self.pick.setCheckable(True)
         self.pick.setToolTip(f"{tip}: click Pick, then a flat or cylindrical face of the part in the view\n"
@@ -82,7 +108,7 @@ class FaceField(QWidget):
         self.pick.blockSignals(False)
 
 
-class ConstraintRow(QWidget):
+class ConstraintRow(QFrame):
     changed = Signal()
     selected = Signal()
 
@@ -90,8 +116,10 @@ class ConstraintRow(QWidget):
                  face2: str | None = None, pose_source=None):
         super().__init__()
         self.pose_source, self.pose = pose_source, None
+        self.setObjectName("glassRow")
+        self.setStyleSheet(glass_qss())
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setContentsMargins(10, 4, 10, 4)
         self.status = QLabel("•")
         self.kind = QComboBox()
         self.kind.addItems(TYPES)
@@ -164,17 +192,17 @@ class ConstraintRow(QWidget):
         return Constraint(kind, a, b, value, c=c, suppressed=self.suppress.isChecked())
 
     def set_status(self, residual: float | None):
+        """Status as a tinted dot: grey suppressed, red conflict, green satisfied."""
+        t = tokens()
         if residual is None:
-            self.status.setText("•")
-            self.status.setToolTip("Suppressed")
+            colour, tip = t["muted"], "Suppressed"
         elif residual > TOL:
-            self.status.setText("✗")
-            self.status.setStyleSheet("color:#d93025")
-            self.status.setToolTip(f"Conflict: residual {residual:.3g}")
+            colour, tip = t["bad"], f"Conflict: residual {residual:.3g}"
         else:
-            self.status.setText("✓")
-            self.status.setStyleSheet("color:#188038")
-            self.status.setToolTip("Satisfied")
+            colour, tip = t["good"], "Satisfied"
+        self.status.setText("\u25cf")
+        self.status.setStyleSheet(f"color:{colour}; font-size:14px")
+        self.status.setToolTip(tip)
 
 
 class ConstraintsPanel(Section):
