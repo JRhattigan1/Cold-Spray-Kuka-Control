@@ -92,6 +92,24 @@ def table_axis() -> Axis:
     return Axis((0, 0, 0), (0, 0, 1))
 
 
+def reference(name: str, part=None, substrate=None, offset: float = 0.0):
+    """Entity from a pick name: "face:<id>" (plane, or axis of a cylinder),
+    "datum:XY|XZ|YZ", "faceplate", "substrate" or "table_axis"."""
+    kind, _, arg = name.partition(":")
+    if kind == "face":
+        fid = int(arg)
+        return part_plane(part, fid) if fid in part.planar else part_axis(part, fid)
+    if kind == "datum":
+        return datum(arg, offset)
+    if kind == "faceplate":
+        return faceplate(offset)
+    if kind == "substrate":
+        return substrate_top(substrate, offset) if substrate is not None else faceplate(offset)
+    if kind == "table_axis":
+        return table_axis()
+    raise ValueError(f"unknown reference {name!r}")
+
+
 # --- constraints --------------------------------------------------------------
 
 KINDS = ("touch", "align", "distance", "parallel", "perpendicular", "angle", "centre", "centre_between", "fix")

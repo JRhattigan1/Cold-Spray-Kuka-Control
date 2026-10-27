@@ -3,9 +3,9 @@ import time
 import numpy as np
 import pytest
 
-from coldspray.cad.constraints import (Axis, Plane, PointRef, align, angle, centre, centre_between, datum, distance,
+from coldspray.cad.constraints import (Axis, PointRef, align, angle, centre, centre_between, datum, distance,
                                        faceplate, fix, parallel, part_axis, part_plane, perpendicular, solve,
-                                       substrate_top, table_axis, touch)
+                                       reference, substrate_top, table_axis, touch)
 from coldspray.cad.part import Substrate, constrain
 from coldspray.pipeline import load_part
 from coldspray.transforms import frame
@@ -155,3 +155,13 @@ def test_fast(repair):
     t0 = time.perf_counter()
     r = solve(start, ks)
     assert time.perf_counter() - t0 < 0.05 and r.status == "ok" and r.dof_left == 0
+
+
+def test_reference_names(block):
+    fid = face(block, (0, 0, -1))
+    assert reference(f"face:{fid}", block).moving
+    assert np.allclose(reference("datum:XZ", offset=5).point, (0, 5, 0))
+    assert reference("substrate", substrate=Substrate()).point[2] == TOP
+    assert reference("faceplate").point[2] == 0 and np.allclose(reference("table_axis").dir, (0, 0, 1))
+    with pytest.raises(ValueError):
+        reference("nope")
