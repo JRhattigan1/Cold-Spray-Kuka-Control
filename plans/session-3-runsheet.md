@@ -31,9 +31,21 @@ Report plans/reports/<ID>-1.md: status, done, not done, test line. Return: sha +
 | P8 | planner/surface.py, tests/test_surface.py | Raise each turn until every sample is at least `standoff_mm` from the surface |
 | P9 | gui/steps/toolpath.py process form | `turn_plane` combo (datum:XY/XZ/YZ + offset). **Run after R3b merges** (same file) |
 | E2p | gui/steps/part.py | Simple/Advanced for the Part step. **Run after R3b merges** (same file) |
+| P10 | gui/steps/position.py | P6 follow-up: `changed=` callbacks and chips so Simple mode never hides non-default tilt, E1, roll, substrate or Z/B/C (the E1 rule) |
 
 ## Merge (coordinator, or one merge agent)
 Order: R3b, P1, P2, P3, P8, P4, P6, P5, P7, then P9 and E2p. Use `--no-ff`. On conflict keep both sides, then run the touched tests plus `test_krl_regression.py`. Afterwards run the full suite.
+
+## Solver (unreachable points and collisions)
+Framework: `planner/solver.py` (read its docstring). Each lever is `fix_<name>(path, issues, ctx) -> Toolpath`, returning the same object if it can't help. Joint limits are always enforced: `Robot.ik` returns only solutions within limits. Tests use `solver.find_issues` and a fake checker (see tests/test_solver.py). Users decided: all four levers are allowed; if a point can't be fixed, report it and leave the path unchanged.
+
+| ID | Owns | Task |
+|---|---|---|
+| S1 | planner/solve_arm.py, kinematics/robot.py (add only), tests/test_solve_arm.py | `fix_arm`: choose IK solutions along the whole path by dynamic programming over every in-limit solution per sample (add `Robot.ik_all`), minimising joint jumps and avoiding colliding solutions (ctx.checker). No big jump inside a spraying run. The output is the same path, plus `path.joint_hint` (per-move joints) that `Robot.ik_path` can seed from. |
+| S2 | planner/solve_angle.py, tests/test_solve_angle.py | `fix_angle`: on each bad stretch, try a gun angle offset up to ±`angle_band_deg`, then a lean about the axis square to spray and travel up to ±`lean_max_deg`, in `step_deg` steps, smallest first. Blend in/out over `ramp_mm`. The TCP point and spray footprint centre stay fixed |
+| S3 | planner/solve_route.py, tests/test_solve_route.py | `fix_route`: only on moves tagged approach/jump/purge (or gun off). Lift further along the spray axis, or add a via point (up, then across), until the stretch is clear. Spray moves untouched |
+| S4 | planner/solve_e1.py, post/krl.py (E1 per PTP), sim/viewer.py (read E1 from axes), tests | `fix_e1`: per layer (`purge.layer_ends`), try other E1 values (`cell.gantry.limits_mm`, 250 mm steps, nearest first) and set `axes["E1"]` on that layer's first move. The KRL and Simulate must honour E1 per move. KRL regression hashes unchanged when no E1 is set |
+| S5 | gui/steps/simulate.py, gui/checks.py | **After S1–S4 merge.** "Solve problems" button in Simulate. Runs `solve` on the collision worker thread, replaces the result path, lists `report.fixed` and `report.unfixed` in the checks. Export stays blocked while anything is unfixed |
 
 ## Then
 - One docs agent: update plan §5 and §8, `plans/ROADMAP.md` and the README from the reports.
