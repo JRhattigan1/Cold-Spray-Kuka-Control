@@ -98,3 +98,17 @@ def test_toggle_defaults_to_simple_and_survives_restart(store):
     assert widgets.mode() == ADVANCED and toggle2.buttons[ADVANCED].isChecked() and not adv2.isHidden()
     toggle2.buttons[SIMPLE].click()
     assert adv2.isHidden()
+
+
+def test_main_window_has_toggle_with_injected_settings(store):
+    from coldspray.gui.app import MainWindow
+    store.setValue(widgets.MODE_KEY, ADVANCED)
+    win = MainWindow(store)                     # _startup is deferred by a timer and never runs here
+    try:
+        assert win.mode_toggle.store is store and widgets.mode() == ADVANCED
+        win.mode_toggle.buttons[SIMPLE].click()
+        assert store.value(widgets.MODE_KEY) == SIMPLE
+    finally:
+        win.plotter.close()
+        win.part_plotter.close()
+        win.pool.shutdown(wait=False)

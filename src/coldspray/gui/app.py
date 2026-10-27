@@ -21,7 +21,7 @@ from coldspray.gui import icons, style, theme, view_toolbar
 from coldspray.gui.progress import JobProgress
 from coldspray.gui.stepper import EXPORT, PART, POSITION, SIMULATE, TOOLPATH, StepBar
 from coldspray.gui.steps import ExportStep, PartStep, PositionStep, SimulateStep, ToolpathStep
-from coldspray.gui.widgets import wrap_label
+from coldspray.gui.widgets import ModeToggle, wrap_label
 from coldspray.sim.part_view import PartView
 from coldspray.sim.scene import gantry_offset, load_assets, make_gun
 from coldspray.sim.spacemouse import SpaceMouse
@@ -31,7 +31,8 @@ PANEL_WIDTH = 380
 
 
 class MainWindow(QMainWindow, PartStep, PositionStep, ToolpathStep, SimulateStep, ExportStep):
-    def __init__(self):
+    def __init__(self, settings=None):
+        """settings: QSettings for the saved UI mode (default: widgets.settings(); tests pass their own)."""
         super().__init__()
         self.setWindowTitle("Cold Spray KUKA Control")
         self.resize(1600, 950)
@@ -74,6 +75,9 @@ class MainWindow(QMainWindow, PartStep, PositionStep, ToolpathStep, SimulateStep
 
         self.stepbar = StepBar()
         self.stepbar.stepClicked.connect(self.go_to)
+        # Simple | Advanced: made before the panels, which register their advanced widgets
+        self.mode_toggle = ModeToggle(settings)
+        self.stepbar.chip_area.addWidget(self.mode_toggle)
         self.theme_btn = QToolButton()
         self.theme_btn.setToolTip("Light, dark or follow Windows")
         self.theme_btn.setPopupMode(QToolButton.InstantPopup)
