@@ -55,6 +55,24 @@ class JobProgress(QWidget):
     def refresh_icons(self, mode: str | None = None):
         """Re-tint the Cancel icon (after a theme switch)."""
         self.cancel_btn.setIcon(icons.icon("cancel", mode or style.current_mode()))
+        self.apply_glass(mode)
+
+    def apply_glass(self, mode: str | None = None):
+        """Glass capsule bar with an orange gradient fill, rounded Cancel."""
+        t = style.tokens(mode or style.current_mode())
+        dark = t["bg"] < "#808080"
+        glass = "rgba(255,255,255,0.10)" if dark else "rgba(0,0,0,0.07)"
+        rim = "rgba(255,255,255,0.20)" if dark else "rgba(0,0,0,0.12)"
+        self.bar.setFixedHeight(10)
+        self.bar.setStyleSheet(
+            f"QProgressBar{{background:{glass};border:1px solid {rim};border-radius:5px;}}"
+            f"QProgressBar::chunk{{border-radius:4px;background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
+            f"stop:0 {t['accent']},stop:1 #ffb066);}}")
+        self.cancel_btn.setStyleSheet(
+            f"QToolButton{{background:{glass};border:1px solid {rim};border-radius:12px;"
+            f"color:{t['ink']};padding:2px 12px;}}"
+            f"QToolButton:hover{{border-color:{t['accent']};}}"
+            f"QToolButton:disabled{{color:{t['muted']};}}")
 
     # --- GUI thread -------------------------------------------------------------------
     def start(self, text: str, cancellable: bool = True):
