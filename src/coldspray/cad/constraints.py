@@ -128,10 +128,13 @@ class Constraint:
     c: object = None                # second part face for centre_between
     suppressed: bool = False
     pose: np.ndarray | None = None  # the locked placement for fix
+    side: int = 0                   # distance: +1 along b's normal, -1 against it, 0 either
 
     def __post_init__(self):
         if self.kind not in KINDS:
             raise ValueError(f"unknown constraint {self.kind!r}")
+        if self.side not in (-1, 0, 1):
+            raise ValueError(f"side must be -1, 0 or 1, got {self.side!r}")
         _check(self, partial=True)
 
 
@@ -162,7 +165,7 @@ def _check(k: Constraint, partial: bool = False):
 
 def touch(a, b): return Constraint("touch", a, b)
 def align(a, b): return Constraint("align", a, b)
-def distance(a, b, d): return Constraint("distance", a, b, d)
+def distance(a, b, d, side=0): return Constraint("distance", a, b, d, side=side)
 def parallel(a, b): return Constraint("parallel", a, b)
 def perpendicular(a, b): return Constraint("perpendicular", a, b)
 def angle(a, b, deg): return Constraint("angle", a, b, deg)
@@ -203,12 +206,21 @@ def _residual(k: Constraint, t) -> np.ndarray:
     if k.kind == "align":
         return np.append(a.normal - b.normal, (a.point - b.point) @ b.normal)
     if k.kind == "distance":
-        return np.append(np.cross(a.normal, b.normal), abs((a.point - b.point) @ b.normal) - k.value)
+        h = (a.point - b.point) @ b.normal
+        # either side: abs() except at 0, where the signed offset keeps it smooth
+        h = h - k.side * k.value if k.side or k.value == 0 else abs(h) - k.value
+        return np.append(np.cross(a.normal, b.normal), h)
     if k.kind == "parallel":
         return np.cross(_dir(a), _dir(b))
     if k.kind == "perpendicular":
         return np.array([_dir(a) @ _dir(b)])
     if k.kind == "angle":
+        # at 0 / 180 deg the dot residual has zero gradient and fixes only one
+        # DOF: use the (anti)parallel direction difference instead (2 DOF)
+        if np.isclose(k.value % 360, 0):
+            return _dir(a) - _dir(b)
+        if np.isclose(k.value % 360, 180):
+            return _dir(a) + _dir(b)
         return np.array([_dir(a) @ _dir(b) - np.cos(np.radians(k.value))])
     if k.kind == "centre":
         if isinstance(a, PointRef):
