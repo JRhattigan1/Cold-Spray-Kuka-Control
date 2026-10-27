@@ -438,15 +438,21 @@ class Scene:
 
         s = path.sample(step, angle_step)
         self.samples = s
-        self.base_frames = np.array([base_world(cell, s.axes_at(i)) for i in range(len(s))])
+        bases = {}                     # base_world per distinct axes value (a job has very few)
+        keys = list(zip(*s.axes.values())) if s.axes else [()] * len(s)
+        for k in set(keys):
+            bases[k] = base_world(cell, dict(zip(s.axes, map(float, k))))
+        self.base_frames = np.array([bases[k] for k in keys]).reshape(len(s), 4, 4)
         # E1 per sample when the path sets it (solver / KRL); else the placement as given
         self.e1 = s.axes.get(cell.gantry.axis) if cell.gantry is not None else None
         if self.e1 is None:
             roots = [self.world_from_robot] * len(s)
         else:
-            roots = [robroot(cell, float(e)) for e in self.e1]
+            frames = {e: robroot(cell, e) for e in set(map(float, self.e1))}
+            roots = [frames[float(e)] for e in self.e1]
         self.root_frames = roots
-        targets = [np.linalg.inv(r) @ b @ p for r, b, p in zip(roots, self.base_frames, s.poses)]
+        inv = {id(r): np.linalg.inv(r) for r in roots}
+        targets = [inv[id(r)] @ b @ p for r, b, p in zip(roots, self.base_frames, s.poses)]
         self.joints = self.robot.ik_path(targets, seed_deg=HOME_DEG if home is None else home,
                                          hint=path.hint_for(s.move_index))
         self.reachable = ~np.isnan(self.joints[:, 0])
