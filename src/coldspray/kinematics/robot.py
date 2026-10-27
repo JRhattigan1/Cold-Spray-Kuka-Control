@@ -30,6 +30,7 @@ class Robot:
         self._opw_to_kuka = np.eye(4)
         self._opw_to_kuka[:3, :3] = home_rot.T
         self.tool = tool_frame(tool)
+        self._to_opw = np.linalg.inv(self.tool) @ np.linalg.inv(self._opw_to_kuka)   # TCP pose -> OPW flange
 
     def flange(self, joints_deg) -> np.ndarray:
         return opw.forward(self.params, np.radians(joints_deg)) @ self._opw_to_kuka
@@ -43,33 +44,24 @@ class Robot:
 
         Axes with more than ±180° of travel (A6) also get their ±360° variants.
         """
-        flange = np.asarray(tcp_pose) @ np.linalg.inv(self.tool)
-        target = flange @ np.linalg.inv(self._opw_to_kuka)
-        candidates = []
-        for sol in opw.inverse(self.params, target):
-            q = np.degrees(sol)
-            for turn in (-360.0, 0.0, 360.0):
-                v = q.copy()
-                v[5] += turn
-                if self.within_limits(v):
-                    candidates.append(v)
-        seed = np.asarray(seed_deg, dtype=float)
-        candidates.sort(key=lambda v: np.max(np.abs(v - seed)))
-        return candidates
+        cands = self._in_limits(tcp_pose)
+        if not len(cands):
+            return []
+        dist = np.max(np.abs(cands - np.asarray(seed_deg, dtype=float)), axis=1)
+        return list(cands[np.argsort(dist, kind="stable")])
 
     def ik_all(self, tcp_pose) -> list[np.ndarray]:
         """Every in-limit joint solution for a TCP pose (A6 also at +-360 deg), unsorted."""
-        flange = np.asarray(tcp_pose) @ np.linalg.inv(self.tool)
-        target = flange @ np.linalg.inv(self._opw_to_kuka)
-        out = []
-        for sol in opw.inverse(self.params, target):
-            q = np.degrees(sol)
-            for turn in (-360.0, 0.0, 360.0):
-                v = q.copy()
-                v[5] += turn
-                if self.within_limits(v):
-                    out.append(v)
-        return out
+        return list(self._in_limits(tcp_pose))
+
+    def _in_limits(self, tcp_pose) -> np.ndarray:
+        """(n, 6) in-limit solutions, in OPW order with A6 -360 / 0 / +360 variants."""
+        target = np.asarray(tcp_pose) @ self._to_opw
+        sols = np.degrees(np.asarray(opw.inverse(self.params, target), dtype=float)).reshape(-1, 6)
+        cands = np.repeat(sols, 3, axis=0)
+        cands[:, 5] += np.tile([-360.0, 0.0, 360.0], len(sols))
+        ok = np.all((cands >= self.limits[:, 0]) & (cands <= self.limits[:, 1]), axis=1)
+        return cands[ok]
 
     def ik_path(self, poses, seed_deg=HOME_DEG, hint=None) -> np.ndarray:
         """Joint angles for a sequence of TCP poses, each solved from the

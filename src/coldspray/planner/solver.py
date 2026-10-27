@@ -75,11 +75,14 @@ def e1_of(cell, axes: dict) -> float | None:
 
 def robot_targets(samples, cell) -> np.ndarray:
     """TCP of every sample in the robot root frame (gantry and table where each sample puts them)."""
-    out = []
-    for i in range(len(samples)):
-        axes = samples.axes_at(i)
-        out.append(np.linalg.inv(robroot(cell, e1_of(cell, axes))) @ base_world(cell, axes) @ samples.poses[i])
-    return np.array(out)
+    names = sorted(samples.axes)
+    values = np.column_stack([samples.axes[k] for k in names]) if names else np.zeros((len(samples), 0))
+    keys, inverse = np.unique(values, axis=0, return_inverse=True)     # the table rarely moves: few distinct
+    frames = []
+    for row in keys:
+        axes = dict(zip(names, map(float, row)))
+        frames.append(np.linalg.inv(robroot(cell, e1_of(cell, axes))) @ base_world(cell, axes))
+    return np.array(frames)[inverse.ravel()] @ samples.poses
 
 
 def find_issues(path: Toolpath, ctx: Context):
