@@ -27,6 +27,7 @@ class Position:
     roll_deg: float
     e1_mm: float | None      # None: no gantry
     reach: float             # fraction of the path's move end points reachable
+    note: str = ""           # why the path can't be fully reached, when known (e.g. the purge point)
 
 
 def gun_down_deg(world_poses) -> np.ndarray:
@@ -92,7 +93,11 @@ def auto_position(plan, robot, cell: CellConfig, tilts, e1_now=None, e1_step=500
 
     `progress(fraction)`: called with rising values 0..1 during the search (1.0 at
     the end). `cancel()`: polled often; when it returns True the search stops and
-    the best setting found so far is returned (reach -1 if none was tried)."""
+    the best setting found so far is returned (reach -1 if none was tried).
+
+    Purge moves (tag "purge", fixed in WORLD) are always checked. If no roll /
+    E1 reaches them, `note` names the purge point and the search goes on
+    without them, so the part itself still gets the best setting."""
     seed = cell.home_deg
     if cell.gantry:
         lo, hi = cell.gantry.limits_mm
@@ -102,6 +107,7 @@ def auto_position(plan, robot, cell: CellConfig, tilts, e1_now=None, e1_step=500
         e1s, e1_now = [None], 0.0
     best = Position(tilts[0], 0.0, e1_now if cell.gantry else None, -1.0)
     n_fine = 4
+    note, purge_ok = "", None
     per_tilt = len(ROLLS) * len(e1s) + n_fine + 1          # grid cells, final checks, planning
     total, done = max(1, len(tilts) * per_tilt), 0
 
@@ -122,8 +128,23 @@ def auto_position(plan, robot, cell: CellConfig, tilts, e1_now=None, e1_step=500
         log(f"Auto position: trying tilt {tilt:.0f}°...")
         path = plan(tilt)
         tick()
-        world = _spread(world_poses(path, cell), FINE_POINTS)
-        coarse = _spread(world, COARSE_POINTS)
+        all_world = world_poses(path, cell)
+        is_purge = np.array([m.tag == "purge" for m in path.moves], bool)
+        purge = all_world[is_purge]
+        if len(purge) and purge_ok is None:             # fixed in WORLD: the same for every tilt
+            purge_ok = any(_reaches_all(robot, np.linalg.inv(robroot(cell, e1)) @ purge @ frame(c=roll), seed)
+                           for roll in ROLLS for e1 in e1s)
+            if not purge_ok:
+                pt = getattr(getattr(cell, "purge", None), "point", purge[0][:3, 3])
+                note = ("Purge point ({:.0f}, {:.0f}, {:.0f}) mm is out of reach at every gun roll"
+                        " and E1: move it or turn purge off".format(*pt))
+                log(f"Auto position: {note}")
+                best.note = note
+        world = np.concatenate([_spread(all_world[~is_purge], FINE_POINTS), purge])
+        part_world = all_world[~is_purge] if purge_ok is False else all_world
+        coarse = _spread(part_world, COARSE_POINTS)
+        if purge_ok:
+            coarse = np.concatenate([coarse, purge])    # every purge pose, not just a sample
         ok = np.zeros((len(ROLLS), len(e1s)), bool)
         for r, roll in enumerate(ROLLS):
             for e, e1 in enumerate(e1s):
@@ -138,7 +159,7 @@ def auto_position(plan, robot, cell: CellConfig, tilts, e1_now=None, e1_step=500
                 return best
             reach = _reach(robot, cell, world, ROLLS[r], e1s[e], seed)
             tick()
-            cand = Position(tilt, float(ROLLS[r]), None if e1s[e] is None else float(e1s[e]), reach)
+            cand = Position(tilt, float(ROLLS[r]), None if e1s[e] is None else float(e1s[e]), reach, note)
             if reach > best.reach:
                 best = cand
             if reach == 1.0:

@@ -27,10 +27,14 @@ def purge_world(purge, back_mm: float = 0.0) -> np.ndarray:
 
 def layer_ends(path: Toolpath) -> list[int]:
     """Index of the retract that ends each layer: the first `approach` move
-    after spraying (layers.py tags). Paths without tags have none."""
-    return [i for i in range(1, len(path.moves))
-            if path.moves[i].tag == "approach" and path.moves[i - 1].tag not in ("approach", "purge")
-            and any(m.gun_on for m in path.moves[:i])]
+    after spraying that is followed by the next layer's approach, or ends the
+    path (layers.py tags). A lone lift between strokes is not a layer end, and
+    Surface coats are not layers (joined by turns). Paths without tags have none."""
+    m = path.moves
+    return [i for i in range(1, len(m))
+            if m[i].tag == "approach" and m[i - 1].tag not in ("approach", "purge")
+            and (i + 1 == len(m) or m[i + 1].tag == "approach")
+            and any(x.gun_on for x in m[:i])]
 
 
 def add_purge(path: Toolpath, cell, speed: float | None = None) -> Toolpath:

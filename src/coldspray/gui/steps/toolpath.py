@@ -171,7 +171,7 @@ class ToolpathStep:
         revolve = mode == "revolve"
         self.coats.setEnabled(revolve)          # surface coats come from the process (surface_coats)
         self.rotation.setEnabled(not revolve)
-        part = getattr(self, "part", None)
+        part = getattr(self, "source", None)    # the Part step's live choice, not the stale cell copy
         if mode == "surface" and part is not None and not getattr(part, "coat_faces", None):
             self._status("Surface mode: pick the faces to coat in the Part step first")
         self._show_placement()
@@ -237,6 +237,7 @@ class ToolpathStep:
                                          home=cell.home_deg, angle_step=5.0,
                                          gun_limit_deg=cell.gun_max_down_deg)
             self.result = (path, proc, cell, robot)
+            self.result_mode = mode
         except Exception as e:
             QApplication.restoreOverrideCursor()
             QMessageBox.warning(self, "Could not generate toolpath", str(e))

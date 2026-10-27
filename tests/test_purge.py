@@ -111,3 +111,25 @@ def test_plan_part_rolls_purge_moves_too(setup):
     _, p45 = plan_part(part, proc, tilt_deg=90, cell=c, roll_deg=45)
     for a, b in zip(p0.moves, p45.moves):
         assert np.allclose(a.pose @ frame(c=45), b.pose)
+
+
+def test_layer_ends_only_where_a_new_layer_starts():
+    """A lone `approach` lift followed straight by spraying is not a layer end."""
+    path = _layers()
+    at = lambda x, z: spray_frame((x, 0.0, z), (0, 0, -1), (1, 0, 0))
+    moves = list(path.moves)
+    moves[3:3] = [Move(at(50, 80), 250, tag="approach"), Move(at(60, 30), 20, gun_on=True, tag="infill")]
+    assert layer_ends(Toolpath("x", moves)) == [5, 9, 13]
+
+
+def test_surface_coats_get_no_every_n_purge(setup):
+    """Surface coats are not layers: every-N adds nothing, only start and end visits."""
+    from coldspray.pipeline import load_part, plan_part
+    _, cell, proc = setup
+    proc = proc.model_copy(update={"surface_coats": 3})
+    part = load_part("test_block")
+    part.coat_faces = {int(part.face_ids[np.argmax(part.vertices[part.faces].mean(1)[:, 2])])}
+    c = _cell(cell, point=_world_point(cell), every_n_layers=1)
+    _, path = plan_part(part, proc, mode="surface", cell=c)
+    visits = [m for m in path.moves if m.tag == "purge" and m.kind == "LIN"]
+    assert len(visits) == 2
