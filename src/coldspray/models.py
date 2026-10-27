@@ -1,6 +1,7 @@
 """Config schemas, loaded from the YAML files in coldspray/config."""
 
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, Field
@@ -94,6 +95,20 @@ class TurntableConfig(BaseModel):
     coupled: bool = False
 
 
+class PurgeConfig(BaseModel):
+    """Warm-up / powder purge point in free space. The gun goes there first,
+    switches the spray on and dwells, then travels to the part with the spray
+    on; it comes back at the end (and every N layers) and switches off there."""
+    enabled: bool = True
+    point: tuple[float, float, float]                        # nozzle exit target, WORLD mm
+    spray_dir: tuple[float, float, float] = (0.0, -1.0, 0.0)  # WORLD; horizontal into the booth - CHECK
+    dwell_s: float = Field(5.0, ge=0)                        # spray on at the point before moving off
+    at_start: bool = True
+    at_end: bool = True
+    every_n_layers: int = Field(0, ge=0)                     # 0: only at start / end
+    approach_mm: float = Field(100.0, ge=0)                  # lead-in, back from the point along spray_dir
+
+
 class CellConfig(BaseModel):
     cad_cache: str | None = None
     robroot: XYZABC = XYZABC()
@@ -107,25 +122,49 @@ class CellConfig(BaseModel):
     ptp_velocity_pct: int
     home_deg: list[float]
     gun_max_down_deg: float = 45.0   # spray direction below horizontal allowed
+    purge: PurgeConfig | None = None
+
+
+def _field(*default, level: str, **kw):
+    """A ProcessConfig field shown in Simple mode ("basic") or only in Advanced."""
+    return Field(*default, json_schema_extra={"level": level}, **kw)
 
 
 class ProcessConfig(BaseModel):
     """Cold spray process parameters. Descriptions double as GUI tooltips and
-    as the comments written by save_process()."""
+    as the comments written by save_process(); each field's "level" says
+    whether the GUI shows it in Simple mode or only in Advanced."""
 
-    standoff_mm: float = Field(gt=0, description="nozzle exit to surface")
-    traverse_speed_mm_s: float = Field(gt=0, description="gun speed while spraying")
-    step_over_mm: float = Field(gt=0, description="spacing between neighbouring passes")
-    overrun_mm: float = Field(ge=0, description="plate raster: pass extends this far past the edge")
-    approach_height_mm: float = Field(ge=0, description="clearance above the start / end point")
-    rapid_speed_mm_s: float = Field(gt=0, description="LIN speed for non-spray moves")
-    spray_settle_s: float = Field(ge=0, description="dwell after switching spray on, before moving")
-    approx_distance_mm: float = Field(ge=0, description="$APO.CDIS corner blending")
-    layer_thickness_mm: float = Field(gt=0, description="deposit height from one full layer of passes")
-    track_width_mm: float = Field(gt=0, description="width of a single spray track (nozzle footprint)")
-    raster_angle_step_deg: float = Field(description="raster direction rotates by this each layer")
-    contour_passes: int = Field(ge=0, description="perimeter passes around each layer before infill")
-    jump_height_mm: float = Field(ge=0, description="long moves between areas lift the gun this much (spray stays on)")
+    standoff_mm: float = _field(gt=0, level="basic", description="nozzle exit to surface")
+    traverse_speed_mm_s: float = _field(gt=0, level="basic", description="gun speed while spraying")
+    step_over_mm: float = _field(gt=0, level="basic", description="spacing between neighbouring passes")
+    overrun_mm: float = _field(ge=0, level="advanced", description="plate raster: pass extends this far past the edge")
+    approach_height_mm: float = _field(ge=0, level="advanced", description="clearance above the start / end point")
+    rapid_speed_mm_s: float = _field(gt=0, level="advanced", description="LIN speed for non-spray moves")
+    spray_settle_s: float = _field(ge=0, level="advanced", description="dwell after switching spray on, before moving")
+    approx_distance_mm: float = _field(ge=0, level="advanced", description="$APO.CDIS corner blending")
+    layer_thickness_mm: float = _field(gt=0, level="basic", description="deposit height from one full layer of passes")
+    track_width_mm: float = _field(gt=0, level="basic", description="width of a single spray track (nozzle footprint)")
+    raster_angle_step_deg: float = _field(level="advanced", description="raster direction rotates by this each layer")
+    contour_passes: int = _field(ge=0, level="advanced", description="perimeter passes around each layer before infill")
+    jump_height_mm: float = _field(ge=0, level="advanced",
+                                   description="long moves between areas lift the gun this much (spray stays on)")
+    infill_pattern: Literal["zigzag", "oneway", "concentric", "spiral", "crosshatch", "islands"] = _field(
+        "zigzag", level="basic", description="how the inside of each layer is filled after the contours")
+    contour_tilt_deg: float = _field(0.0, ge=0, level="advanced",
+                                     description="tilt the gun outwards on contour passes (0 = off)")
+    turn_mode: Literal["inside", "overrun", "beyond_plane"] = _field(
+        "inside", level="advanced",
+        description="where infill passes turn: on the part, overrun_mm past its edge, or past turn_plane")
+    turn_plane: str = _field("", level="advanced", description="datum plane the passes turn beyond (beyond_plane)")
+    surface_coats: int = _field(1, ge=1, level="advanced", description="Surface mode: coats over the selected faces")
+    surface_max_tilt_deg: float = _field(60.0, ge=0, le=90, level="advanced",
+                                         description="Surface mode: most the gun may tilt to stay normal to the face")
+
+
+def field_level(name: str) -> str:
+    """"basic" or "advanced" for a ProcessConfig field."""
+    return ProcessConfig.model_fields[name].json_schema_extra["level"]
 
 
 def _load(model, name, path):
