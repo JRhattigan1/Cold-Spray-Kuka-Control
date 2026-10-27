@@ -3,7 +3,7 @@
 **Read this first next session.** Session 2 reviewed the session-1 merge for bugs, then worked through the session-1 hand-off list. Every agent ran in a 10-minute slot (4 minutes for X1–X10) and **every agent has reported**. Nothing has been pushed.
 
 ## Where things stand
-- **`main`** is at `6d965de`.
+- **`main`:** the last code change is the F2b merge. Every commit after it is documentation only.
   - The full suite last ran at `03cd818` (after the E1b merge): **419 passed**, nothing failed, and the import check passed (M2).
   - Since then, the only code merged is F2b (purge save and custom direction). Its own tests passed on its branch, but the full suite has not been run with it on `main`.
 - **Merged this session:**
