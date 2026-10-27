@@ -2,7 +2,7 @@
 
 import numpy as np
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QPushButton, QSlider, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QFrame, QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout, QWidget
 
 from coldspray.gui.checks import CheckList, export_checks, simulate_checks
 from coldspray.gui.stepper import EXPORT, SIMULATE
@@ -10,6 +10,7 @@ from coldspray.gui.timeline import PlaybackControls, Timeline, sample_times
 from coldspray.gui import widgets
 from coldspray.cad.part import build_mesh, other_mesh
 from coldspray.sim.scene import make_gun
+from coldspray.gui import style
 from coldspray.gui.widgets import Chip, Section, primary_button, wrap_label
 
 CHECK_EVERY = 3        # collision-check every 3rd sampled point (~6 mm of travel)
@@ -17,6 +18,35 @@ CHECK_EVERY = 3        # collision-check every 3rd sampled point (~6 mm of trave
 
 class _SolveCancelled(Exception):
     """Raised from the solver's log callback on the worker after Cancel."""
+
+
+def _tile(caption: str):
+    """Glass stat tile (display only): big number over a caption. Returns (frame, value label)."""
+    t, sp = style.tokens(), style.SPACE
+    frame = QFrame()
+    frame.setObjectName("statTile")
+    frame.setStyleSheet(f"QFrame#statTile {{ background: {t['panel']}; border: 1px solid {t['line']};"
+                        f" border-radius: 14px; }} QFrame#statTile QLabel {{ background: transparent; border: none; }}")
+    lay = QVBoxLayout(frame)
+    lay.setContentsMargins(sp[2], sp[1], sp[2], sp[1])
+    lay.setSpacing(sp[0] // 2)
+    value = QLabel("–")
+    value.setStyleSheet(f"font-size: 22px; font-weight: 700; color: {t['accent']};")
+    cap = QLabel(caption)
+    cap.setStyleSheet(f"font-size: 11px; color: {t['muted']};")
+    lay.addWidget(value)
+    lay.addWidget(cap)
+    return frame, value
+
+
+def capsule(btn):
+    """Capsule (pill) look for a button, accent-outlined."""
+    t = style.tokens()
+    btn.setMinimumHeight(34)
+    btn.setStyleSheet(f"QPushButton {{ border-radius: 17px; padding: 4px 18px; border: 1px solid {t['accent']};"
+                      f" color: {t['accent']}; background: {t['accent_soft']}; font-weight: 600; }}"
+                      f" QPushButton:disabled {{ color: {t['muted']}; border-color: {t['line']}; background: {t['soft']}; }}")
+    return btn
 
 
 class SimulateStep:
@@ -52,10 +82,20 @@ class SimulateStep:
                                   "approach/jump/purge routes and gantry E1. What can't be fixed is listed.")
         self.solve_btn.clicked.connect(self._solve)
         self.solve_btn.setEnabled(False)
+        capsule(self.solve_btn)
         checks.add(self.solve_btn)
         self.sim_checks = CheckList()
         self.sim_checks.goTo.connect(self._goto)
         checks.add(self.sim_checks)
+        tiles = QWidget()
+        tiles_lay = QHBoxLayout(tiles)
+        tiles_lay.setContentsMargins(0, 0, 0, 0)
+        tiles_lay.setSpacing(style.SPACE[1])
+        self.stat_values = {}
+        for key, cap in (("points", "points"), ("reach", "reachable"), ("collisions", "collisions"), ("time", "time")):
+            frame, self.stat_values[key] = _tile(cap)
+            tiles_lay.addWidget(frame)
+        checks.add(tiles)
         self.info = wrap_label("")      # toolpath summary
         checks.add(self.info)
         layout.addWidget(checks)
@@ -118,6 +158,13 @@ class SimulateStep:
         n_open = self.export_list.open_count()
         self.robot_section.set_chip(f"{n_open} open" if n_open else "", "warn")
         self.info.setText(self.summary_head)
+        n = scene.n_points
+        sv = self.stat_values
+        sv["points"].setText(str(n))
+        sv["reach"].setText(f"{100 * float(scene.reachable.mean()):.0f}%" if n else "–")
+        sv["collisions"].setText("–" if state in ("off", "running") or str(state).startswith("failed")
+                                 else str(len(scene.collisions)))
+        sv["time"].setText(f"{self.times[-1]:.0f} s" if self.times is not None and len(self.times) else "–")
         busy = self.check_future is not None or self.solve_future is not None
         self.solve_btn.setEnabled(not busy)
         report = self._report()
