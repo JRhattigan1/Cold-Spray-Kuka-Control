@@ -23,6 +23,7 @@ from coldspray.kinematics.robot import HOME_DEG, Robot
 from coldspray.models import CellConfig
 from coldspray.planner.position import gun_down_deg
 from coldspray.sim.cell_model import OPTIONAL, CellMeshes
+from coldspray.sim.datums import Datums
 from coldspray.toolpath.model import Toolpath
 
 SPRAY = "#f28c28"
@@ -145,6 +146,7 @@ class Scene:
         # only the part and the drag handles are pickable (keeps hover picking fast)
         for a in pl.renderer.actors.values():
             a.SetPickable(False)
+        self.datums = Datums(pl)         # XY/XZ/YZ datum planes on the faceplate (hidden)
         self.status = pl.add_text("", position="upper_left", font_size=10, color="black")
         self.summary = pl.add_text("", position="upper_right", font_size=10, color="green")
 
@@ -200,6 +202,11 @@ class Scene:
             a.user_matrix = tilt
         for a in self.rotating_actors:
             a.user_matrix = face
+        self.datums.set_frame(base_world(self.cell_cfg, axes))
+
+    def pick_name(self, actor) -> str | None:
+        """Name of a picked actor: "datum:XZ" for a datum plane, else None."""
+        return self.datums.name_of(actor)
 
     # --- part setup -----------------------------------------------------------
     def set_part(self, part):

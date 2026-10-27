@@ -4,9 +4,39 @@
 `win.part_view` exist; it fills `win.part_view_bar` and `win.cell_view_bar`.
 """
 
+from PySide6.QtWidgets import QDoubleSpinBox, QHBoxLayout, QLabel, QMenu, QToolButton, QWidget, QWidgetAction
+
+from coldspray.sim.datums import NORMALS
+
 
 def install(win):
-    pass
+    win.datum_button = datum_button(win.scene, win.plotter)
+    win.cell_view_bar.addWidget(win.datum_button)
+
+
+def datum_button(scene, plotter) -> QToolButton:
+    """"Datums" button: a menu with a checkbox and an offset (mm) per datum plane."""
+    button = QToolButton(text="Datums", popupMode=QToolButton.InstantPopup,
+                         toolTip="Show the XY / XZ / YZ datum planes through the faceplate centre")
+    menu = QMenu(button)
+    button.actions_by_plane = {}
+    for k in NORMALS:
+        act = menu.addAction(f"{k} plane")
+        act.setCheckable(True)
+        act.toggled.connect(lambda on, k=k: (scene.datums.set_visible(k, on), plotter.render()))
+        row = QWidget()
+        h = QHBoxLayout(row)
+        h.setContentsMargins(24, 0, 8, 2)
+        h.addWidget(QLabel("offset"))
+        off = QDoubleSpinBox(minimum=-2000, maximum=2000, decimals=1, suffix=" mm", singleStep=5)
+        off.valueChanged.connect(lambda v, k=k: (scene.datums.set_offset(k, v), plotter.render()))
+        h.addWidget(off)
+        wa = QWidgetAction(menu)
+        wa.setDefaultWidget(row)
+        menu.addAction(wa)
+        button.actions_by_plane[k] = (act, off)
+    button.setMenu(menu)
+    return button
 
 
 def refresh_icons(win, mode: str):
