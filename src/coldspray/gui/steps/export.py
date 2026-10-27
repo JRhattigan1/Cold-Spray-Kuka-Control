@@ -2,11 +2,12 @@
 
 from pathlib import Path
 
-from PySide6.QtWidgets import QFileDialog, QFormLayout, QMessageBox, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFileDialog, QFormLayout, QFrame, QMessageBox, QVBoxLayout, QWidget
 
 from coldspray.gui.checks import CheckList, confirm_text, export_checks, open_items
 from coldspray.gui.stepper import EXPORT
-from coldspray.gui import widgets
+from coldspray.gui import style, widgets
+from coldspray.gui.steps.simulate import capsule
 from coldspray.gui.widgets import Section, primary_button, wrap_label
 from coldspray.models import PROJECT_ROOT
 from coldspray.post.krl import KRLError, to_krl
@@ -25,7 +26,15 @@ class ExportStep:
                           ("table", "Turntable")):
             self.program_fields[key] = wrap_label("–")
             form.addRow(text, self.program_fields[key])
-        program.add(form)
+        t, sp = style.tokens(), style.SPACE
+        card = QFrame()
+        card.setObjectName("glassCard")
+        card.setStyleSheet(f"QFrame#glassCard {{ background: {t['panel']}; border: 1px solid {t['line']};"
+                           f" border-radius: 14px; }} QFrame#glassCard QLabel {{ background: transparent; }}")
+        form.setContentsMargins(sp[2], sp[1], sp[2], sp[1])
+        form.setVerticalSpacing(sp[1])
+        card.setLayout(form)
+        program.add(card)
         self.export_note = wrap_label()      # kept for scripts; the checklist explains the rest
         layout.addWidget(widgets.advanced(program))     # details only; the checklist covers what matters
 
@@ -36,6 +45,7 @@ class ExportStep:
         layout.addWidget(robot)
 
         self.save_krl_btn = primary_button("Save KRL program...", self._save_krl)
+        capsule(self.save_krl_btn)
         self.save_krl_btn.setEnabled(False)
         layout.addWidget(self.save_krl_btn)
         self.export_status = wrap_label()
