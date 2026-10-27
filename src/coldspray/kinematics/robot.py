@@ -33,6 +33,7 @@ class Robot:
         self._to_opw = np.linalg.inv(self.tool) @ np.linalg.inv(self._opw_to_kuka)   # TCP pose -> OPW flange
 
     def flange(self, joints_deg) -> np.ndarray:
+        """Flange pose for joints (6,), or poses (n, 4, 4) for (n, 6)."""
         return opw.forward(self.params, np.radians(joints_deg)) @ self._opw_to_kuka
 
     def fk(self, joints_deg) -> np.ndarray:
@@ -63,7 +64,7 @@ class Robot:
         """(n, 24, 6) solutions for n TCP poses: the 8 OPW branches, each with A6
         -360 / 0 / +360, in OPW order. Unreachable or out-of-limit rows are NaN."""
         targets = np.asarray(tcp_poses, dtype=float).reshape(-1, 4, 4) @ self._to_opw
-        sols = np.degrees(_opw_inverse_batch(self.params, targets))           # (n, 8, 6)
+        sols = np.degrees(opw.inverse_all(self.params, targets))           # (n, 8, 6)
         cands = np.repeat(sols, 3, axis=1)
         cands[:, :, 5] += np.tile([-360.0, 0.0, 360.0], 8)
         with np.errstate(invalid="ignore"):
@@ -99,31 +100,20 @@ class Robot:
         Each frame turns with its own joint, so a link's CAD geometry drawn at
         pose q0 moves to pose q by  link_frames(q)[k] @ inv(link_frames(q0)[k]).
         """
+        return list(self.link_frames_batch(np.asarray(joints_deg, float)[None])[0])
+
+    def link_frames_batch(self, joints_deg) -> np.ndarray:
+        """link_frames for every row of (n, 6) joints at once: (n, 6, 4, 4)."""
         p = self.params
-        q = np.radians(joints_deg) * p.signs + p.offsets
-
-        def rz(t):
-            m = np.eye(4)
-            m[:2, :2] = [[np.cos(t), -np.sin(t)], [np.sin(t), np.cos(t)]]
-            return m
-
-        def ry(t):
-            m = np.eye(4)
-            m[[0, 0, 2, 2], [0, 2, 0, 2]] = [np.cos(t), np.sin(t), -np.sin(t), np.cos(t)]
-            return m
-
-        def tr(x, y, z):
-            m = np.eye(4)
-            m[:3, 3] = [x, y, z]
-            return m
-
-        t1 = rz(q[0])
-        t2 = t1 @ tr(p.a1, p.b, p.c1) @ ry(q[1])
-        t3 = t2 @ tr(0, 0, p.c2) @ ry(q[2])
-        t4 = t3 @ tr(p.a2, 0, p.c3) @ rz(q[3])  # A4 turns about the forearm, at the wrist centre
-        t5 = t4 @ ry(q[4])
-        t6 = t5 @ rz(q[5])
-        return [t1, t2, t3, t4, t5, t6]
+        q = np.radians(np.asarray(joints_deg, float)) * p.signs + p.offsets
+        n = len(q)
+        t1 = _rz(q[:, 0])
+        t2 = t1 @ _tr(p.a1, p.b, p.c1, n) @ _ry(q[:, 1])
+        t3 = t2 @ _tr(0, 0, p.c2, n) @ _ry(q[:, 2])
+        t4 = t3 @ _tr(p.a2, 0, p.c3, n) @ _rz(q[:, 3])  # A4 turns about the forearm, at the wrist centre
+        t5 = t4 @ _ry(q[:, 4])
+        t6 = t5 @ _rz(q[:, 5])
+        return np.stack([t1, t2, t3, t4, t5, t6], axis=1)
 
     def link_points(self, joints_deg) -> np.ndarray:
         """Key points along the arm (robot frame) for drawing:
@@ -143,65 +133,23 @@ class Robot:
         return bool(np.all(q >= self.limits[:, 0]) and np.all(q <= self.limits[:, 1]))
 
 
-def _acos_or_nan(x):
-    with np.errstate(invalid="ignore"):
-        return np.where((x >= -1.0) & (x <= 1.0), np.arccos(np.clip(x, -1.0, 1.0)), np.nan)
+def _rz(t):
+    m = np.zeros(t.shape + (4, 4))
+    c, s = np.cos(t), np.sin(t)
+    m[..., 0, 0], m[..., 0, 1], m[..., 1, 0], m[..., 1, 1] = c, -s, s, c
+    m[..., 2, 2] = m[..., 3, 3] = 1.0
+    return m
 
 
-def _opw_inverse_batch(p: opw.OPWParams, poses) -> np.ndarray:
-    """opw.inverse over (n, 4, 4) flange poses at once: (n, 8, 6) radians, in
-    opw.inverse's branch order, with NaN rows for unreachable branches."""
-    rot = poses[:, :3, :3]
-    cx, cy, cz = (poses[:, :3, 3] - p.c4 * rot[:, :, 2]).T
-    with np.errstate(invalid="ignore", divide="ignore"):
-        nx1 = np.sqrt(np.maximum(cx**2 + cy**2 - p.b**2, 0.0)) - p.a1
-        tmp1 = np.arctan2(cy, cx)
-        tmp2 = np.arctan2(p.b, nx1 + p.a1)
-        t1_i = tmp1 - tmp2
-        t1_ii = tmp1 + tmp2 - np.pi
+def _ry(t):
+    m = np.zeros(t.shape + (4, 4))
+    c, s = np.cos(t), np.sin(t)
+    m[..., 0, 0], m[..., 0, 2], m[..., 2, 0], m[..., 2, 2] = c, s, -s, c
+    m[..., 1, 1] = m[..., 3, 3] = 1.0
+    return m
 
-        dz = cz - p.c1
-        s1_2 = nx1**2 + dz**2
-        s2_2 = (nx1 + 2 * p.a1) ** 2 + dz**2
-        kappa_2 = p.a2**2 + p.c3**2
-        c2_2 = p.c2**2
-        psi3 = np.arctan2(p.a2, p.c3)
 
-        s1, s2 = np.sqrt(s1_2), np.sqrt(s2_2)
-        a = _acos_or_nan((s1_2 + c2_2 - kappa_2) / (2 * s1 * p.c2))
-        b = np.arctan2(nx1, dz)
-        c = _acos_or_nan((s2_2 + c2_2 - kappa_2) / (2 * s2 * p.c2))
-        d = np.arctan2(nx1 + 2 * p.a1, dz)
-        e = _acos_or_nan((s1_2 - c2_2 - kappa_2) / (2 * p.c2 * np.sqrt(kappa_2)))
-        f = _acos_or_nan((s2_2 - c2_2 - kappa_2) / (2 * p.c2 * np.sqrt(kappa_2)))
-
-    arms = [
-        (t1_i, -a + b, e - psi3),
-        (t1_i, a + b, -e - psi3),
-        (t1_ii, -c - d, f - psi3),
-        (t1_ii, c - d, -f - psi3),
-    ]
-    r = lambda i, j: rot[:, i, j]
-    offsets, signs = np.asarray(p.offsets, float), np.asarray(p.signs, float)
-    out = np.full((len(poses), 8, 6), np.nan)
-    for k, (t1, t2, t3) in enumerate(arms):
-        bad = np.isnan(t2) | np.isnan(t3)
-        st1, ct1 = np.sin(t1), np.cos(t1)
-        s23, c23 = np.sin(t2 + t3), np.cos(t2 + t3)
-        m = r(0, 2) * s23 * ct1 + r(1, 2) * s23 * st1 + r(2, 2) * c23
-        t5 = np.arctan2(np.sqrt(np.maximum(1.0 - m * m, 0.0)), m)
-        t4 = np.arctan2(
-            r(1, 2) * ct1 - r(0, 2) * st1,
-            r(0, 2) * c23 * ct1 + r(1, 2) * c23 * st1 - r(2, 2) * s23,
-        )
-        t6 = np.arctan2(
-            r(0, 1) * s23 * ct1 + r(1, 1) * s23 * st1 + r(2, 1) * c23,
-            -r(0, 0) * s23 * ct1 - r(1, 0) * s23 * st1 - r(2, 0) * c23,
-        )
-        for w, (w4, w5, w6) in enumerate(((t4, t5, t6), (t4 + np.pi, -t5, t6 - np.pi))):
-            q = np.stack([t1, t2, t3, w4, w5, w6], axis=1)
-            q = (q - offsets) * signs
-            q = (q + np.pi) % (2 * np.pi) - np.pi
-            q[bad] = np.nan
-            out[:, 2 * k + w] = q
-    return out
+def _tr(x, y, z, n):
+    m = np.broadcast_to(np.eye(4), (n, 4, 4)).copy()
+    m[:, :3, 3] = [x, y, z]
+    return m

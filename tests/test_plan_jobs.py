@@ -16,7 +16,7 @@ from PySide6.QtWidgets import QApplication
 from coldspray.cad.part import Substrate
 from coldspray.gui import plan_jobs
 from coldspray.gui.progress import JobProgress
-from coldspray.models import ProcessConfig, load_cell, load_process
+from coldspray.models import load_cell, load_process
 
 
 def _part(**kw):

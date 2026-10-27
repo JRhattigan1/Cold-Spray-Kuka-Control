@@ -25,7 +25,7 @@ WAIT SEC after it (e.g. at a powder purge point).
 
 import numpy as np
 
-from coldspray.cell import base_in_robot, base_world, gantry_position, table_axis_names
+from coldspray.cell import base_in_robot, base_world, base_worlds, gantry_position, table_axis_names
 from coldspray.kinematics.robot import Robot
 from coldspray.models import CellConfig, ProcessConfig
 from coldspray.toolpath.model import Toolpath
@@ -71,10 +71,12 @@ def to_krl(path: Toolpath, robot: Robot, cell: CellConfig, proc: ProcessConfig,
     to_part = np.eye(4) if part_base is None else np.linalg.inv(part_base)
     base_number = cell.base_number if part_base is None else cell.part_base_number
 
+    in_fixed_base = fixed_base_inv @ base_worlds(cell, table)           # per move: BASE -> fixed base
+
     def cartesian(i):
         """TCP pose of move i as written in the program."""
         pose = path.moves[i].pose
-        return to_part @ (pose if coupled else fixed_base_inv @ base_world(cell, table[i]) @ pose)
+        return to_part @ (pose if coupled else in_fixed_base[i] @ pose)
 
     if part_base is None:
         base_note = [f";BASE_DATA[{base_number}] / TOOL_DATA[{cell.tool_number}] must match the cell config"]

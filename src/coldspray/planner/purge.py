@@ -13,7 +13,7 @@ from dataclasses import replace
 
 import numpy as np
 
-from coldspray.cell import base_world, robroot
+from coldspray.cell import base_worlds, robroot
 from coldspray.toolpath.model import Move, Toolpath, spray_frame
 
 
@@ -49,8 +49,10 @@ def add_purge(path: Toolpath, cell, speed: float | None = None) -> Toolpath:
     speed = speed or max(m.speed for m in path.moves)
     at, back = purge_world(purge), purge_world(purge, purge.approach_mm)
 
+    from_world = np.linalg.inv(base_worlds(cell, axes))           # WORLD -> BASE at each move's table
+
     def to_base(world, i):
-        return np.linalg.inv(base_world(cell, axes[i])) @ world
+        return from_world[i] @ world
 
     def visit(i, dwell):
         return Move(to_base(at, i), speed, gun_on=True, tag="purge", dwell_s=dwell)

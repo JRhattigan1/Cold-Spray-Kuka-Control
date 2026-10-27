@@ -295,7 +295,7 @@ def plan_surface(vertices, faces, coat_mask, proc: ProcessConfig, name="surface"
     mean normal is left in `path.skipped_points`; `path.zigzag_regions` counts
     regions that had to fall back to the zigzag."""
     regions = coat_regions(vertices, faces, coat_mask)
-    pattern = getattr(proc, "infill_pattern", "zigzag")
+    pattern = proc.infill_pattern
     cut: dict[int, list] = {}                # region -> plane-cut strokes, planned once
     strokes, skipped, fallback = [], 0, set()
     for coat in range(coats):
@@ -314,7 +314,7 @@ def plan_surface(vertices, faces, coat_mask, proc: ProcessConfig, name="surface"
                 fallback.add(r)
             if r not in cut:
                 cut[r] = surface_strokes(vertices, faces, regions[r], proc.step_over_mm, blend_mm, max_tilt_deg,
-                                         getattr(proc, "raster_start_deg", 0.0))
+                                         proc.raster_start_deg)
             s, k = cut[r]
             skipped += k
             if coat % 2:

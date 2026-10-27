@@ -47,69 +47,6 @@ class Collision:
     pairs: set[tuple[str, str]]
 
 
-def _rz(t):
-    m = np.zeros(t.shape + (4, 4))
-    c, s = np.cos(t), np.sin(t)
-    m[..., 0, 0], m[..., 0, 1], m[..., 1, 0], m[..., 1, 1] = c, -s, s, c
-    m[..., 2, 2] = m[..., 3, 3] = 1.0
-    return m
-
-
-def _ry(t):
-    m = np.zeros(t.shape + (4, 4))
-    c, s = np.cos(t), np.sin(t)
-    m[..., 0, 0], m[..., 0, 2], m[..., 2, 0], m[..., 2, 2] = c, s, -s, c
-    m[..., 1, 1] = m[..., 3, 3] = 1.0
-    return m
-
-
-def _tr(x, y, z, n):
-    m = np.broadcast_to(np.eye(4), (n, 4, 4)).copy()
-    m[:, :3, 3] = [x, y, z]
-    return m
-
-
-def link_frames_batch(robot: Robot, joints_deg) -> np.ndarray:
-    """(n, 6, 4, 4): Robot.link_frames for every row of `joints_deg` at once."""
-    p = robot.params
-    q = np.radians(np.asarray(joints_deg, float)) * p.signs + p.offsets
-    n = len(q)
-    t1 = _rz(q[:, 0])
-    t2 = t1 @ _tr(p.a1, p.b, p.c1, n) @ _ry(q[:, 1])
-    t3 = t2 @ _tr(0, 0, p.c2, n) @ _ry(q[:, 2])
-    t4 = t3 @ _tr(p.a2, 0, p.c3, n) @ _rz(q[:, 3])
-    t5 = t4 @ _ry(q[:, 4])
-    t6 = t5 @ _rz(q[:, 5])
-    return np.stack([t1, t2, t3, t4, t5, t6], axis=1)
-
-
-def flange_batch(robot: Robot, joints_deg) -> np.ndarray:
-    """(n, 4, 4): Robot.flange (opw.forward @ opw_to_kuka) for every row at once."""
-    p = robot.params
-    q = np.radians(np.asarray(joints_deg, float)) * p.signs + p.offsets
-    n = len(q)
-    s1, s2, s3, s4, s5, s6 = np.sin(q).T
-    c1, c2, c3, c4, c5, c6 = np.cos(q).T
-    psi3 = np.arctan2(p.a2, p.c3)
-    k = np.hypot(p.a2, p.c3)
-    cx1 = p.c2 * s2 + k * np.sin(q[:, 1] + q[:, 2] + psi3) + p.a1
-    cz1 = p.c2 * c2 + k * np.cos(q[:, 1] + q[:, 2] + psi3)
-    wrist = np.stack([cx1 * c1 - p.b * s1, cx1 * s1 + p.b * c1, cz1 + p.c1], axis=1)
-    z, o = np.zeros(n), np.ones(n)
-    r_0c = np.stack([c1 * c2 * c3 - c1 * s2 * s3, -s1, c1 * c2 * s3 + c1 * s2 * c3,
-                     s1 * c2 * c3 - s1 * s2 * s3, c1, s1 * c2 * s3 + s1 * s2 * c3,
-                     -s2 * c3 - c2 * s3, z, -s2 * s3 + c2 * c3], axis=1).reshape(n, 3, 3)
-    r_ce = np.stack([c4 * c5 * c6 - s4 * s6, -c4 * c5 * s6 - s4 * c6, c4 * s5,
-                     s4 * c5 * c6 + c4 * s6, -s4 * c5 * s6 + c4 * c6, s4 * s5,
-                     -s5 * c6, s5 * s6, c5], axis=1).reshape(n, 3, 3)
-    rot = r_0c @ r_ce
-    pose = np.zeros((n, 4, 4))
-    pose[:, :3, :3] = rot
-    pose[:, :3, 3] = wrist + p.c4 * rot[:, :, 2]
-    pose[:, 3, 3] = 1.0
-    return pose @ robot._opw_to_kuka
-
-
 class _Manager(trimesh.collision.CollisionManager):
     """trimesh's manager, but building each BVH from plain numpy arrays: trimesh
     passes its TrackedArray, which FCL walks row by row ~50x slower."""
@@ -240,10 +177,10 @@ class CollisionChecker:
     def _precompute(self, joints) -> tuple[np.ndarray, np.ndarray | None]:
         """Robot-frame link moves (n, 6, 4, 4) = frames @ inv(CAD frames) and gun
         frames (n, 4, 4) = flange @ to_flange (None without a gun), for all rows."""
-        links = link_frames_batch(self.robot, joints) @ np.linalg.inv(self.cad_frames)
+        links = self.robot.link_frames_batch(joints) @ np.linalg.inv(self.cad_frames)
         guns = None
         if self.gun is not None:
-            guns = flange_batch(self.robot, joints) @ self.gun.to_flange
+            guns = self.robot.flange(joints) @ self.gun.to_flange
         return links, guns
 
     def _table(self, axes):

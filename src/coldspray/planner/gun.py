@@ -19,7 +19,7 @@ from dataclasses import replace
 
 import numpy as np
 
-from coldspray.cell import base_world, robroot
+from coldspray.cell import base_world, base_worlds, robroot
 from coldspray.toolpath.model import Toolpath
 
 VERTICAL = 0.9          # |spray . up| above this: too near vertical to level
@@ -46,13 +46,7 @@ def level_gun(path: Toolpath, cell, wrist, angle_deg: float = 0.0) -> Toolpath:
     poses = np.empty((n, 4, 4))
     for i, m in enumerate(path.moves):
         poses[i] = m.pose
-    bws, rots = {}, np.empty((n, 3, 3))                             # base rotation once per distinct table position
-    for i, axes in enumerate(path.axis_values()):
-        key = tuple(sorted(axes.items()))
-        if key not in bws:
-            bws[key] = base_world(cell, axes)[:3, :3]
-        rots[i] = bws[key]
-    r_all = rots @ poses[:, :3, :3]                                 # tool axes in WORLD
+    r_all = base_worlds(cell, path.axis_values())[:, :3, :3] @ poses[:, :3, :3]   # tool axes in WORLD
     xs, cur_all = r_all[:, :, 0], r_all @ w
     turns = np.empty(n)
     held = None                                                     # wrist direction, WORLD

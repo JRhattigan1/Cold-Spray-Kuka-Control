@@ -1,12 +1,11 @@
-﻿"""fix_e1 (per-layer gantry), KRL and Simulate honouring E1 per move."""
+"""fix_e1 (per-layer gantry), KRL and Simulate honouring E1 per move."""
 
 from dataclasses import replace
 
-import numpy as np
 import pytest
 
 from coldspray.kinematics.robot import Robot
-from coldspray.models import load_cell, load_process, load_robot, load_tool, ProcessConfig
+from coldspray.models import load_cell, load_process, load_robot, load_tool
 from coldspray.pipeline import load_part, plan_part
 from coldspray.planner.gun import wrist_side
 from coldspray.planner.solve_e1 import fix_e1, layer_starts

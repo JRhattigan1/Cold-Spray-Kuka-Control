@@ -18,7 +18,7 @@ import numpy as np
 import pyvista as pv
 from scipy.spatial.transform import Rotation
 
-from coldspray.cell import base_world, robroot, turntable_motion
+from coldspray.cell import base_world, base_worlds, robroot, turntable_motion
 from coldspray.kinematics.robot import HOME_DEG, Robot
 from coldspray.models import CellConfig
 from coldspray.planner.position import gun_down_deg
@@ -508,11 +508,7 @@ class Scene:
 
         s = path.sample(step, angle_step)
         self.samples = s
-        bases = {}                     # base_world per distinct axes value (a job has very few)
-        keys = list(zip(*s.axes.values())) if s.axes else [()] * len(s)
-        for k in set(keys):
-            bases[k] = base_world(cell, dict(zip(s.axes, map(float, k))))
-        self.base_frames = np.array([bases[k] for k in keys]).reshape(len(s), 4, 4)
+        self.base_frames = base_worlds(cell, [s.axes_at(i) for i in range(len(s))])
         # E1 per sample when the path sets it (solver / KRL); else the placement as given
         self.e1 = s.axes.get(cell.gantry.axis) if cell.gantry is not None else None
         if self.e1 is None:

@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from coldspray.cell import base_world, robroot, table_axis_names
+from coldspray.cell import base_world, base_worlds, robroot, table_axis_names
 from coldspray.models import CellConfig
 from coldspray.transforms import frame
 
@@ -57,7 +57,7 @@ def layer_tilts(cell: CellConfig, gun_dir=(0.0, 0.0, -1.0), rotation_deg=0.0, st
 
 def world_poses(path, cell: CellConfig) -> np.ndarray:
     """TCP of every move end point in WORLD, with the table where that move puts it."""
-    return np.array([base_world(cell, axes) @ m.pose for m, axes in zip(path.moves, path.axis_values())])
+    return base_worlds(cell, path.axis_values()) @ np.array([m.pose for m in path.moves])
 
 
 def _spread(poses, n) -> np.ndarray:

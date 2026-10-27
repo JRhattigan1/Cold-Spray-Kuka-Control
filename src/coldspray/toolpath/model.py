@@ -46,6 +46,7 @@ class Toolpath:
     moves: list[Move] = field(default_factory=list)
     skipped_points: int = 0           # points a planner dropped (e.g. surface tilt limit)
     joint_hint: np.ndarray | None = None   # (n_moves, 6) joints to seed IK from (solver; NaN = none)
+    zigzag_regions: int = 0           # Surface regions zigzagged because no other pattern fits them
 
     def hint_for(self, move_index) -> np.ndarray | None:
         """`joint_hint` per sample (rows by move), or None if there is none or it no longer fits."""

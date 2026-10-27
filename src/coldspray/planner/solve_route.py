@@ -14,7 +14,6 @@ unchanged.
 
 from dataclasses import replace
 
-import numpy as np
 
 from coldspray.planner.solver import Context, Issue, find_issues, issues_in
 from coldspray.toolpath.model import Toolpath

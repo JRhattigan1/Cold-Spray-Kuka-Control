@@ -219,7 +219,7 @@ def plan_part(part: Part, proc: ProcessConfig, mode="layers", tilt_deg=0.0, rota
     (the spray is unchanged). With `wrist` (tool frame, see planner/gun.py) and
     a cell, the gun is first levelled - wrist above it - and `roll_deg` is the
     gun angle from there; without, `roll_deg` is added to the planner's roll."""
-    fixed = getattr(part, "fixed_in_cell", False)
+    fixed = part.fixed_in_cell
     check_placement(placed_vertices(part), substrate, mode, fixed)
     if fixed:                                   # the table stays at 0: BASE is a fixed frame in the cell
         tilt_deg = rotation_deg = 0.0
@@ -236,7 +236,7 @@ def plan_part(part: Part, proc: ProcessConfig, mode="layers", tilt_deg=0.0, rota
                      and abs(b.pose[2, 3] - a.pose[2, 3]) > 1e-9)
         return f"{coats} coat(s), {passes + coats} passes", _hold_gun(add_purge(path, cell), cell, roll_deg, wrist)
     if mode == "surface":                       # the picked faces, on any body
-        coat = getattr(part, "coat_faces", set())
+        coat = part.coat_faces
         if not coat:
             raise ValueError("Surface mode needs faces to coat: go back to the Part step and pick"
                              " them with \"Coat faces\"")
@@ -244,11 +244,11 @@ def plan_part(part: Part, proc: ProcessConfig, mode="layers", tilt_deg=0.0, rota
         table = {tilt_axis: tilt_deg, rot_axis: rotation_deg} if tt else {}
         mask = np.isin(part.face_ids, sorted(coat))
         path = plan_surface(placed_vertices(part), part.faces, mask, proc, part.name, table,
-                            coats=getattr(proc, "surface_coats", 1),
-                            max_tilt_deg=getattr(proc, "surface_max_tilt_deg", 60.0))
-        n = getattr(proc, "surface_coats", 1)
+                            coats=proc.surface_coats,
+                            max_tilt_deg=proc.surface_max_tilt_deg)
+        n = proc.surface_coats
         note = (f"; {path.zigzag_regions} region(s) wrap round, zigzagged instead"
-                if getattr(path, "zigzag_regions", 0) else "")
+                if path.zigzag_regions else "")
         return f"{len(coat)} face(s), {n} coat(s){note}", _hold_gun(add_purge(path, cell), cell, roll_deg, wrist)
     # Layers grow away from the start face, or up from the bottom of the build
     # body (on the plate, or on the component a repair patch sits on)

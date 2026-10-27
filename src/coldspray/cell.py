@@ -71,6 +71,18 @@ def base_world(cell: CellConfig, ext: dict | None = None) -> np.ndarray:
     return turntable_motion(cell, ext)[1] @ frame(**cell.base.model_dump())
 
 
+def base_worlds(cell: CellConfig, axes_list) -> np.ndarray:
+    """base_world for every axes dict in `axes_list`: (n, 4, 4). Computed once per
+    distinct table position (a job's table rarely moves); other axes (E1) don't matter."""
+    cache, out = {}, np.empty((len(axes_list), 4, 4))
+    for i, axes in enumerate(axes_list):
+        key = turntable_axes(cell, axes)
+        if key not in cache:
+            cache[key] = base_world(cell, axes)
+        out[i] = cache[key]
+    return out
+
+
 def base_in_robot(cell: CellConfig, ext: dict | None = None, e1: float | None = None) -> np.ndarray:
     return np.linalg.inv(robroot(cell, e1)) @ base_world(cell, ext)
 
