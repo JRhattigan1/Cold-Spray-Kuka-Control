@@ -105,9 +105,13 @@ class ToolpathStep:
         return inner
 
     def _mode_changed(self):
-        revolve = self.mode.currentData() == "revolve"
-        self.coats.setEnabled(revolve)
+        mode = self.mode.currentData()
+        revolve = mode == "revolve"
+        self.coats.setEnabled(revolve)          # surface coats come from the process (surface_coats)
         self.rotation.setEnabled(not revolve)
+        part = getattr(self, "part", None)
+        if mode == "surface" and part is not None and not getattr(part, "coat_faces", None):
+            self._status("Surface mode: pick the faces to coat in the Part step first")
         self._show_placement()
         self._enter_setup()
 
