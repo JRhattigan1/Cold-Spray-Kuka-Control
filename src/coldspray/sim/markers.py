@@ -11,6 +11,7 @@ import pyvista as pv
 from coldspray.toolpath.model import spray_frame
 
 GHOST = "#7e57c2"
+ACCENT = "#ff8a1f"   # orange accent (never blue)
 
 # spray direction presets for the purge point, WORLD; "down-angled" is 30° below horizontal into -Y
 DIRECTION_PRESETS = {
@@ -49,8 +50,13 @@ class GunMarker:
         nozzle = pv.Cylinder(center=(-length * 0.25, 0, 0), direction=(1, 0, 0), radius=12, height=length * 0.5)
         body = pv.Cylinder(center=(-length * 0.75, 0, 0), direction=(1, 0, 0), radius=45, height=length * 0.5)
         arrow = pv.Arrow(start=(0, 0, 0), direction=(1, 0, 0), scale=length * 0.6)
-        self.actors = [pl.add_mesh(m, color=c, opacity=o, smooth_shading=True)
-                       for m, c, o in ((body, color, 0.35), (nozzle, color, 0.5), (arrow, "#1a73e8", 0.8))]
+        glass = dict(opacity=0.35, smooth_shading=True, specular=0.9, specular_power=40, ambient=0.25)
+        self.actors = [pl.add_mesh(m, color=color, **glass) for m in (body, nozzle)]
+        # orange silhouette: slightly inflated back-face shell gives a rim on the glass
+        self.actors += [pl.add_mesh(m, color=ACCENT, opacity=0.55, style="wireframe", line_width=1.0)
+                        for m in (body.extract_feature_edges(), nozzle.extract_feature_edges())]
+        self.actors.append(pl.add_mesh(arrow, color=ACCENT, opacity=0.8, smooth_shading=True,
+                                       specular=0.9, specular_power=40))
         self.pose = np.eye(4)
 
     def set_pose(self, pose):
@@ -68,5 +74,5 @@ class GunMarker:
 
     def set_color(self, color):
         """Tint the gun (e.g. red when the robot can't reach the pose)."""
-        for a in self.actors[:2]:
+        for a in self.actors[:2]:   # glass bodies only; the orange rim stays
             a.prop.color = color
