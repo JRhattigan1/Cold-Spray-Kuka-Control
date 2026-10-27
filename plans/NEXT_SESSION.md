@@ -6,7 +6,7 @@
 - **`main`:** every feature package is merged: constraints, patterns, contour tilt, Surface mode, purge, Simple/Advanced, turning points off the part, and the solver. Nothing is pushed.
 - **Tests:** the last full suite passed 474 plus 3 xfails, before the session-3 work below. A fast run after S5 passed 495. Since then only the affected tests have run: jump height, Surface regions, test parts. **Run the full suite first.**
 - **Not merged:**
-  - `wp/P8`: Surface turn clearance. It works, but planning a tube with every side face selected went from 6.5 s to 31 s. It needs a coarse pre-check before merging.
+  - `wp/P8`: Surface turn clearance. It works, but planning a tube with every side face selected went from 6.5 s to 31 s. **It also clashes with `a8cfe48`:** Surface turns now lift by jump height, at 0 not at all, as the user asked. Rework it so it only raises turns that are actually too close, and leaves jump height 0 alone, or drop it and let the solver's reroute lever handle colliding turns.
   - `wp/E2p`: Simple/Advanced for the Part step. Its new test `tests/test_part_mode.py` **hangs** on the first test. Stubbing `_refresh_steps` didn't fix it.
 - **Obsolete branches:** `wp/WP0-wip` and `wp/M2-fix` (report only).
 - **Housekeeping:** about 45 old worktrees are in `C:\Users\qrb21117\worktrees\`. Remove them with `git worktree remove`; stuck `.git\worktrees\<name>` folders clear with PowerShell `Remove-Item -Recurse -Force`.
