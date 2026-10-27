@@ -71,3 +71,22 @@ def test_zero_tilt_unchanged():
     b = plan_layers([_layer(block_with_hole())], zero)
     assert len(a.moves) == len(b.moves)
     assert all(np.array_equal(m.pose, n.pose) for m, n in zip(a.moves, b.moves))
+
+
+def test_block_tilted_contours_reachable(proc):
+    """Acceptance: test_block at 20 deg, contour poses 20 +- 0.5 deg from the table
+    normal (the plan is in BASE, possibly with a tilted table: compare to infill),
+    and auto-position still reaches the whole path."""
+    from coldspray.kinematics.robot import Robot
+    from coldspray.models import load_cell, load_robot, load_tool
+    from coldspray.pipeline import load_part, plan_part
+    from coldspray.planner.position import auto_position, layer_tilts
+    cell = load_cell()
+    part = load_part("test_block")
+    plan = lambda tilt: plan_part(part, proc, "layers", tilt_deg=tilt, cell=cell)[1]
+    path = plan(0.0)
+    vertical = next(m.pose[:3, 0] for m in path.moves if m.tag == "infill")
+    angles = [np.degrees(np.arccos(np.clip(m.pose[:3, 0] @ vertical, -1, 1))) for m in path.moves if m.tag == "contour"]
+    assert angles and np.allclose(angles, TILT, atol=0.5)
+    pos = auto_position(plan, Robot(load_robot(), load_tool()), cell, layer_tilts(cell), log=lambda _: None)
+    assert pos.reach == pytest.approx(1.0)
