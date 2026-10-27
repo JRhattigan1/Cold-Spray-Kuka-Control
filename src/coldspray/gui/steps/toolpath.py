@@ -228,6 +228,10 @@ class StatTiles(QWidget):
     def text(self):
         return self._text
 
+    def clear(self):
+        """As QLabel.clear: nothing to show (a new part or setup)."""
+        self.setText("")
+
     def setText(self, text: str):
         import re
         self._text = text
