@@ -37,6 +37,7 @@ PART = "#4f6d7a"
 FIXTURE = "#8d8f7a"        # other bodies of the part's assembly (component, clamps)
 SUBSTRATE = "#b0bec5"
 BUILD_FACE = "#2bb673"
+CONSTRAINT_FACE = "#8e24aa"  # part faces of the selected constraint row
 OUT_OF_DATE = "#e37400"
 STEEP = "#f2b600"          # gun pointing further down than allowed
 # Point markers on the toolpath, each can be hidden: kind -> (colour, point size)
@@ -111,6 +112,8 @@ class Scene:
         self._widget_on = False
         self._constrained = False
         self.on_part_moved = None        # callback(placement, final) while / after dragging
+        self.part_mesh = None            # the part's PolyData ("build" cell scalars; 2 = constraint face)
+        self._face_pick = None           # (callback, on_cancel, observer ids) while picking part faces
 
         pl.set_background("white")
         pl.enable_anti_aliasing("msaa")   # not ssaa: its render pass breaks the hardware picker the drag handles use
@@ -269,6 +272,8 @@ class Scene:
         """Part to set up (a coldspray.cad.part.Part, or None): drawn in part-CAD
         coordinates at part.placement, with drag handles in setup mode."""
         self._remove_widget()
+        self.cancel_face_pick()
+        self.part_mesh = None
         for a in (self.part_actor, self.face_actor):
             if a is not None:
                 self.pl.remove_actor(a)
@@ -276,8 +281,9 @@ class Scene:
         if part is not None:
             mesh = _polydata(part.vertices, part.faces)
             mesh.cell_data["build"] = part.in_build().astype(float)
-            self.part_actor = self.pl.add_mesh(mesh, scalars="build", cmap=[FIXTURE, PART], clim=(0, 1),
-                                               n_colors=2, show_scalar_bar=False)
+            self.part_mesh = mesh
+            self.part_actor = self.pl.add_mesh(mesh, scalars="build", cmap=[FIXTURE, PART, CONSTRAINT_FACE],
+                                               clim=(0, 2), n_colors=3, show_scalar_bar=False)
             self.part_actor.SetVisibility(self.mode == "setup")
             self.set_part_placement()
             if self.mode == "setup":
@@ -329,6 +335,70 @@ class Scene:
         self.face_actor.SetVisibility(self.mode == "setup")
         self.face_actor.user_matrix = self.setup_frame @ self.part.placement
         self._apply_section()
+
+    def highlight_part_faces(self, face_ids):
+        """Colour CAD faces `face_ids` (the selected constraint row's faces; empty: none) on the part."""
+        if self.part_mesh is None:
+            return
+        build = self.part.in_build().astype(float)
+        ids = [int(i) for i in face_ids or ()]
+        if ids:
+            build[np.isin(self.part.face_ids, ids)] = 2.0
+        self.part_mesh.cell_data["build"] = build
+        self.part_mesh.Modified()
+
+    def start_face_pick(self, callback, on_cancel=None) -> bool:
+        """Part-face pick mode: each left click on the part calls `callback(face_id)` (CAD face id) until
+        `cancel_face_pick`; Esc in the view cancels (and calls `on_cancel`). Clicks beside the part still turn
+        the view. False if there is no part or interactor."""
+        self.cancel_face_pick()
+        iren = getattr(self.pl, "iren", None)
+        if self.part_actor is None or iren is None:
+            return False
+        obs = (iren.add_observer("LeftButtonPressEvent", self._face_click),
+               iren.add_observer("KeyPressEvent", self._face_key))
+        self._face_pick = (callback, on_cancel, obs)
+        return True
+
+    def cancel_face_pick(self, notify=False):
+        """Leave part-face pick mode (`notify`: call its on_cancel)."""
+        pick, self._face_pick = getattr(self, "_face_pick", None), None
+        if pick is None:
+            return
+        for o in pick[2]:
+            self.pl.iren.remove_observer(o)
+        if notify and pick[1] is not None:
+            pick[1]()
+
+    def picking_faces(self) -> bool:
+        return getattr(self, "_face_pick", None) is not None
+
+    def pick_part_face(self, x, y) -> int | None:
+        """CAD face id of the part under display point (x, y), else None."""
+        if self.part_actor is None or not self.part_actor.GetVisibility():
+            return None
+        from vtkmodules.vtkRenderingCore import vtkCellPicker
+        picker = vtkCellPicker()
+        picker.SetTolerance(0.0005)
+        picker.PickFromListOn()
+        picker.AddPickList(self.part_actor)
+        if picker.Pick(x, y, 0, self.pl.renderer) and picker.GetCellId() >= 0:
+            return int(self.part.face_ids[picker.GetCellId()])
+        return None
+
+    def report_face(self, face_id: int):
+        """A part face was picked (from a click, or directly in tests)."""
+        if self._face_pick is not None:
+            self._face_pick[0](int(face_id))
+
+    def _face_click(self, iren, _event):
+        face = self.pick_part_face(*iren.GetEventPosition())
+        if face is not None:
+            self.report_face(face)
+
+    def _face_key(self, iren, _event):
+        if iren.GetKeySym() == "Escape":
+            self.cancel_face_pick(notify=True)
 
     def set_constrained(self, on: bool):
         """Build face on the plate: only offer the XY arrows and the yaw ring."""
