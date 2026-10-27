@@ -1,5 +1,18 @@
 # Optimisation plan (2026-10-27)
 
+## Status (end of session 4)
+All of this is on `surface-patterns`, and the full suite passes.
+
+| Step | Status |
+|---|---|
+| 2. Per-move overhead | **Done.** Each change was verified identical to the old code: <ul><li>gun hold 12.8 → 0.8 s (WearPlate2);</li><li>sampling 17.5 → 0.4 s (test_tube);</li><li>IK with frames 24 → 3.3 s (WearPlate2);</li><li>collision check 3.25 → 1.65 s (test_block; the rest is FCL).</li></ul> |
+| 1. Arcs and merged LINs | **Partial on `wp/O5`, not merged.** Simplify, CIRC sampling and KRL `CIRC` work; test_tube Surface goes from 40,893 to 1,581 moves. The checklist is in `reports/O5-1.md`. |
+| 3. Keep the window responsive | **Mostly done.** <ul><li>Generate and Auto position run on a worker thread with Cancel.</li><li>Plan cache.</li><li>Not done: reach IK in `set_path` still runs on the GUI thread, and the collision checker isn't built in the background.</li></ul> |
+| 4. Smarter checking | Not started. Only needed if it's still slow. |
+| 5. Purge suggestion | **Done:** a "Suggest purge point" button. |
+
+The measurements and the plan as written follow.
+
 These numbers were measured on WearPlate2 (`Downloads/WearPlate2.stp`) in Surface mode, with the 17 faces round the top, the angled face and the blends selected. The run had the full test suite going at the same time, so the absolute times are high. The proportions are reliable. The profiling script is `profile_run.py` in the session scratchpad; it can be rebuilt from this table.
 
 | Stage | Time | Where it goes |
