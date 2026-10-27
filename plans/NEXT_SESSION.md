@@ -25,7 +25,11 @@
   - **O2:** sampling, 17.5 s → 0.4 s.
     - I checked it against the old code on six part/mode cases: identical.
   - **O8:** constraint faces are picked in the 3D view (user request).
-- **Running:** O5. The full suite on the merged branch had been started.
+- **Full suite on the merged branch:** 619 passed, 3 xfailed, in 5 minutes.
+- **O5 (arcs and merged LINs):** stopped partway at the user's request. The work in progress is committed on `wp/O5` (`9077170`) and is not merged.
+  - It works: simplify, CIRC sampling and KRL CIRC output.
+  - Moves: test_tube Surface 40,893 → 1,581.
+  - Left: the regression hashes, one Surface test assumption, simplify tests, solver/`aux` handling and a T1 check. The checklist is in its report `plans/reports/O5-1.md`.
 
 ## Session 4 (2026-10-27): branch `surface-patterns`, not merged
 Two features, committed together on `surface-patterns` (from `main` at `3324d09`).
