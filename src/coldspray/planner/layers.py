@@ -10,7 +10,8 @@ Neighbouring strokes (gap up to 1.5 x step-over) are joined at spray height.
 Longer gaps are "jumps": the gun lifts by `jump_height_mm` and moves at rapid
 speed, so little powder deposits on the way across holes or between islands.
 
-v1 limitation: the gun always points straight down.
+The gun points straight down, except contour passes with `contour_tilt_deg > 0`
+(see contour_tilt.py).
 """
 
 import numpy as np
@@ -19,6 +20,7 @@ from shapely.geometry import LineString, MultiPolygon, Polygon
 
 from coldspray.cad.slicer import Layer
 from coldspray.models import ProcessConfig
+from coldspray.planner.contour_tilt import tilted_ring_poses
 from coldspray.toolpath.model import Move, Toolpath, spray_frame
 
 DOWN = (0.0, 0.0, -1.0)
@@ -92,24 +94,37 @@ def plan_layers(layers: list[Layer], proc: ProcessConfig, name="part", table_axe
         strokes += _order(raster_segments(infill_area, proc.step_over_mm, angle), start)
         if not strokes:
             continue
+        tilted = {}                                             # stroke index -> poses at height z
+        if getattr(proc, "contour_tilt_deg", 0) > 0:
+            for k in range(n_contour):
+                strokes[k], tilted[k] = tilted_ring_poses(strokes[k], layer.region, layer.z_bottom, proc,
+                                                          proc.contour_tilt_deg)
+
+        def pose(k, i, h):
+            if k not in tilted:
+                return at(strokes[k][i], h)
+            t = tilted[k][i].copy()
+            t[2, 3] += h - z
+            return t
 
         first = strokes[0][0]
         kind = "PTP" if not path.moves else "LIN"
-        path.moves.append(Move(at(first, z + proc.approach_height_mm), proc.rapid_speed_mm_s, kind=kind,
+        path.moves.append(Move(pose(0, 0, z + proc.approach_height_mm), proc.rapid_speed_mm_s, kind=kind,
                                axes=dict(table_axes or {}) if kind == "PTP" else {}, tag="approach"))
-        path.moves.append(Move(at(first, z), proc.rapid_speed_mm_s, tag="approach"))
+        path.moves.append(Move(pose(0, 0, z), proc.rapid_speed_mm_s, tag="approach"))
+        here, last_ki = first, (0, 0)                           # aim point of the last move
         for k, stroke in enumerate(strokes):
-            here = path.moves[-1].pose[:2, 3]
             if np.linalg.norm(stroke[0] - here) > 1.5 * proc.step_over_mm:
                 up = z + proc.jump_height_mm
-                for p, h in ((here, up), (stroke[0], up), (stroke[0], z)):
-                    path.moves.append(Move(at(p, h), proc.rapid_speed_mm_s, gun_on=True, tag="jump"))
+                for ki, h in ((last_ki, up), ((k, 0), up), ((k, 0), z)):
+                    path.moves.append(Move(pose(*ki, h), proc.rapid_speed_mm_s, gun_on=True, tag="jump"))
+                here, last_ki = stroke[0], (k, 0)
             tag = "contour" if k < n_contour else "infill"
             for i, p in enumerate(stroke):
-                if np.allclose(path.moves[-1].pose[:2, 3], p):
+                if np.allclose(here, p):
                     continue                                    # the join to a stroke's start is a turn
-                path.moves.append(Move(at(p, z), proc.traverse_speed_mm_s, gun_on=True,
+                path.moves.append(Move(pose(k, i, z), proc.traverse_speed_mm_s, gun_on=True,
                                        tag="turn" if i == 0 else tag))
-        last = strokes[-1][-1]
-        path.moves.append(Move(at(last, z + proc.approach_height_mm), proc.rapid_speed_mm_s, tag="approach"))
+                here, last_ki = p, (k, i)
+        path.moves.append(Move(pose(len(strokes) - 1, -1, z + proc.approach_height_mm), proc.rapid_speed_mm_s, tag="approach"))
     return path

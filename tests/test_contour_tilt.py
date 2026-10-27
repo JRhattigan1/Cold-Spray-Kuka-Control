@@ -1,0 +1,73 @@
+import numpy as np
+import pytest
+from shapely.geometry import Point, box
+
+from coldspray.models import load_process
+from coldspray.planner.contour_tilt import densify_corners, outward_normals, tilted_ring_poses
+from coldspray.planner.layers import contour_loops, plan_layers
+from coldspray.cad.slicer import Layer
+
+TILT = 20.0
+
+
+@pytest.fixture
+def proc():
+    return load_process().model_copy(update={"contour_tilt_deg": TILT})
+
+
+def block_with_hole():
+    return box(0, 0, 40, 30).difference(Point(20, 15).buffer(5, 64))
+
+
+def _layer(region):
+    return Layer(0, 10.0, 10.5, region)
+
+
+def test_densify_adds_points_near_corners():
+    ring = np.array([[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]], float)
+    out = densify_corners(ring, 2.0)
+    assert len(out) == 13 and np.allclose(out[1], [1, 0])
+
+
+def test_normals_point_away_from_material(proc):
+    region = block_with_hole()
+    for ring in contour_loops(region, proc):
+        n = outward_normals(densify_corners(ring, proc.track_width_mm), region, proc.track_width_mm)
+        pts = densify_corners(ring, proc.track_width_mm)
+        assert np.allclose(np.linalg.norm(n, axis=1), 1)
+        edge = region.boundary
+        assert all(edge.distance(Point(p + 0.5 * ni)) < edge.distance(Point(p)) for p, ni in zip(pts, n))
+
+
+def test_poses_tilt_and_standoff(proc):
+    region = block_with_hole()
+    for ring in contour_loops(region, proc):
+        pts, poses = tilted_ring_poses(ring, region, 10.0, proc, TILT)
+        for p, T in zip(pts, poses):
+            x = T[:3, 0]
+            assert np.degrees(np.arccos(-x[2])) == pytest.approx(TILT, abs=0.5)
+            aim = T[:3, 3] + proc.standoff_mm * x
+            assert np.allclose(aim, [p[0], p[1], 10.0])
+            # leans outward: the spray's horizontal part moves towards the nearest edge
+            h = x[:2] / np.linalg.norm(x[:2])
+            assert region.boundary.distance(Point(p + h)) < region.boundary.distance(Point(p))
+
+
+def test_plan_layers_contour_tilted_infill_vertical(proc):
+    path = plan_layers([_layer(block_with_hole())], proc)
+    contour = [m for m in path.moves if m.tag == "contour"]
+    infill = [m for m in path.moves if m.tag == "infill"]
+    assert contour and infill
+    for m in contour:
+        assert np.degrees(np.arccos(-m.pose[2, 0])) == pytest.approx(TILT, abs=0.5)
+    for m in infill:
+        assert m.pose[2, 0] == pytest.approx(-1)
+
+
+def test_zero_tilt_unchanged():
+    base = load_process()
+    zero = base.model_copy(update={"contour_tilt_deg": 0.0})
+    a = plan_layers([_layer(block_with_hole())], base)
+    b = plan_layers([_layer(block_with_hole())], zero)
+    assert len(a.moves) == len(b.moves)
+    assert all(np.array_equal(m.pose, n.pose) for m, n in zip(a.moves, b.moves))
