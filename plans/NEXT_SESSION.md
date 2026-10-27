@@ -13,6 +13,19 @@
 - **Reports:** `plans/reports/O<n>-1.md` on each branch.
 - **Merging:** merge into `surface-patterns` with `--no-ff`, then run the full suite.
 - **Wave 2:** O5, arcs (`CIRC`) and merged LINs (Opus). It runs after O2, because both change `Toolpath.sample`.
+- **Merged into `surface-patterns`:** all verified to give identical output.
+  - **O7:** purge suggestion.
+  - **O1:** `level_gun`, 12.8 s → 0.8 s.
+  - **O3:** IK, 24 s → 3.3 s.
+  - **O4:** collision, 3.25 s → 1.65 s on test_block.
+    - `test_job_progress`'s fake checker was fixed for O4.
+  - **O6:** worker threads and a plan cache.
+    - Tests call `plan_jobs.wait(win)`.
+    - Not done: a background CollisionChecker, and reach IK still runs on the GUI thread in `set_path`.
+  - **O2:** sampling, 17.5 s → 0.4 s.
+    - I checked it against the old code on six part/mode cases: identical.
+  - **O8:** constraint faces are picked in the 3D view (user request).
+- **Running:** O5. The full suite on the merged branch had been started.
 
 ## Session 4 (2026-10-27): branch `surface-patterns`, not merged
 Two features, committed together on `surface-patterns` (from `main` at `3324d09`).
