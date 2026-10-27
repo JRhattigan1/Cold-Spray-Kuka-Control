@@ -13,6 +13,7 @@ from coldspray.cad.part import (
     snap_face_down,
 )
 from coldspray.cell import robroot
+from coldspray.gui.constraints_panel import ConstraintsPanel
 from coldspray.gui.stepper import TOOLPATH
 from coldspray.gui.widgets import Section, primary_button, spin, wrap_label
 from coldspray.pipeline import check_placement, plan_part
@@ -80,6 +81,9 @@ class PositionStep:
         self.sm_part.setVisible(False)
         place_box.add(self.sm_part)
         layout.addWidget(place_box)
+        self.constraints = ConstraintsPanel()
+        self.constraints.changed.connect(lambda: self.part is not None and self._set_placement(self.part.placement))
+        layout.addWidget(self.constraints)
 
         sub_box = self.sub_section = Section("Substrate plate")
         self.sub_check = QCheckBox("Build on a substrate plate")
@@ -162,6 +166,7 @@ class PositionStep:
         self.part = src.without(ignored)
         self.part.placement = self._start_placement(self.part)
         self.cell_key = key
+        self.constraints.set_part(self.part, self.substrate)
         has_base = self.part.base_face is not None
         self.keep_on_plate.blockSignals(True)
         self.keep_on_plate.setChecked(has_base)
@@ -263,6 +268,7 @@ class PositionStep:
             return
         placement = np.asarray(placement, float)
         self.part.placement = constrain(self.part, placement, self._floor()) if self._kept() else placement
+        self.part.placement = self.constraints.apply(self.part.placement)
         if redraw:
             self.scene.set_part_placement()
         self._show_placement()
@@ -323,6 +329,7 @@ class PositionStep:
         self.substrate = (Substrate(**{k: box.value() for k, box in self.sub_fields.items()})
                           if self.sub_check.isChecked() else None)
         self._substrate_ui()
+        self.constraints.substrate = self.substrate
         if self.scene:
             self.scene.set_substrate(self._substrate_mesh())
         if self.part is not None:
@@ -353,6 +360,7 @@ class PositionStep:
         step[:3, 3] = centre - rot @ centre + to_base @ move
         placement = step @ self.part.placement
         self.part.placement = constrain(self.part, placement, self._floor()) if self._kept() else placement
+        self.part.placement = self.constraints.apply(self.part.placement)
         self.scene.set_part_placement()
         self._show_placement()
         self.sm_moved_part = True
