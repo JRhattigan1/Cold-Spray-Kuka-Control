@@ -2,6 +2,8 @@
 
 Each row is: type, part face (a flat face, a cylinder axis or the part-CAD Z axis), reference (faceplate,
 substrate, datum planes, table axis), value (distance mm / angle deg), suppress, delete and a status icon.
+`centre_between` rows have a second part face (the reference plane lies midway between the two faces);
+`fix` rows have no faces: they lock the pose captured when the row is added (or "Lock" is clicked).
 `apply(placement)` solves the active rows starting from `placement` and returns the solved placement; the
 header chip shows the degrees of freedom left.
 """
@@ -13,7 +15,7 @@ from PySide6.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QLabel, QMenu, 
 from coldspray.cad.constraints import TOL, Axis, Constraint, reference, solve
 from coldspray.gui.widgets import Section, spin
 
-TYPES = ("touch", "align", "distance", "parallel", "perpendicular", "angle", "centre")
+TYPES = ("touch", "align", "distance", "parallel", "perpendicular", "angle", "centre", "centre_between", "fix")
 REFERENCES = ("faceplate", "substrate", "datum:XY", "datum:XZ", "datum:YZ", "table_axis")
 PART_AXIS = "axis:Z"   # the part-CAD Z axis (until a cylinder face is picked)
 
@@ -21,8 +23,10 @@ PART_AXIS = "axis:Z"   # the part-CAD Z axis (until a cylinder face is picked)
 class ConstraintRow(QWidget):
     changed = Signal()
 
-    def __init__(self, kind: str, faces: list, face: str | None = None, ref: str = "faceplate", value: float = 0.0):
+    def __init__(self, kind: str, faces: list, face: str | None = None, ref: str = "faceplate", value: float = 0.0,
+                 face2: str | None = None, pose_source=None):
         super().__init__()
+        self.pose_source, self.pose = pose_source, None
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         self.status = QLabel("•")
@@ -35,6 +39,15 @@ class ConstraintRow(QWidget):
             self.face.addItem(name)
         if face is not None:
             self.face.setCurrentText(face)
+        self.face2 = QComboBox()
+        self.face2.setToolTip("Second part face (centred between the two)")
+        self.face2.addItems(faces)
+        if face2 is not None:
+            self.face2.setCurrentText(face2)
+        self.lock = QToolButton()
+        self.lock.setText("Lock")
+        self.lock.setToolTip("Lock the part at its current pose")
+        self.lock.clicked.connect(self._lock)
         self.ref = QComboBox()
         self.ref.setToolTip("Cell reference")
         self.ref.addItems(REFERENCES)
@@ -45,19 +58,44 @@ class ConstraintRow(QWidget):
         self.delete = QToolButton()
         self.delete.setText("✕")
         self.delete.setToolTip("Delete this constraint")
-        for w in (self.status, self.kind, self.face, self.ref, self.value, self.suppress, self.delete):
+        for w in (self.status, self.kind, self.face, self.face2, self.ref, self.value, self.lock, self.suppress,
+                  self.delete):
             lay.addWidget(w)
-        for sig in (self.kind.currentIndexChanged, self.face.currentIndexChanged, self.ref.currentIndexChanged,
-                    self.value.valueChanged, self.suppress.toggled):
+        self.kind.currentIndexChanged.connect(self._kind_changed)
+        for sig in (self.kind.currentIndexChanged, self.face.currentIndexChanged, self.face2.currentIndexChanged,
+                    self.ref.currentIndexChanged, self.value.valueChanged, self.suppress.toggled):
             sig.connect(self.changed)
+        self._kind_changed()
+
+    def _kind_changed(self):
+        kind = self.kind.currentText()
+        fix = kind == "fix"
+        for w in (self.face, self.ref, self.value):
+            w.setVisible(not fix)
+        self.lock.setVisible(fix)
+        self.face2.setVisible(kind == "centre_between")
+        if fix and self.pose is None:
+            self._lock(emit=False)
+
+    def _lock(self, emit=True):
+        """Capture the current pose (from `pose_source`) as the fix target."""
+        if self.pose_source is not None:
+            pose = self.pose_source()
+            self.pose = None if pose is None else np.array(pose, float)
+        if emit:
+            self.changed.emit()
 
     def constraint(self, part, substrate) -> Constraint:
         kind, value = self.kind.currentText(), self.value.value()
+        if kind == "fix":
+            pose = self.pose if self.pose is not None else part.placement
+            return Constraint("fix", pose=np.array(pose, float), suppressed=self.suppress.isChecked())
         face = self.face.currentText()
         a = Axis((0, 0, 0), (0, 0, 1), moving=True) if face == PART_AXIS else reference(face, part, substrate)
         offset = 0.0 if kind in ("distance", "angle") else value
         b = reference(self.ref.currentText(), part, substrate, offset)
-        return Constraint(kind, a, b, value, suppressed=self.suppress.isChecked())
+        c = reference(self.face2.currentText(), part, substrate) if kind == "centre_between" else None
+        return Constraint(kind, a, b, value, c=c, suppressed=self.suppress.isChecked())
 
     def set_status(self, residual: float | None):
         if residual is None:
@@ -101,11 +139,14 @@ class ConstraintsPanel(Section):
         cyl = getattr(self.part, "cylinders", {}) or {}
         return [f"face:{i}" for i in self.part.planar] + [f"face:{i}" for i in cyl] + [PART_AXIS]
 
-    def add(self, kind: str, face: str | None = None, ref: str = "faceplate", value: float = 0.0) -> ConstraintRow:
-        """Add a row. `face` defaults to the part's base face (or the first face)."""
+    def add(self, kind: str, face: str | None = None, ref: str = "faceplate", value: float = 0.0,
+            face2: str | None = None) -> ConstraintRow:
+        """Add a row. `face` defaults to the part's base face (or the first face); `face2` is the second face of a
+        centre_between row. A fix row locks the part's current placement."""
         if face is None and self.part is not None and self.part.base_face is not None:
             face = f"face:{self.part.base_face}"
-        row = ConstraintRow(kind, self.faces(), face, ref, value)
+        row = ConstraintRow(kind, self.faces(), face, ref, value, face2,
+                            pose_source=lambda: None if self.part is None else self.part.placement)
         row.changed.connect(self.changed)
         row.delete.clicked.connect(lambda: self.remove(row))
         self.rows.append(row)
