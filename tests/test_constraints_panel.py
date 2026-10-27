@@ -68,3 +68,39 @@ def test_conflict_marks_rows(panel):
     p.apply(tube.placement)
     assert p.result.status != "ok" and p.chip.text() == "conflict"
     assert any(r.status.text() == "✗" for r in p.rows)
+
+
+def test_centre_between_row(app):
+    repair = load_part("test_repair")
+    p = ConstraintsPanel()
+    p.set_part(repair, Substrate())
+    ids = [i for i, f in repair.planar.items() if abs(f.normal[0]) > 0.99]
+    lo = min(ids, key=lambda i: repair.planar[i].point[0])
+    hi = max(ids, key=lambda i: repair.planar[i].point[0])
+    row = p.add("centre_between", f"face:{lo}", "datum:YZ", face2=f"face:{hi}")
+    assert row.face2.isVisibleTo(row) and row.face2.currentText() == f"face:{hi}"
+    t = p.apply(repair.placement @ frame(17, 0, 0, 0, 0, 0))
+    assert p.result.status == "ok" and row.status.text() == "✓"
+    xl = (t @ np.append(repair.planar[lo].point, 1))[0]
+    xr = (t @ np.append(repair.planar[hi].point, 1))[0]
+    assert (xl + xr) / 2 == pytest.approx(0, abs=1e-5)
+
+
+def test_fix_row_locks_current_pose(panel):
+    p, tube = panel
+    here = tube.placement @ frame(5, 5, 5, 0, 0, 10)
+    tube.placement = here
+    row = p.add("fix")
+    assert not row.face.isVisibleTo(row) and not row.ref.isVisibleTo(row)
+    t = p.apply(tube.placement @ frame(30, -20, 40, 0, 10, 5))
+    assert np.allclose(t, here, atol=1e-5)
+    assert p.result.dof_left == 0 and p.chip.text() == "0 DOF free"
+    tube.placement = here @ frame(1, 0, 0, 0, 0, 0)
+    row.lock.click()
+    assert np.allclose(p.apply(here), tube.placement, atol=1e-5)
+
+
+def test_menu_has_new_rows(panel):
+    p, _ = panel
+    names = [a.text() for a in p.add_btn.menu().actions()]
+    assert "centre_between" in names and "fix" in names
