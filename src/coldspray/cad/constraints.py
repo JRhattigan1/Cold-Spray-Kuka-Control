@@ -238,10 +238,20 @@ def solve(placement, constraints, pivot=None, tol=TOL) -> SolveResult:
         t = _pose(x, start, pivot)
         return np.concatenate([_residual(k, t) for k in active]) if active else np.zeros(0)
 
+    def run(x0):
+        return least_squares(lambda x: np.concatenate([cons(x), _REG * x]), x0, method="lm", xtol=1e-12,
+                             ftol=1e-12, gtol=1e-12).x
+
     x = np.zeros(6)
     if active:
-        x = least_squares(lambda x: np.concatenate([cons(x), _REG * x]), x, method="lm", xtol=1e-12,
-                          ftol=1e-12, gtol=1e-12).x
+        x = run(x)
+        # a face pointing exactly the wrong way (180 deg) is a stationary point
+        # of the normal residual: retry from half-turns and keep the best
+        if np.abs(cons(x)).max() > tol:
+            for ax in np.eye(3):
+                y = run(np.concatenate([ax * np.pi * _SCALE, np.zeros(3)]))
+                if np.linalg.norm(cons(y)) < np.linalg.norm(cons(x)):
+                    x = y
     t = _pose(x, start, pivot)
     residuals = [0.0 if k.suppressed else float(np.linalg.norm(_residual(k, t))) for k in constraints]
     rank = _rank(_jacobian(cons, x)) if active else 0
