@@ -28,10 +28,16 @@ DOWN = (0.0, 0.0, -1.0)
 ALONG_X = (1.0, 0.0, 0.0)
 
 
-def plan_layers(layers: list[Layer], proc: ProcessConfig, name="part", table_axes: dict | None = None) -> Toolpath:
+def plan_layers(layers: list[Layer], proc: ProcessConfig, name="part", table_axes: dict | None = None,
+                to_base: np.ndarray | None = None) -> Toolpath:
     """`table_axes` fixes the turntable for the whole program, e.g. {"E2": 30, "E5": 0};
-    the gun then sprays along the (tilted) faceplate normal."""
+    the gun then sprays along the (tilted) faceplate normal. `to_base` (BASE <- layer
+    frame, default identity) maps the BASE turn plane of beyond_plane into the layer frame."""
     path = Toolpath(name)
+    plane = parse_plane(getattr(proc, "turn_plane", ""))
+    if plane is not None and to_base is not None:
+        r, t = np.asarray(to_base, float)[:3, :3], np.asarray(to_base, float)[:3, 3]
+        plane = (r.T @ (np.asarray(plane[0], float) - t), r.T @ np.asarray(plane[1], float))
 
     def at(xy, z):
         return spray_frame((xy[0], xy[1], z), DOWN, ALONG_X)
@@ -47,7 +53,7 @@ def plan_layers(layers: list[Layer], proc: ProcessConfig, name="part", table_axe
         extended = (getattr(proc, "turn_mode", "inside") != "inside"
                     and getattr(proc, "infill_pattern", "zigzag") in RASTER_PATTERNS)
         if extended:
-            infill = extend_strokes(infill, infill_area, proc, parse_plane(getattr(proc, "turn_plane", "")))
+            infill = extend_strokes(infill, infill_area, proc, plane, z=z)
         strokes += infill
         if not strokes:
             continue

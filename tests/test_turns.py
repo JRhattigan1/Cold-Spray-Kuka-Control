@@ -70,3 +70,29 @@ def test_plan_tags_turns_and_default_unchanged():
     assert len(plain.moves) == len(same.moves)
     _, over = plan_part(part, _proc(turn_mode="overrun", overrun_mm=5.0))
     assert sum(m.tag == "turn" for m in over.moves) > sum(m.tag == "turn" for m in plain.moves)
+
+
+def test_beyond_plane_is_in_base_when_layer_frame_differs():
+    """The turn plane is a BASE datum: with the layer frame turned 90 deg about Z
+    (layer x -> BASE y), the plane y = 60 must be crossed in BASE, not in the layer frame."""
+    from coldspray.planner.layers import plan_layers
+    part = load_part("test_block")
+    v = part.vertices - part.vertices.min(axis=0)
+    layer = slice_mesh(v, part.faces, BASE.layer_thickness_mm)[0]
+    reg = layer.region
+    assert reg.bounds[2] < 58                                # the part alone doesn't reach the plane
+    proc = _proc(turn_mode="beyond_plane", overrun_mm=2.0, turn_plane="XZ:60")
+    to_base = np.eye(4)
+    to_base[:3, :3] = [[0, -1, 0], [1, 0, 0], [0, 0, 1]]     # layer x -> BASE y
+    to_base[:3, 3] = [5.0, 0.0, 30.0]
+    path = plan_layers([layer], proc, to_base=to_base).transformed(to_base)
+    infill = reg.buffer(-proc.contour_passes * proc.step_over_mm)
+    strokes = zigzag(infill, proc, 0)
+    outer = [s for s in strokes if max(s[0][0], s[-1][0]) >= infill.bounds[2] - 1e-6]
+    assert outer
+    past = [m for m in path.moves if m.gun_on and m.pose[1, 3] >= 62 - 1e-6]
+    assert len(past) >= len(outer)                           # every outer +x end turns past y = 60 (+2)
+    assert all(m.tag == "turn" for m in past)
+    # the same plane read in the layer frame would only overrun: nothing would get past y = 62
+    wrong = plan_layers([layer], proc).transformed(to_base)
+    assert not [m for m in wrong.moves if m.gun_on and m.pose[1, 3] >= 62 - 1e-6]

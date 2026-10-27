@@ -152,6 +152,6 @@ def plan_part(part: Part, proc: ProcessConfig, mode="layers", tilt_deg=0.0, rota
     to_base = build_frame(part)
     layers = slice_mesh((v - to_base[:3, 3]) @ to_base[:3, :3], faces, proc.layer_thickness_mm)
     table = {tilt_axis: tilt_deg, rot_axis: rotation_deg} if tt else {}
-    path = plan_layers(layers, proc, part.name, table_axes=table).transformed(to_base).rolled(roll_deg)
+    path = plan_layers(layers, proc, part.name, table_axes=table, to_base=to_base).transformed(to_base).rolled(roll_deg)
     start = f" from start face {part.start_face}" if part.start_face is not None else ""
     return f"{len(layers)} layers{start}", add_purge(path, cell)
