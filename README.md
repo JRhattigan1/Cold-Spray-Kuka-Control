@@ -22,8 +22,11 @@ C:\Users\qrb21117\.venvs\coldspray\Scripts\python.exe -m coldspray.cad.step_cach
 "Next" button at the bottom of each panel moves on. A tick marks a finished
 step; an amber dot marks one that is out of date because an earlier step changed.
 **Simple | Advanced** in the header (next to the theme button) is remembered
-between runs. The switch works, but no panel controls are tied to it yet,
-so both modes show everything (in progress, see `plans/`).
+between runs. In Simple mode the Toolpath step hides the advanced process
+fields (the collapsible "Advanced" section); any advanced value that differs
+from `process.yaml` stays visible with a "changed" chip, and the section chip
+shows "N changed". Advanced mode shows every field. Other panels are not yet
+tied to the switch (see `plans/`).
 1. **Part** - open a STEP part or assembly. Give each body a role: **Build**
    (sliced and sprayed, e.g. a repair patch), **Fixture** (the component,
    clamps: collision-checked only) or **Ignore**. Hide / isolate bodies to reach
@@ -46,13 +49,15 @@ so both modes show everything (in progress, see `plans/`).
    table. Constraints (touch, distance, centre, ...) between part faces and
    these planes: solver done (`cad/constraints.py`), UI in progress, see `plans/`.
    **Warm-up / purge point**: Enabled, X/Y/Z (WORLD mm), spray direction
-   preset, dwell, at start / at end / every N layers. A ghost gun shows the
+   preset (choose "Custom" to type a dir X/Y/Z vector; it is normalised to unit
+   length), dwell, at start / at end / every N layers. A ghost gun shows the
    point; the chip says whether it is in reach at the current E1. The program
    goes PTP to the point, switches the spray **on**, dwells, then travels to
    the part **with the spray still on**, and returns there at the end. The
    spray stays on from the first purge to the last; it is switched off only
-   at the end. Values are not yet saved to `cell.yaml` from the GUI (put a
-   `purge:` block in `cell.yaml` by hand).
+   at the end. "Save to cell.yaml" writes the `purge:` block into
+   `src/coldspray/config/cell.yaml` (other lines and comments are kept; no
+   confirm dialog, the status bar shows where it was saved).
 3. **Toolpath** - strategy, process parameters, then Generate. "Save as
    default" writes the process values to `config/process.yaml`. Strategies:
    - **Layers**: contour passes then infill. `infill_pattern`: zigzag, oneway
