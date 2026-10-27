@@ -64,3 +64,27 @@ def test_pick_triangle_coat_mode():
     view.highlight_coat(set())
     assert view.coat_actor is None
     pl.close()
+
+
+def test_part_step_coat_ui():
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+    from coldspray.gui.app import MainWindow
+    w = MainWindow()
+    w._refresh_steps = lambda: None                 # no cell assets loaded off screen
+    part = w.source = load_part("test_tube")
+    w.part_view.set_part(part, ["build"])
+    w._coat_picked(0, 0)
+    assert part.coat_faces == {0} and "1 face" in w.coat_label.text()
+    w._coat_picked(3, 0)
+    w._coat_picked(3, 0)                            # a second click toggles it off
+    assert part.coat_faces == {0}
+    w._grow_coat()
+    assert part.coat_faces == {0} and w.part_view.coat_actor is not None
+    w.coat_btn.setChecked(True)
+    w.start_btn.setChecked(True)                    # picking another face kind stops coat picking
+    assert not w.coat_btn.isChecked()
+    w._cancel_pick()
+    w._set_coat(set())
+    assert w.part_view.coat_actor is None and "No coat faces" in w.coat_label.text()
+    w.close()
