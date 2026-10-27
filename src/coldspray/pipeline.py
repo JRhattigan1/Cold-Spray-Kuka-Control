@@ -95,6 +95,7 @@ def body_size(part: Part, body: int) -> float:
 MODES = {
     "layers": "Layers (build up on the substrate plate)",
     "revolve": "Revolve (coat the outside, table spinning)",
+    "surface": "Surface (coat the faces picked in the Part step)",
 }
 
 
@@ -132,6 +133,19 @@ def plan_part(part: Part, proc: ProcessConfig, mode="layers", tilt_deg=0.0, rota
         passes = sum(1 for a, b in zip(path.moves, path.moves[1:]) if b.gun_on and a.gun_on
                      and abs(b.pose[2, 3] - a.pose[2, 3]) > 1e-9)
         return f"{coats} coat(s), {passes + coats} passes", path
+    if mode == "surface":                       # the picked faces, on any body
+        coat = getattr(part, "coat_faces", set())
+        if not coat:
+            raise ValueError("Surface mode needs faces to coat: go back to the Part step and pick"
+                             " them with \"Coat faces\"")
+        from coldspray.planner.surface import plan_surface
+        table = {tilt_axis: tilt_deg, rot_axis: rotation_deg} if tt else {}
+        mask = np.isin(part.face_ids, sorted(coat))
+        path = plan_surface(placed_vertices(part), part.faces, mask, proc, part.name, table,
+                            coats=getattr(proc, "surface_coats", 1),
+                            max_tilt_deg=getattr(proc, "surface_max_tilt_deg", 60.0)).rolled(roll_deg)
+        n = getattr(proc, "surface_coats", 1)
+        return f"{len(coat)} face(s), {n} coat(s)", path
     # Layers grow away from the start face, or up from the bottom of the build
     # body (on the plate, or on the component a repair patch sits on)
     to_base = build_frame(part)
