@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 )
 
 from coldspray.cad.part import grow_tangent
-from coldspray.gui.stepper import PART, POSITION
+from coldspray.gui.stepper import PART, POSITION, TOOLPATH
 from coldspray.gui.widgets import Section, primary_button, wrap_label
 from coldspray.models import PROJECT_ROOT
 from coldspray.pipeline import load_part
@@ -271,6 +271,10 @@ class PartStep:
 
     def _set_coat(self, faces):
         self.source.coat_faces = set(faces)
+        if self.part is not None:       # already in the cell: the cell copy plans Surface mode
+            self.part.coat_faces = self.source.coat_faces & set(self.part.face_ids.tolist())
+            if self.result is not None and getattr(self, "result_mode", None) == "surface":
+                self._invalidate(TOOLPATH)
         self.part_view.highlight_coat(self.source.coat_faces)
         self._show_faces()
 
