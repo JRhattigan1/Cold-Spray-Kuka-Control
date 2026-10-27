@@ -19,6 +19,7 @@ import numpy as np
 from coldspray.cad.slicer import Layer
 from coldspray.models import ProcessConfig
 from coldspray.planner.contour_tilt import tilted_ring_poses
+from coldspray.planner.turns import RASTER_PATTERNS, extend_strokes, parse_plane
 from coldspray.planner.patterns import (  # noqa: F401  (re-exported for old imports)
     PATTERNS, SIMPLIFY_MM, _order, _polygons, contour_loops, raster_segments)
 from coldspray.toolpath.model import Move, Toolpath, spray_frame
@@ -27,10 +28,16 @@ DOWN = (0.0, 0.0, -1.0)
 ALONG_X = (1.0, 0.0, 0.0)
 
 
-def plan_layers(layers: list[Layer], proc: ProcessConfig, name="part", table_axes: dict | None = None) -> Toolpath:
+def plan_layers(layers: list[Layer], proc: ProcessConfig, name="part", table_axes: dict | None = None,
+                to_base: np.ndarray | None = None) -> Toolpath:
     """`table_axes` fixes the turntable for the whole program, e.g. {"E2": 30, "E5": 0};
-    the gun then sprays along the (tilted) faceplate normal."""
+    the gun then sprays along the (tilted) faceplate normal. `to_base` (BASE <- layer
+    frame, default identity) maps the BASE turn plane of beyond_plane into the layer frame."""
     path = Toolpath(name)
+    plane = parse_plane(getattr(proc, "turn_plane", ""))
+    if plane is not None and to_base is not None:
+        r, t = np.asarray(to_base, float)[:3, :3], np.asarray(to_base, float)[:3, 3]
+        plane = (r.T @ (np.asarray(plane[0], float) - t), r.T @ np.asarray(plane[1], float))
 
     def at(xy, z):
         return spray_frame((xy[0], xy[1], z), DOWN, ALONG_X)
@@ -42,7 +49,12 @@ def plan_layers(layers: list[Layer], proc: ProcessConfig, name="part", table_axe
         n_contour = len(strokes)
         start = strokes[0][0] if strokes else np.zeros(2)
         pattern = PATTERNS[getattr(proc, "infill_pattern", "zigzag")]
-        strokes += pattern(infill_area, proc, layer.index, start=start)
+        infill = pattern(infill_area, proc, layer.index, start=start)
+        extended = (getattr(proc, "turn_mode", "inside") != "inside"
+                    and getattr(proc, "infill_pattern", "zigzag") in RASTER_PATTERNS)
+        if extended:
+            infill = extend_strokes(infill, infill_area, proc, plane, z=z)
+        strokes += infill
         if not strokes:
             continue
         tilted = {}                                             # stroke index -> poses at height z
@@ -75,7 +87,8 @@ def plan_layers(layers: list[Layer], proc: ProcessConfig, name="part", table_axe
                 if np.allclose(here, p):
                     continue                                    # the join to a stroke's start is a turn
                 path.moves.append(Move(pose(k, i, z), proc.traverse_speed_mm_s, gun_on=True,
-                                       tag="turn" if i == 0 else tag))
+                                       tag="turn" if i == 0 or (extended and k >= n_contour
+                                                                and len(stroke) == 4 and i in (1, 3)) else tag))
                 here, last_ki = p, (k, i)
         path.moves.append(Move(pose(len(strokes) - 1, -1, z + proc.approach_height_mm), proc.rapid_speed_mm_s, tag="approach"))
     return path
