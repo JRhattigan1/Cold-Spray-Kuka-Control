@@ -39,6 +39,8 @@ SUBSTRATE = "#b0bec5"
 BUILD_FACE = "#2bb673"
 OUT_OF_DATE = "#e37400"
 STEEP = "#f2b600"          # gun pointing further down than allowed
+# Point markers on the toolpath, each can be hidden: kind -> (colour, point size)
+MARKERS = {"collision": (CRASH, 12), "unreachable": (BAD, 10), "steep": (STEEP, 7)}
 
 
 @dataclass
@@ -81,7 +83,8 @@ class Scene:
         self.pl, self.robot = pl, robot
         self.world_from_robot = np.eye(4) if world_from_robot is None else world_from_robot
         self.path_actors: list = []      # move with the faceplate
-        self.crash_actor = None
+        self.markers = dict.fromkeys(MARKERS)                 # point markers on the path, by kind
+        self.marker_shown = dict.fromkeys(MARKERS, True)      # kept when a new path is drawn
         self.n_points = 0
         self.joints = np.zeros((0, 6))
         self.reachable = np.zeros(0, bool)
@@ -406,7 +409,7 @@ class Scene:
     def _clear_path(self):
         for a in self.path_actors:
             self.pl.remove_actor(a)
-        self.path_actors, self.crash_actor = [], None
+        self.path_actors, self.markers = [], dict.fromkeys(MARKERS)
         self.line_actors = []
         self.n_points = 0
         self.n_layers = 0
@@ -461,10 +464,8 @@ class Scene:
         self.n_layers = int(self.layer_of.max()) + 1 if len(self.layer_of) else 0
         self.layer_filter = ("all", None)
         self._draw_lines()
-        if self.steep.any():
-            add(self.pl.add_points(pts[self.steep], color=STEEP, point_size=7, render_points_as_spheres=True))
-        if (~self.reachable).any():
-            add(self.pl.add_points(pts[~self.reachable], color=BAD, point_size=10, render_points_as_spheres=True))
+        self._mark("steep", pts[self.steep])
+        self._mark("unreachable", pts[~self.reachable])
         for a in self.path_actors:
             a.SetPickable(False)
         self._apply_section()
@@ -477,17 +478,30 @@ class Scene:
         if self.mode != "preview":
             return
         self.collisions = {h.sample: h.pairs for h in hits}
-        if self.crash_actor is not None:
-            self.pl.remove_actor(self.crash_actor)
-            self.path_actors.remove(self.crash_actor)
-            self.crash_actor = None
-        if hits:
-            pts = self.samples.poses[[h.sample for h in hits], :3, 3]
-            self.crash_actor = self.pl.add_points(pts, color=CRASH, point_size=12, render_points_as_spheres=True)
-            self.crash_actor.SetPickable(False)
-            self.path_actors.append(self.crash_actor)
+        self._mark("collision", self.samples.poses[[h.sample for h in hits], :3, 3])
         self._update_summary()
         self.show_point(self.current if hasattr(self, "current") else 0)
+
+    def _mark(self, kind: str, pts):
+        """(Re)draw the `kind` point markers (see MARKERS) at `pts`, hidden if the user turned them off."""
+        old = self.markers[kind]
+        if old is not None:
+            self.pl.remove_actor(old)
+            self.path_actors.remove(old)
+            self.markers[kind] = None
+        if len(pts):
+            color, size = MARKERS[kind]
+            a = self.markers[kind] = self.pl.add_points(pts, color=color, point_size=size,
+                                                        render_points_as_spheres=True)
+            a.SetPickable(False)
+            a.SetVisibility(self.marker_shown[kind])
+            self.path_actors.append(a)
+
+    def set_marker_visible(self, kind: str, on: bool):
+        """Show or hide one kind of point marker; remembered for later paths."""
+        self.marker_shown[kind] = on
+        if self.markers[kind] is not None:
+            self.markers[kind].SetVisibility(on)
 
     def _update_summary(self):
         bad = int((~self.reachable).sum())

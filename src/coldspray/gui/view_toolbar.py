@@ -9,9 +9,31 @@ from PySide6.QtWidgets import QDoubleSpinBox, QHBoxLayout, QLabel, QMenu, QToolB
 from coldspray.sim.datums import NORMALS
 
 
+MARKER_LABELS = {"collision": "Collision points", "unreachable": "Unreachable points",
+                 "steep": "Gun too steep"}
+
+
 def install(win):
     win.datum_button = datum_button(win.scene, win.plotter)
     win.cell_view_bar.addWidget(win.datum_button)
+    win.marker_button = marker_button(win.scene, win.plotter)
+    win.cell_view_bar.addWidget(win.marker_button)
+
+
+def marker_button(scene, plotter) -> QToolButton:
+    """"Markers" button: a checkbox per kind of point marker on the toolpath (all shown at first)."""
+    button = QToolButton(text="Markers", popupMode=QToolButton.InstantPopup,
+                         toolTip="Show or hide the collision, unreachable and steep-gun points on the toolpath")
+    menu = QMenu(button)
+    button.actions_by_kind = {}
+    for kind, text in MARKER_LABELS.items():
+        act = menu.addAction(text)
+        act.setCheckable(True)
+        act.setChecked(scene.marker_shown[kind])
+        act.toggled.connect(lambda on, kind=kind: (scene.set_marker_visible(kind, on), plotter.render()))
+        button.actions_by_kind[kind] = act
+    button.setMenu(menu)
+    return button
 
 
 def datum_button(scene, plotter) -> QToolButton:
