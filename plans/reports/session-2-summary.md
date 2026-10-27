@@ -48,7 +48,7 @@ Written by the coordinator just before the session cap. **Read this first next s
 | `wp/X3` | "Move gun here" button for the purge point (`_purge_ik`, shared with the reach chip) | Done, 5 tests passing, not merged |
 | `wp/X4` | Simple mode opens the Advanced section when it holds changes; hidden text fields not counted as changed | Done, 3 tests passing, not merged |
 | `wp/X5` | At most 10° gun turn per move on tilted contours | **No commits by the cap.** Redo |
-| `wp/X6` | Lift Surface-mode turns off the surface | **No commits by the cap.** Redo |
+| `wp/X6` | Lift Surface-mode turns off the surface | Done (c855f47), 5 tests passing, not merged. Each turn has a midpoint raised one standoff along the averaged normal; there is no clearance check, so a very wide turn over a strongly curved part could still pass close. It changed two existing tests' expected values on purpose |
 | `wp/X7` | README matches Simple/Advanced and purge save | **Merged** |
 | `wp/X8` | `approach_mm` spin box in the purge section | Done (4f88dce), 4 tests passing, not merged |
 | `wp/X9` | Ctrl+1..5 step shortcuts and Ctrl+G Generate | Done (44affdb), 1 test passing, not merged. Ctrl+G is never triggered in the test |
@@ -59,4 +59,4 @@ X2, X3 and X8 all edit the purge section in `gui/steps/position.py`: merge them 
 - **R2b (`wp/R2b`, not merged, 46 tests passing):** clear `ValueError`s for wrong constraint entity types and unsupported faces, and `grow_tangent` now stays in one body and is no longer quadratic.
 - **A3 (`wp/A3`, not merged, partial):** Constraints section (`gui/constraints_panel.py`) with touch, align, distance, parallel, perpendicular, angle and centre, picked from combos, plus a solve hook in position.py. Not done: picking in 3D, centre_between and fix rows. Note: `test_constraints.py::test_fast` (under 50 ms) is flaky under load.
 - **M2:** no report by the cap. Check `wp/M2-fix`.
-- **Suggested merge order next session:** R1, R2b, T1, A3, G1 (fix its frame bug first), R3 (apply its fix #1), then X10, X1, X4, X9, X3, X8, X2. Redo X5 (contour tilt rate limit) and X6 (Surface turn lift).
+- **Suggested merge order next session:** R1, R2b, T1, A3, G1 (fix its frame bug first), R3 (apply its fix #1), then X10, X1, X4, X9, X3, X8, X2, X6. Redo X5 (contour tilt rate limit) unless `wp/X5` has commits by then.
