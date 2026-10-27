@@ -7,14 +7,14 @@ import numpy as np
 from pydantic import ValidationError
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
+    QApplication, QCheckBox, QFrame, QComboBox, QDoubleSpinBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
     QSpinBox, QVBoxLayout, QWidget,
 )
 
 from coldspray.cad.part import build_mesh, other_mesh
 from coldspray.cell import robroot
 from coldspray.gui.stepper import SIMULATE, TOOLPATH
-from coldspray.gui import plan_jobs, widgets
+from coldspray.gui import plan_jobs, style, widgets
 from coldspray.gui.widgets import Chip, Section, primary_button, wrap_label
 from coldspray.kinematics.robot import Robot
 from coldspray.models import ProcessConfig, field_level, load_process, save_process
@@ -164,6 +164,84 @@ def estimate_time_s(path, proc: ProcessConfig) -> float:
     return total
 
 
+def _glass_css(name: str, radius: int = 14) -> str:
+    t = style.tokens(style.current_mode())
+    return (f"QFrame#{name} {{ background: {t['panel']}; border: 1px solid {t['line']}; border-radius: {radius}px; }}"
+            f"QFrame#{name} QLabel {{ background: transparent; }}")
+
+
+class SegmentedCapsule(QFrame):
+    """Glass segmented capsule that mirrors a QComboBox (the combo stays the data API)."""
+
+    def __init__(self, combo: QComboBox):
+        super().__init__()
+        self.setObjectName("segcap")
+        self.combo, self.buttons = combo, []
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(3, 3, 3, 3)
+        lay.setSpacing(2)
+        for i in range(combo.count()):
+            b = QPushButton(combo.itemText(i))
+            b.setCheckable(True)
+            b.setCursor(Qt.PointingHandCursor)
+            b.clicked.connect(lambda _=False, i=i: combo.setCurrentIndex(i))
+            lay.addWidget(b, 1)
+            self.buttons.append(b)
+        combo.currentIndexChanged.connect(self._sync)
+        combo.hide()
+        self._sync()
+
+    def _sync(self, *_):
+        t = style.tokens(style.current_mode())
+        self.setStyleSheet(
+            f"QFrame#segcap {{ background: {t['soft']}; border: 1px solid {t['line']}; border-radius: 16px; }}"
+            f"QPushButton {{ background: transparent; border: none; border-radius: 13px; padding: 5px 10px; color: {t['muted']}; }}"
+            f"QPushButton:checked {{ background: {t['accent']}; color: #ffffff; font-weight: 600; }}")
+        for i, b in enumerate(self.buttons):
+            b.setChecked(i == self.combo.currentIndex())
+
+
+class StatTiles(QWidget):
+    """Summary as glass stat tiles; keeps the QLabel.setText API used by generate."""
+
+    def __init__(self):
+        super().__init__()
+        self._lay = QHBoxLayout(self)
+        self._lay.setContentsMargins(0, 0, 0, 0)
+        self._tiles = {}
+        self._text = ""
+        for key, cap in (("moves", "Moves"), ("time", "Time"), ("layers", "Layers")):
+            f = QFrame()
+            f.setObjectName("tile_" + key)
+            f.setStyleSheet(_glass_css("tile_" + key))
+            v = QVBoxLayout(f)
+            v.setContentsMargins(10, 8, 10, 8)
+            val, lab = QLabel("-"), QLabel(cap)
+            val.setStyleSheet(f"font-size: 18px; font-weight: 600; color: {style.tokens(style.current_mode())['accent']};")
+            lab.setStyleSheet(f"color: {style.tokens(style.current_mode())['muted']};")
+            v.addWidget(val)
+            v.addWidget(lab)
+            self._lay.addWidget(f)
+            self._tiles[key] = (f, val)
+        self.setVisible(False)
+
+    def text(self):
+        return self._text
+
+    def setText(self, text: str):
+        import re
+        self._text = text
+        pats = {"moves": r"([\d,]+)\s+moves", "time": r"≈\s*([\d.]+)\s*min", "layers": r"([\d,]+)\s+(?:layers|coats)"}
+        shown = False
+        for key, pat in pats.items():
+            m = re.search(pat, text)
+            frame, val = self._tiles[key]
+            frame.setVisible(bool(m) or key != "layers")
+            val.setText((m.group(1) + (" min" if key == "time" else "")) if m else "-")
+            shown = shown or bool(m)
+        self.setVisible(bool(text))
+
+
 class ToolpathStep:
     def _build_toolpath_panel(self) -> QWidget:
         inner = QWidget()
@@ -180,7 +258,8 @@ class ToolpathStep:
         self.coats = QSpinBox()
         self.coats.setRange(1, 500)
         self.coats.setToolTip("Revolve: number of complete coats; each backs off by the layer thickness")
-        pform.addRow("Mode", self.mode)
+        pform.addRow("Mode", SegmentedCapsule(self.mode))
+        pform.addRow(self.mode)
         pform.addRow("Coats", self.coats)
         plan_box.add(pform)
         layout.addWidget(plan_box)
@@ -188,6 +267,10 @@ class ToolpathStep:
         proc_box = self.process_section = Section("Process")
         self.advanced_section = Section("Advanced", open=False)
         self.process_form, advanced_form = QFormLayout(), QFormLayout()
+        for f in (self.process_form, advanced_form):
+            f.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            f.setHorizontalSpacing(12)
+            f.setVerticalSpacing(8)
         self.fields = {}
         self.process_defaults = proc = load_process()
         for name, info in ProcessConfig.model_fields.items():
@@ -205,18 +288,26 @@ class ToolpathStep:
                 advanced_form.addRow(advanced_row(text, box, getattr(proc, name)))
         proc_box.add(self.process_form)
         self.advanced_section.add(advanced_form)
+        proc_box.setObjectName("procglass")
+        proc_box.setAttribute(Qt.WA_StyledBackground, True)
+        proc_box.setStyleSheet(_glass_css("procglass", 16).replace("QFrame#", "QWidget#", 1))
         layout.addWidget(proc_box)
         layout.addWidget(self.advanced_section)
         widgets.on_mode_changed(lambda _mode: self._sync_advanced())
         self._process_changed()
 
         self.generate_btn = primary_button("Generate toolpath", self.generate)
+        _t = style.tokens(style.current_mode())
+        self.generate_btn.setMinimumHeight(40)
+        self.generate_btn.setStyleSheet(
+            f"QPushButton {{ background: {_t['accent']}; color: #ffffff; border: none; border-radius: 20px; padding: 8px 18px; font-size: 14px; }}"
+            f"QPushButton:disabled {{ background: {_t['soft']}; color: {_t['muted']}; }}")
         self.save_settings_btn = QPushButton("Save as default")
         self.save_settings_btn.setToolTip("Write these process values to config/process.yaml")
         self.save_settings_btn.clicked.connect(self._save_settings)
         layout.addWidget(self.generate_btn)
         layout.addWidget(self.save_settings_btn)
-        self.summary = wrap_label()
+        self.summary = StatTiles()
         layout.addWidget(self.summary)
 
         layout.addWidget(primary_button("Next: Simulate  →", lambda: self.go_to(SIMULATE)))
