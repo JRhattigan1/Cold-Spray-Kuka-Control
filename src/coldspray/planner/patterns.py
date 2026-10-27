@@ -134,13 +134,19 @@ def _order_loops(loops: list[np.ndarray], here) -> list[np.ndarray]:
 
 
 def spiral(region, proc, layer_index: int, start=None) -> list[np.ndarray]:
-    """Concentric loops joined into continuous paths: each loop steps in to the next one
-    when it is within 1.5 x step-over, so the gun never lifts inside one island."""
+    """Concentric loops joined into continuous paths: each loop leaves its ring one step-over
+    before closing it and heads straight for the next one when that is within 1.5 x step-over,
+    so the path spirals in and the gun never lifts inside one island."""
     out = []
     for loop in concentric(region, proc, layer_index, start):
-        if out and np.linalg.norm(loop[0] - out[-1][-1]) <= 1.5 * proc.step_over_mm \
-                and region.buffer(1e-6).contains(LineString([out[-1][-1], loop[0]])):
-            out[-1] = np.vstack([out[-1], loop])
+        if out and len(out[-1]) > 2 and np.linalg.norm(loop[0] - out[-1][-1]) <= 1.5 * proc.step_over_mm:
+            prev, end = out[-1][-2], out[-1][-1]
+            seg = np.linalg.norm(end - prev)
+            cut = end - (end - prev) * min(proc.step_over_mm, seg / 2) / seg if seg > 0 else end
+            if region.buffer(1e-6).contains(LineString([cut, loop[0]])):
+                out[-1] = np.vstack([out[-1][:-1], cut, loop])  # leave the ring early: step in diagonally
+                continue
+            out.append(loop)
         else:
             out.append(loop)
     return out
