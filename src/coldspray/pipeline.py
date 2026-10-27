@@ -74,10 +74,89 @@ def test_repair():
     return both
 
 
-BUILT_IN = {"test_square": test_square, "test_block": test_block, "test_tube": test_tube,
-            "test_repair": test_repair}
+def test_boss():
+    """Round boss, 60 mm diameter x 30 mm: round layers (concentric / spiral infill)."""
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeCylinder
+    from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt
+
+    return BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1)), 30, 30).Shape()
+
+
+def test_steps():
+    """Stepped block, 60 x 40 mm, steps 10 / 20 / 30 mm high: layers that shrink as they rise."""
+    from OCP.BRepAlgoAPI import BRepAlgoAPI_Fuse
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+    from OCP.gp import gp_Pnt
+
+    shape = BRepPrimAPI_MakeBox(gp_Pnt(0, 0, 0), 60, 40, 10).Shape()
+    for x, h in ((20, 20), (40, 30)):
+        shape = BRepAlgoAPI_Fuse(shape, BRepPrimAPI_MakeBox(gp_Pnt(x, 0, 0), 60 - x, 40, h).Shape()).Shape()
+    return shape
+
+
+def test_frustum():
+    """Taper: 80 mm diameter at the base, 50 mm at the top, 30 mm high - sloped sides for contour tilt."""
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeCone
+    from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt
+
+    return BRepPrimAPI_MakeCone(gp_Ax2(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1)), 40, 25, 30).Shape()
+
+
+def test_u_block():
+    """U-block, 60 x 40 x 30 mm with a 20 mm wide slot down to 10 mm: two islands per
+    layer above the slot floor (jumps, turning points off the part)."""
+    from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+    from OCP.gp import gp_Pnt
+
+    block = BRepPrimAPI_MakeBox(gp_Pnt(0, 0, 0), 60, 40, 30).Shape()
+    return BRepAlgoAPI_Cut(block, BRepPrimAPI_MakeBox(gp_Pnt(20, -1, 10), 20, 42, 21).Shape()).Shape()
+
+
+def test_panel():
+    """Curved panel: a 60 degree arc of a 150 mm radius shell, 5 mm thick, 100 mm long,
+    convex side up - for Surface mode on a curved face."""
+    from OCP.BRepAlgoAPI import BRepAlgoAPI_Common, BRepAlgoAPI_Cut
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeCylinder
+    from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt
+
+    axis = gp_Ax2(gp_Pnt(0, 0, 0), gp_Dir(0, 1, 0))                    # shell axis along Y
+    shell = BRepAlgoAPI_Cut(BRepPrimAPI_MakeCylinder(axis, 150, 100).Shape(),
+                            BRepPrimAPI_MakeCylinder(axis, 145, 100).Shape()).Shape()
+    half = 150 * np.sin(np.radians(30))                                   # 60 degree arc about +Z
+    low = np.sqrt(145 ** 2 - half ** 2) - 1                               # below the inner skin at the arc ends
+    window = BRepPrimAPI_MakeBox(gp_Pnt(-half, -1, low), 2 * half, 102, 151 - low).Shape()
+    return BRepAlgoAPI_Common(shell, window).Shape()
+
+
+def test_groove_repair():
+    """Two bodies: a 120 x 80 x 30 mm component with a 40 x 10 x 6 mm groove in its top,
+    and the patch that fills it, standing 2 mm proud (the smaller body, built)."""
+    from OCP.BRep import BRep_Builder
+    from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+    from OCP.gp import gp_Pnt
+    from OCP.TopoDS import TopoDS_Compound
+
+    component = BRepAlgoAPI_Cut(BRepPrimAPI_MakeBox(gp_Pnt(0, 0, 0), 120, 80, 30).Shape(),
+                                BRepPrimAPI_MakeBox(gp_Pnt(40, 35, 24), 40, 10, 7).Shape()).Shape()
+    both, builder = TopoDS_Compound(), BRep_Builder()
+    builder.MakeCompound(both)
+    builder.Add(both, component)
+    builder.Add(both, BRepPrimAPI_MakeBox(gp_Pnt(40, 35, 24), 40, 10, 8).Shape())
+    return both
+
+
+BUILT_IN = {"test_square": test_square, "test_block": test_block, "test_boss": test_boss,
+            "test_steps": test_steps, "test_frustum": test_frustum, "test_u_block": test_u_block,
+            "test_tube": test_tube, "test_panel": test_panel, "test_repair": test_repair,
+            "test_groove_repair": test_groove_repair}
 BUILT_IN_LABELS = {"test_square": "Square block 50 x 50 x 10", "test_block": "Block with hole 40 x 30 x 5",
-                   "test_tube": "Tube 120 OD x 150", "test_repair": "Repair: patch on a component"}
+                   "test_boss": "Round boss 60 dia x 30", "test_steps": "Stepped block 60 x 40, steps 10/20/30",
+                   "test_frustum": "Taper 80 to 50 dia x 30", "test_u_block": "U-block 60 x 40 x 30, 20 slot",
+                   "test_tube": "Tube 120 OD x 150", "test_panel": "Curved panel R150, 60 deg x 100",
+                   "test_repair": "Repair: patch on a component",
+                   "test_groove_repair": "Repair: patch in a groove"}
 
 
 def load_part(source=None, deflection=0.05) -> Part:
