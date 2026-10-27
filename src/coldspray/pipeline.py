@@ -14,6 +14,7 @@ from coldspray.cad.part import Part, Substrate, build_frame, build_mesh, drop_on
 from coldspray.cad.slicer import slice_mesh
 from coldspray.models import CellConfig, ProcessConfig
 from coldspray.planner.layers import plan_layers
+from coldspray.planner.purge import add_purge
 from coldspray.planner.revolve import plan_revolve
 from coldspray.transforms import frame
 
@@ -131,7 +132,7 @@ def plan_part(part: Part, proc: ProcessConfig, mode="layers", tilt_deg=0.0, rota
                             tilt_axis=tilt_axis, rotation_axis=rot_axis).transformed(up).rolled(roll_deg)
         passes = sum(1 for a, b in zip(path.moves, path.moves[1:]) if b.gun_on and a.gun_on
                      and abs(b.pose[2, 3] - a.pose[2, 3]) > 1e-9)
-        return f"{coats} coat(s), {passes + coats} passes", path
+        return f"{coats} coat(s), {passes + coats} passes", add_purge(path, cell)
     # Layers grow away from the start face, or up from the bottom of the build
     # body (on the plate, or on the component a repair patch sits on)
     to_base = build_frame(part)
@@ -139,4 +140,4 @@ def plan_part(part: Part, proc: ProcessConfig, mode="layers", tilt_deg=0.0, rota
     table = {tilt_axis: tilt_deg, rot_axis: rotation_deg} if tt else {}
     path = plan_layers(layers, proc, part.name, table_axes=table).transformed(to_base).rolled(roll_deg)
     start = f" from start face {part.start_face}" if part.start_face is not None else ""
-    return f"{len(layers)} layers{start}", path
+    return f"{len(layers)} layers{start}", add_purge(path, cell)
