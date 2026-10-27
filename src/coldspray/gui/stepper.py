@@ -5,8 +5,11 @@ current step; clicking a pill emits `stepClicked(index)`. Chips (e.g. the file n
 sit on the right in `chip_area`.
 """
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QWidget
+from PySide6.QtCore import QRectF, Qt, Signal
+from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtWidgets import QFrame, QGraphicsDropShadowEffect, QHBoxLayout, QLabel, QWidget
+
+from coldspray.gui.style import resolve, tokens
 
 from coldspray.gui.widgets import Chip
 
@@ -47,9 +50,69 @@ class _Pill(QFrame):
         self.setToolTip(f"{self.name}: {TIPS[self.state]}")
         self.setProperty("state", self.state)
         self.setProperty("current", self.current)
+        if self.current:
+            glow = QGraphicsDropShadowEffect(self)
+            glow.setBlurRadius(16)
+            glow.setOffset(0, 0)
+            glow.setColor(QColor(tokens()["accent"]).lighter(105))
+            self.setGraphicsEffect(glow)
+        else:
+            self.setGraphicsEffect(None)
         for w in (self, self.text, self.mark):      # re-apply property selectors
             w.style().unpolish(w)
             w.style().polish(w)
+
+
+class _Capsule(QWidget):
+    """Translucent glass pill behind the steps: soft shadow, hairline highlight border."""
+
+    def __init__(self):
+        super().__init__()
+        self.setAttribute(Qt.WA_StyledBackground, False)
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(18)
+        shadow.setOffset(0, 3)
+        shadow.setColor(QColor(0, 0, 0, 60))
+        self.setGraphicsEffect(shadow)
+
+    def paintEvent(self, event):
+        dark = resolve() == "dark"
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        r = QRectF(self.rect()).adjusted(1, 1, -1, -1)
+        radius = r.height() / 2
+        fill = QColor(255, 255, 255, 22) if dark else QColor(255, 255, 255, 170)
+        p.setBrush(fill)
+        p.setPen(QPen(QColor(255, 255, 255, 60 if dark else 220), 1))
+        p.drawRoundedRect(r, radius, radius)
+        p.setBrush(Qt.NoBrush)                  # faint inner rim for depth
+        p.setPen(QPen(QColor(255, 255, 255, 14) if dark else QColor(0, 0, 0, 22), 1))
+        p.drawRoundedRect(r.adjusted(1, 1, -1, -1), radius - 1, radius - 1)
+
+
+def _glass_qss() -> str:
+    t = tokens()
+    dark = resolve() == "dark"
+    idle = "rgba(255,255,255,0.06)" if dark else "rgba(255,255,255,0.55)"
+    hover = "rgba(255,255,255,0.14)" if dark else "rgba(255,255,255,0.9)"
+    on_accent = "#ffffff"
+    return f"""
+QWidget#stepBar {{ background: transparent; border: none; }}
+QFrame#pill {{ border: 1px solid transparent; border-radius: 12px; background: transparent;
+    min-height: 24px; max-height: 24px; }}
+QFrame#pill:hover {{ background: {hover}; border-color: transparent; }}
+QFrame#pill QLabel#pillText {{ color: {t['muted']}; background: transparent; }}
+QFrame#pill[state="done"] QLabel#pillText, QFrame#pill[state="stale"] QLabel#pillText {{ color: {t['ink']}; }}
+QFrame#pill[current="true"] {{ background: qlineargradient(x1:0,y1:0,x2:0,y2:1,
+    stop:0 {QColor(t['accent']).lighter(112).name()}, stop:1 {t['accent']});
+    border: 1px solid {QColor(t['accent']).lighter(135).name()}; }}
+QFrame#pill[current="true"] QLabel#pillText {{ color: {on_accent}; font-weight: 600; }}
+QFrame#pill[current="true"][state="done"] QLabel#pillMark {{ color: {on_accent}; }}
+QFrame#pill[current="true"][state="stale"] QLabel#pillMark {{ color: #ffe3a3; }}
+QFrame#pill QLabel#pillMark {{ background: transparent; }}
+QLabel#pillSep {{ color: transparent; background: transparent; max-width: 0px; }}
+QLabel#brand {{ background: transparent; }}
+"""
 
 
 class StepBar(QWidget):
@@ -59,13 +122,18 @@ class StepBar(QWidget):
         super().__init__(parent)
         self.setObjectName("stepBar")
         self.setAttribute(Qt.WA_StyledBackground, True)
-        row = QHBoxLayout(self)
-        row.setContentsMargins(10, 6, 10, 6)
-        row.setSpacing(6)
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(12, 8, 12, 10)
+        outer.setSpacing(10)
         self.brand = QLabel("Cold Spray")
         self.brand.setObjectName("brand")
-        row.addWidget(self.brand)
-        row.addSpacing(10)
+        outer.addWidget(self.brand)
+        self.capsule = _Capsule()
+        row = QHBoxLayout(self.capsule)
+        row.setContentsMargins(5, 4, 5, 4)
+        row.setSpacing(2)
+        outer.addWidget(self.capsule)
+        outer.addStretch(1)
         self.pills: list[_Pill] = []
         for i, name in enumerate(STEPS):
             if i:
@@ -76,15 +144,23 @@ class StepBar(QWidget):
             pill.clicked.connect(lambda i=i: self.stepClicked.emit(i))
             row.addWidget(pill)
             self.pills.append(pill)
-        row.addStretch(1)
         self.chip_area = QHBoxLayout()          # right-aligned chips; others may add their own
         self.chip_area.setSpacing(6)
         self.file_chip = Chip()
         self.file_chip.setVisible(False)
         self.chip_area.addWidget(self.file_chip)
-        row.addLayout(self.chip_area)
+        outer.addLayout(self.chip_area)
+        self.setStyleSheet(_glass_qss())
         self.current = 0
         self.set_current(0)
+
+    def changeEvent(self, event):
+        if event.type() in (event.Type.PaletteChange, event.Type.ApplicationPaletteChange):
+            qss = _glass_qss()
+            if qss != self.styleSheet():  # setStyleSheet re-fires PaletteChange
+                self.setStyleSheet(qss)
+            self.capsule.update()
+        super().changeEvent(event)
 
     def set_current(self, i: int):
         self.current = i
