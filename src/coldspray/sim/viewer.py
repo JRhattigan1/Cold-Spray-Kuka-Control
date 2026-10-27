@@ -148,8 +148,20 @@ class Scene:
         for a in pl.renderer.actors.values():
             a.SetPickable(False)
         self.datums = Datums(pl)         # XY/XZ/YZ datum planes on the faceplate (hidden)
+        self.datums.set_size(self._datum_size(cell))
         self.status = pl.add_text("", position="upper_left", font_size=10, color="black")
         self.summary = pl.add_text("", position="upper_right", font_size=10, color="green")
+
+    @staticmethod
+    def _datum_size(cell, fallback=600.0) -> float:
+        """1.2 x the max XY extent of the turntable / faceplate meshes (else `fallback`)."""
+        meshes = [m for m in (getattr(cell, "tilting", None), getattr(cell, "rotating", None))
+                  if m is not None and m.n_cells] if cell is not None else []
+        if not meshes:
+            return fallback
+        b = np.array([m.bounds for m in meshes], float)
+        ext = max(b[:, 1].max() - b[:, 0].min(), b[:, 3].max() - b[:, 2].min())
+        return 1.2 * ext if ext > 0 else fallback
 
     # --- configuration --------------------------------------------------------
     def set_placement(self, world_from_robot, gantry_offset=(0.0, 0.0, 0.0)):
