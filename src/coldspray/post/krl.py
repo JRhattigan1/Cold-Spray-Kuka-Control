@@ -108,7 +108,8 @@ def to_krl(path: Toolpath, robot: Robot, cell: CellConfig, proc: ProcessConfig) 
                 lines.append(f"WAIT SEC {proc.spray_settle_s:.1f}  ;spray settle")
             gun_on = m.gun_on
 
-        if m.kind == "PTP":
+        # A gantry move goes as PTP (joints + E1), never as a LIN that would leave E1 behind
+        if m.kind == "PTP" or (i > 0 and e1s[i] != e1s[i - 1]):
             sols = robot.ik(base_in_robot(cell, table[i], e1s[i].get(e1_axis)) @ m.pose, seed)
             if not sols:
                 raise KRLError(f"move {i}: PTP target is unreachable")

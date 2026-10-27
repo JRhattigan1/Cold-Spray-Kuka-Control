@@ -36,6 +36,7 @@ from coldspray.sim.cell_model import OPTIONAL, CellMeshes
 LINK_NAMES = ["A1", "A2", "A3", "A4", "A5", "A6"]
 WORKPIECE = ("part", "substrate", "fixture")     # bodies clamped to the faceplate
 NEVER_ALLOWED = {*WORKPIECE, "faceplate", "turntable"}
+ROBOT_REACH_MM = 2600.0     # KR 50 R2500 reach plus the gun: what must stay inside the cropped cell
 SIMPLIFY_MM = 10.0          # merge cell-mesh points closer than this
 SIMPLIFY_ABOVE = 50_000     # ... for meshes with more triangles than this
 
@@ -116,7 +117,8 @@ class CollisionChecker:
                 self.tool.add_object("nozzle", trimesh.Trimesh(*gun.nozzle, process=False))
 
         # Fixed equipment within reach of the robot at the configured gantry position
-        centre = self.world_from_robot[:3, 3]
+        centre = self.crop_centre = self.world_from_robot[:3, 3]
+        self.reach_mm = reach_mm
         sources = [("cell", meshes.static)] + [(lbl, p) for lbl, p in meshes.groups.items()
                                                if OPTIONAL[lbl][2] is None]
         for label, poly in sources:
@@ -191,8 +193,23 @@ class CollisionChecker:
             if name in self.env._objs:
                 self.env.set_transform(name, m)
 
+    def _follow_e1(self, e1: float):
+        """Robot root at gantry position `e1` (a move's axes["E1"]). The cell was cropped
+        round the position the checker was built at, so it can only follow while the
+        robot's reach stays inside that crop."""
+        root = robroot(self.cell, e1)
+        if np.allclose(root, self.world_from_robot):
+            return
+        if np.max(np.abs(root[:3, 3] - self.crop_centre)) > self.reach_mm - ROBOT_REACH_MM:
+            raise ValueError(f"E1 {e1:.0f} mm is too far from where this collision check was set up "
+                             f"(more than {self.reach_mm - ROBOT_REACH_MM:.0f} mm): build a new checker")
+        self.set_placement(root)
+
     def check(self, q, axes) -> set[tuple[str, str]]:
-        """Colliding (moving body, other body) pairs at joints `q` and table `axes`."""
+        """Colliding (moving body, other body) pairs at joints `q` and table `axes`
+        (and gantry, if `axes` sets it)."""
+        if self.cell.gantry is not None and self.cell.gantry.axis in axes:
+            self._follow_e1(axes[self.cell.gantry.axis])
         self._place(q, axes)
         pairs = set()
         for mgr in (self.arm, self.tool):

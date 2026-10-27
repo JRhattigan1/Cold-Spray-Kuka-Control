@@ -10,7 +10,7 @@ from coldspray.models import load_cell, load_process, load_robot, load_tool
 from coldspray.pipeline import load_part, plan_part
 from coldspray.planner.gun import wrist_side
 from coldspray.planner.solve_route import fix_route
-from coldspray.planner.solver import Context, find_issues
+from coldspray.planner.solver import Context, find_issues, robot_targets
 
 
 @pytest.fixture(scope="module")
@@ -47,23 +47,31 @@ def test_spray_moves_untouched_and_unfixable_returns_same(setup):
     assert fix_route(path, [Issue(0, k, "collision")], ctx) is path
 
 
-@pytest.mark.xfail(reason="fix_route returns the path unchanged here; not yet debugged (timebox)")
+def _sideways_free_move(path):
+    """A free move followed by a free move that travels across (not along the spray axis)."""
+    for i in range(1, len(path.moves) - 1):
+        a, b, c = path.moves[i - 1], path.moves[i], path.moves[i + 1]
+        d = b.pose[:3, 3] - a.pose[:3, 3]
+        across = d - (d @ b.pose[:3, 0]) * b.pose[:3, 0]
+        if not b.gun_on and not c.gun_on and np.linalg.norm(across) > 20.0:
+            return i
+    raise AssertionError("no sideways free move")
+
+
 def test_lifts_a_free_move_out_of_a_zone(setup):
     cell, robot, path = setup
-    k = _free_move(path)
-    ctx0 = _ctx(setup)
-    s, joints, _ = find_issues(path, ctx0)
-    # forbid the sample positions of move k (a thin slab at the original height)
+    k = _sideways_free_move(path)
+    s, _, _ = find_issues(path, _ctx(setup))
     idx = np.flatnonzero(s.move_index == k)
-    bad = {tuple(np.round(joints[i], 3)) for i in idx}
+    centre = robot_targets(s, cell)[idx[len(idx) // 2], :3, 3]       # robot frame, mid-move
 
-    class Hit:
+    class Zone:            # an obstacle: a small ball round the gun tip there (layers are 0.5 mm apart)
         def check(self, q, axes):
-            return {("gun", "zone")} if tuple(np.round(q, 3)) in bad else set()
+            return {("gun", "zone")} if np.linalg.norm(robot.fk(q)[:3, 3] - centre) < 0.2 else set()
 
-    ctx = _ctx(setup, Hit())
+    ctx = _ctx(setup, Zone())
     _, _, issues = find_issues(path, ctx)
-    assert issues and k in {i.move for i in issues}
+    assert issues and k in {i.move for i in issues} and all(not path.moves[i.move].gun_on for i in issues)
     new = fix_route(path, issues, ctx)
     assert new is not path
     _, _, after = find_issues(new, ctx)
@@ -71,3 +79,4 @@ def test_lifts_a_free_move_out_of_a_zone(setup):
     spray_old = [m.pose for m in path.moves if m.gun_on]
     spray_new = [m.pose for m in new.moves if m.gun_on]
     assert len(spray_old) == len(spray_new) and all(np.allclose(p, q) for p, q in zip(spray_old, spray_new))
+    assert [m.gun_on for m in new.moves].count(True) == [m.gun_on for m in path.moves].count(True)

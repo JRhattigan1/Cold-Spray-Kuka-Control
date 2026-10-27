@@ -1,7 +1,9 @@
 """Solver lever "reroute": lift or go round on the non-spraying moves.
 
 Only moves tagged approach/jump/purge, or with the gun off, are touched; spray
-moves are never changed. For each such move that has a problem sample, in order:
+moves are never changed (jumps and purge transits keep the spray on, and so do
+their via points - the spray state never toggles). For each such move that has a
+problem sample, in order:
   1. lift its end point further along the spray axis (away from the surface),
      if the move after it is not a spray move that starts there;
   2. add a via point: go up from where the move starts, across at that height,
@@ -14,7 +16,7 @@ from dataclasses import replace
 
 import numpy as np
 
-from coldspray.planner.solver import Context, Issue, find_issues
+from coldspray.planner.solver import Context, Issue, find_issues, issues_in
 from coldspray.toolpath.model import Toolpath
 
 TAGS = {"approach", "jump", "purge"}
@@ -22,7 +24,7 @@ LIFTS_MM = (25.0, 50.0, 100.0, 150.0, 200.0, 300.0, 400.0)
 
 
 def _free(m) -> bool:
-    return not m.gun_on             # non-spray move (approach, jump, purge or any gun-off move)
+    return m.tag in TAGS or not m.gun_on     # approach, jump, purge, or any gun-off move
 
 
 def _up(pose, h):
@@ -53,13 +55,13 @@ def fix_route(path: Toolpath, issues: list[Issue], ctx: Context) -> Toolpath:
                 cands.append((Toolpath(cur.name, ms, cur.skipped_points), k, k + 1))
         for h in LIFTS_MM:
             a, b = moves[k - 1], moves[k]
-            va = replace(b, pose=_up(a.pose, h), gun_on=False, tag=b.tag or "jump", axes={})
-            vb = replace(b, pose=_up(b.pose, h), gun_on=False, tag=b.tag or "jump", axes={})
-            ms = list(moves[:k]) + [va, vb] + [replace(b, gun_on=False)] + list(moves[k + 1:])
+            va = replace(b, pose=_up(a.pose, h), tag=b.tag or "jump", axes={})
+            vb = replace(b, pose=_up(b.pose, h), tag=b.tag or "jump", axes={})
+            ms = list(moves[:k]) + [va, vb] + list(moves[k:])
             cands.append((Toolpath(cur.name, ms, cur.skipped_points), k, k + 3))
         for cand, lo, hi in cands:
-            _, _, iss = find_issues(cand, ctx)
-            if _bad_near(iss, lo, hi) == 0 and len(iss) <= len(cur_issues):
-                cur, cur_issues, changed = cand, iss, True
+            if not issues_in(cand, ctx, k, hi):             # fast: only the changed moves
+                _, _, cur_issues = find_issues(cand, ctx)
+                cur, changed = cand, True
                 break
     return cur if changed else path

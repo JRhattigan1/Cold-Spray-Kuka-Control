@@ -12,7 +12,7 @@ from dataclasses import replace
 
 import numpy as np
 
-from coldspray.planner.solver import find_issues
+from coldspray.planner.solver import find_issues, issues_in
 from coldspray.transforms import frame
 
 
@@ -70,10 +70,11 @@ def fix_angle(path, issues, ctx):
         region = {i for i in range(len(w)) if w[i] > 0}
         if not any(i.move in region for i in cur_issues):
             continue                                  # an earlier stretch's change already fixed it
+        lo, hi = min(region), max(region) + 1          # the move after the ramp feels it too
         for angle, lean in cands:
             trial = _apply(cur, w, angle, lean)
-            _, _, after = find_issues(trial, ctx)
-            if len(after) < len(cur_issues) and not any(i.move in region for i in after):
-                cur, cur_issues, changed = trial, after, True
+            if not issues_in(trial, ctx, lo, hi):        # fast: only the changed stretch
+                _, _, cur_issues = find_issues(trial, ctx)
+                cur, changed = trial, True
                 break
     return cur if changed else path
