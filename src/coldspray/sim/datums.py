@@ -9,7 +9,7 @@ import numpy as np
 import pyvista as pv
 
 NORMALS = {"XY": (0.0, 0.0, 1.0), "XZ": (0.0, 1.0, 0.0), "YZ": (1.0, 0.0, 0.0)}
-COLOURS = {"XY": "#4f8fd6", "XZ": "#5cb85c", "YZ": "#d9534f"}
+COLOURS = {"XY": "#e0a030", "XZ": "#b9a58c", "YZ": "#c2410c"}
 PREFIX = "datum:"
 # in-plane axes (u = text right, v = text up) for each plane's label
 LABEL_AXES = {"XY": ((1, 0, 0), (0, 1, 0)), "XZ": ((1, 0, 0), (0, 0, 1)), "YZ": ((0, 1, 0), (0, 0, 1))}

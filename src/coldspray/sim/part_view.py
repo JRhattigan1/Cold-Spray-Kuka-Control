@@ -12,7 +12,7 @@ from vtkmodules.vtkRenderingCore import vtkCellPicker
 
 from coldspray.sim.viewer import BUILD_FACE, FIXTURE, PART, VIEW_DIRS, _aim, _bounds_centre, _polydata, _section_plane
 
-BASE_FACE = "#1a73e8"
+BASE_FACE = "#c2410c"
 COAT_FACE = "#f28c28"   # faces chosen for surface coating
 IGNORED = "#c9ccd1"
 ROLES = ("build", "fixture", "ignore")
@@ -35,7 +35,7 @@ class PartView:
         self.pick_point = None           # part-CAD point of the last pick click
         self.section_plane = None        # vtkPlane while the section is on
         self.section_axis = "x"
-        pl.set_background("white")
+        pl.set_background("#eef1f4", top="#d3dbe2")
         pl.enable_anti_aliasing("msaa")
         pl.add_axes()
         self.hint = pl.add_text("", position="upper_left", font_size=10, color="black")

@@ -358,7 +358,7 @@ class PartStep:
             if part.start_face is not None else
             "No start face: layers build straight up from the bottom of the build body")
         self.base_label.setText(
-            f"<span style='color:#1a73e8'>■</span> Base {self._face_text(part.base_face)}"
+            f"<span style='color:#c2410c'>■</span> Base {self._face_text(part.base_face)}"
             if part.base_face is not None else "No base face: placed as drawn in the CAD")
         coat = sorted(part.coat_faces)
         self.coat_label.setText(
@@ -375,7 +375,7 @@ class PartStep:
             number = f"[{cell.part_base_number}]" if cell is not None else ""
             self.krl_label.setText(
                 f"<span style='color:#d93025'>X</span> <span style='color:#188038'>Y</span> "
-                f"<span style='color:#1a73e8'>Z</span> on {self._face_text(part.krl_base_face)}<br>"
+                f"<span style='color:#c2410c'>Z</span> on {self._face_text(part.krl_base_face)}<br>"
                 f"Origin ({o[0]:g}, {o[1]:g}, {o[2]:g}), X ({x[0]:g}, {x[1]:g}, {x[2]:g}) in the CAD."
                 f" Teach it on the part as BASE_DATA{number}")
             self.krl_section.set_chip("set")
