@@ -271,6 +271,7 @@ class PositionStep:
                 box.blockSignals(True)
                 box.setValue(value)
                 box.blockSignals(False)
+        widgets.refresh()                    # signals were blocked: update the "changed" chips
         self._enter_setup()
         msg = (f"Auto position: tilt {pos.tilt_deg:.0f}°, gun roll {pos.roll_deg:.0f}°"
                + (f", E1 {pos.e1_mm:.0f} mm" if pos.e1_mm is not None else ""))
@@ -278,6 +279,8 @@ class PositionStep:
             msg += f": best found reaches only {pos.reach:.0%} of the path"
             if not quiet:
                 QMessageBox.warning(self, "Auto position", msg + "\nTry moving the part or another tilt.")
+        if pos.note:
+            msg += f". {pos.note}"
         self._status(msg)
         return pos.reach == 1.0
 

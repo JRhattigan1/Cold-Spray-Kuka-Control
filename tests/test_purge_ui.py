@@ -184,3 +184,23 @@ def test_simple_mode_never_hides_non_default_values(panel):
     h.purge_on.setChecked(True)
     h.purge_dwell.setValue(9)
     assert h.purge_dwell.isVisible()
+
+
+def test_auto_position_status_shows_note(panel, monkeypatch):
+    import types
+    from coldspray.planner.position import Position
+    import coldspray.gui.steps.position as pos_mod
+    h = panel
+    msgs = []
+    h._status, h.part, h.scene = msgs.append, object(), object()
+    h.assets = types.SimpleNamespace(robot=None, cell=None)
+    h.mode = types.SimpleNamespace(currentData=lambda: "surface")
+    h.coats = types.SimpleNamespace(value=lambda: 1)
+    h.read_process = lambda: None
+    h._work_cell = lambda: None
+    h.job = types.SimpleNamespace(start=lambda *_: None, finish=lambda *_: None, update=lambda *_: None,
+                                  is_cancelled=lambda: False)
+    monkeypatch.setattr(pos_mod, "auto_position", lambda *a, **k: Position(
+        0.0, 0.0, None, 1.0, "Purge point is out of reach"))
+    assert h._auto_position(quiet=True)
+    assert "Purge point is out of reach" in msgs[-1]
