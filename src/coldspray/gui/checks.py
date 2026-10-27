@@ -12,12 +12,15 @@ from dataclasses import dataclass
 
 import numpy as np
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QGridLayout, QLabel, QSizePolicy, QToolButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QGridLayout, QLabel, QSizePolicy, QToolButton, QVBoxLayout, QWidget
 
+from coldspray.gui import style
 from coldspray.gui.widgets import Chip
 
 STATES = ("ok", "bad", "warn", "crash", "todo")
 CHIP_KIND = {"ok": "good", "bad": "bad", "warn": "warn", "crash": "crash", "todo": "neutral"}
+
+CHIP_KIND_TOKEN = {"ok": "good", "bad": "bad", "warn": "warn", "crash": "crash", "todo": "muted"}
 
 
 @dataclass
@@ -208,9 +211,10 @@ class CheckList(QWidget):
         grid = QGridLayout(self.grid_host)
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(8)
-        grid.setVerticalSpacing(2)
+        grid.setVerticalSpacing(6)
         grid.setColumnStretch(1, 1)
         self.rows = []
+        t = style.tokens(style.current_mode())
         for r, c in enumerate(self.checks):
             chip = Chip(c.chip_text, CHIP_KIND[c.state])
             chip.setToolTip(c.state)
@@ -222,11 +226,19 @@ class CheckList(QWidget):
             detail.setVisible(bool(c.detail))
             text = QWidget()
             tl = QVBoxLayout(text)
-            tl.setContentsMargins(0, 0, 0, 4)
+            tl.setContentsMargins(0, 4, 0, 4)
             tl.setSpacing(0)
             tl.addWidget(title)
             tl.addWidget(detail)
             text.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+            capsule = QFrame()          # glass capsule behind the whole row
+            capsule.setObjectName("checkRow")
+            capsule.setStyleSheet(
+                f"#checkRow {{ background: {t['soft']}; border: 1px solid {t['line']}; border-radius: 14px; }}")
+            grid.addWidget(capsule, r, 0, 1, 3)
+            capsule.lower()
+            chip.setStyleSheet(f"background: {t[CHIP_KIND_TOKEN[c.state]]}; color: #ffffff;"
+                               " border-radius: 9px; padding: 1px 7px; margin-left: 8px;")
             grid.addWidget(chip, r, 0, Qt.AlignTop | Qt.AlignHCenter)
             grid.addWidget(text, r, 1)
             btn = None
