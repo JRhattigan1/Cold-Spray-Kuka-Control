@@ -7,21 +7,58 @@ import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFileDialog, QGridLayout, QHBoxLayout, QMessageBox, QPushButton,
-    QVBoxLayout, QWidget,
+    QVBoxLayout, QWidget, QFrame,
 )
 
 from coldspray.cad.part import grow_tangent, krl_base_frame
 from coldspray.gui.stepper import PART, POSITION, TOOLPATH
+from coldspray.gui.style import tokens
 from coldspray.gui.widgets import Section, primary_button, wrap_label
 from coldspray.models import PROJECT_ROOT
 from coldspray.pipeline import BUILT_IN_LABELS, load_part
 from coldspray.sim.part_view import ROLES
 
 
+def glass_card(widget_layout) -> QFrame:
+    """Display only: a translucent rounded card holding `widget_layout`."""
+    t = tokens()
+    card = QFrame()
+    card.setObjectName("glassCard")
+    card.setStyleSheet(f"QFrame#glassCard {{ background: {t['soft']}; border: 1px solid {t['line']}; "
+                       f"border-radius: 14px; }} QFrame#glassCard QLabel {{ background: transparent; }}")
+    widget_layout.setContentsMargins(10, 10, 10, 10)
+    widget_layout.setSpacing(8)
+    card.setLayout(widget_layout)
+    return card
+
+
+def capsule(btn: QPushButton, pick: bool = False) -> QPushButton:
+    """Display only: pill-shaped glass button; a pick toggle glows orange while checked."""
+    t = tokens()
+    btn.setMinimumHeight(30)
+    btn.setCursor(Qt.PointingHandCursor)
+    css = (f"QPushButton {{ background: {t['panel']}; border: 1px solid {t['line']}; border-radius: 15px; "
+           f"padding: 4px 14px; }} QPushButton:hover {{ border-color: {t['accent']}; }}")
+    if pick:
+        css += (f" QPushButton:checked {{ background: {t['accent_soft']}; border: 2px solid {t['accent']}; "
+                f"color: {t['accent']}; font-weight: 600; }}")
+    btn.setStyleSheet(css)
+    return btn
+
+
+def capsule_row(*buttons, pick: bool = False) -> QHBoxLayout:
+    row = QHBoxLayout()
+    row.setSpacing(8)
+    for b in buttons:
+        row.addWidget(capsule(b, pick))
+    return row
+
+
 class PartStep:
     def _build_part_panel(self) -> QWidget:
         inner = QWidget()
         layout = QVBoxLayout(inner)
+        layout.setSpacing(12)
 
         part_box = self.part_section = Section("Part")
         self.part_label = wrap_label("test block (built in)")
@@ -33,24 +70,23 @@ class PartStep:
         for key, text in BUILT_IN_LABELS.items():
             self.test_parts.addItem(text, key)
         self.test_parts.activated.connect(self._test_part_chosen)
-        part_box.add(self.part_label)
-        part_box.add(open_btn)
-        part_box.add(self.test_parts)
+        card = QVBoxLayout()
+        card.addWidget(self.part_label)
+        card.addLayout(capsule_row(open_btn))
+        card.addWidget(self.test_parts)
+        part_box.add(glass_card(card))
         layout.addWidget(part_box)
 
         body_box = self.bodies_section = Section("Bodies")
         self.body_grid = QGridLayout()
         self.body_rows: list[tuple[QCheckBox, QComboBox]] = []
         body_box.add(self.body_grid)
-        row = QHBoxLayout()
         isolate = QPushButton("Isolate build body")
         isolate.setToolTip("Hide the other bodies, e.g. to reach the underside of a repair patch")
         isolate.clicked.connect(lambda: self._show_bodies(only_build=True))
         show_all = QPushButton("Show all")
         show_all.clicked.connect(lambda: self._show_bodies(only_build=False))
-        row.addWidget(isolate)
-        row.addWidget(show_all)
-        body_box.add(row)
+        body_box.add(capsule_row(isolate, show_all))
         body_box.add(wrap_label("<small>Build: sliced and sprayed. Fixture: the component being repaired, "
                                 "clamps - checked for collisions. Ignore: left out.</small>"))
         layout.addWidget(body_box)
@@ -70,6 +106,9 @@ class PartStep:
         self.base_label = wrap_label()
         clear_btn = QPushButton("Clear faces")
         clear_btn.clicked.connect(self._clear_faces)
+        capsule(self.start_btn, True)
+        capsule(self.base_btn, True)
+        capsule(clear_btn)
         for w in (self.start_btn, self.start_label, self.base_btn, self.base_label, clear_btn):
             face_box.add(w)
         layout.addWidget(face_box)
@@ -85,9 +124,8 @@ class PartStep:
         grow.clicked.connect(self._grow_coat)
         clear_coat = QPushButton("Clear")
         clear_coat.clicked.connect(lambda: self._set_coat(set()))
-        row = QHBoxLayout()
-        row.addWidget(grow)
-        row.addWidget(clear_coat)
+        row = capsule_row(grow, clear_coat)
+        capsule(self.coat_btn, True)
         self.coat_label = wrap_label()
         coat_box.add(self.coat_btn)
         coat_box.add(row)
@@ -103,9 +141,8 @@ class PartStep:
         self.krl_btn.toggled.connect(self._pick_krl_base)
         clear_krl = QPushButton("Clear")
         clear_krl.clicked.connect(lambda: self._set_krl_base(None, None))
-        row = QHBoxLayout()
-        row.addWidget(self.krl_btn)
-        row.addWidget(clear_krl)
+        row = capsule_row(self.krl_btn, clear_krl)
+        capsule(self.krl_btn, True)
         self.krl_label = wrap_label()
         krl_box.add(row)
         krl_box.add(self.krl_label)
