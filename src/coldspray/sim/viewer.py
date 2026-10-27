@@ -115,7 +115,7 @@ class Scene:
         self.part_mesh = None            # the part's PolyData ("build" cell scalars; 2 = constraint face)
         self._face_pick = None           # (callback, on_cancel, observer ids) while picking part faces
 
-        pl.set_background("white")
+        pl.set_background("#eef1f4", top="#d3dbe2")
         pl.enable_anti_aliasing("msaa")   # not ssaa: its render pass breaks the hardware picker the drag handles use
         self.link_actors, self.stick, self.carriage = [], None, None
         self.group_actors = {}
@@ -149,7 +149,7 @@ class Scene:
         self.set_gun(robot, gun)
         self.set_placement(self.world_from_robot, gantry_offset)
         self.spray = _polyline([[0, 0, 0], [0, 0, 1]])
-        self.spray_actor = pl.add_mesh(self.spray, color="#1a73e8", line_width=4)
+        self.spray_actor = pl.add_mesh(self.spray, color="#ff6a13", line_width=4)
         # only the part and the drag handles are pickable (keeps hover picking fast)
         for a in pl.renderer.actors.values():
             a.SetPickable(False)
