@@ -1,4 +1,4 @@
-"""Step 1 Part: load a part or assembly, body roles and visibility, start and base faces."""
+"""Step 1 Part: load a part or assembly, body roles and visibility, start, base and coat faces."""
 
 from pathlib import Path
 
@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
+from coldspray.cad.part import grow_tangent
 from coldspray.gui.stepper import PART, POSITION
 from coldspray.gui.widgets import Section, primary_button, wrap_label
 from coldspray.models import PROJECT_ROOT
@@ -71,6 +72,26 @@ class PartStep:
         for w in (self.start_btn, self.start_label, self.base_btn, self.base_label, clear_btn):
             face_box.add(w)
         layout.addWidget(face_box)
+
+        coat_box = self.coat_section = Section("Coat faces")
+        self.coat_btn = QPushButton("Pick coat faces")
+        self.coat_btn.setCheckable(True)
+        self.coat_btn.setToolTip("Faces to coat in Surface mode, any body. Click toggles a face,\n"
+                                 "Shift+click adds, Ctrl+click removes. Click the button again to stop")
+        self.coat_btn.toggled.connect(self._pick_coat)
+        grow = QPushButton("Grow to tangent faces")
+        grow.setToolTip("Add the faces joined smoothly (normals within 10 degrees) to the chosen ones")
+        grow.clicked.connect(self._grow_coat)
+        clear_coat = QPushButton("Clear")
+        clear_coat.clicked.connect(lambda: self._set_coat(set()))
+        row = QHBoxLayout()
+        row.addWidget(grow)
+        row.addWidget(clear_coat)
+        self.coat_label = wrap_label()
+        coat_box.add(self.coat_btn)
+        coat_box.add(row)
+        coat_box.add(self.coat_label)
+        layout.addWidget(coat_box)
 
         layout.addWidget(primary_button("Next: Position  →", lambda: self.go_to(POSITION)))
         layout.addStretch(1)
@@ -178,9 +199,10 @@ class PartStep:
             self.part_view.cancel_pick()
             self.part_plotter.render()
             return
-        other.blockSignals(True)
-        other.setChecked(False)
-        other.blockSignals(False)
+        for btn in (other, self.coat_btn):
+            btn.blockSignals(True)
+            btn.setChecked(False)
+            btn.blockSignals(False)
         hint = ("Click the face the build starts from (on the build body)" if kind == "start"
                 else "Click the face the part stands on")
         if not self.part_view.start_pick(lambda f, b: self._face_picked(kind, f, b), hint):
@@ -189,7 +211,7 @@ class PartStep:
     def _cancel_pick(self):
         """Stop any face picking (leaving the Part step)."""
         self.part_view.cancel_pick()
-        for btn in (self.start_btn, self.base_btn):
+        for btn in (self.start_btn, self.base_btn, self.coat_btn):
             btn.blockSignals(True)
             btn.setChecked(False)
             btn.blockSignals(False)
@@ -216,6 +238,42 @@ class PartStep:
         self.part_view.highlight(kind, face_id)
         self._show_faces()
 
+    def _pick_coat(self, on: bool):
+        """Start (or stop) picking coat faces: every click changes the set until stopped."""
+        if not on:
+            self.part_view.cancel_pick()
+            self.part_plotter.render()
+            return
+        for btn in (self.start_btn, self.base_btn):
+            btn.blockSignals(True)
+            btn.setChecked(False)
+            btn.blockSignals(False)
+        if not self.part_view.start_pick(self._coat_picked, "Click faces to coat (Shift adds, Ctrl removes)",
+                                         keep=True):
+            self.coat_btn.setChecked(False)
+
+    def _coat_picked(self, face_id, _body):
+        mods = QApplication.keyboardModifiers()
+        faces = set(self.source.coat_faces)
+        if mods & Qt.ShiftModifier:
+            faces.add(face_id)
+        elif mods & Qt.ControlModifier:
+            faces.discard(face_id)
+        else:
+            faces ^= {face_id}
+        self._set_coat(faces)
+
+    def _grow_coat(self):
+        if not self.source.coat_faces:
+            self._status("Pick a coat face first, then grow it to the faces joined smoothly to it")
+            return
+        self._set_coat(grow_tangent(self.source, self.source.coat_faces))
+
+    def _set_coat(self, faces):
+        self.source.coat_faces = set(faces)
+        self.part_view.highlight_coat(self.source.coat_faces)
+        self._show_faces()
+
     def _clear_faces(self):
         self.source.start_face = self.source.base_face = None
         for kind in ("start", "base"):
@@ -239,4 +297,9 @@ class PartStep:
         self.base_label.setText(
             f"<span style='color:#1a73e8'>■</span> Base {self._face_text(part.base_face)}"
             if part.base_face is not None else "No base face: placed as drawn in the CAD")
+        coat = sorted(part.coat_faces)
+        self.coat_label.setText(
+            f"<span style='color:#f28c28'>■</span> {len(coat)} face{'s' * (len(coat) != 1)}: "
+            + ", ".join(map(str, coat)) if coat else "No coat faces (only needed for Surface mode)")
+        self.coat_section.set_chip(str(len(coat)) if coat else "")
         self._refresh_steps()

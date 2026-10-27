@@ -12,6 +12,7 @@ from vtkmodules.vtkRenderingCore import vtkCellPicker
 from coldspray.sim.viewer import BUILD_FACE, FIXTURE, PART, VIEW_DIRS, _aim, _bounds_centre, _polydata, _section_plane
 
 BASE_FACE = "#1a73e8"
+COAT_FACE = "#f28c28"   # faces chosen for surface coating
 IGNORED = "#c9ccd1"
 ROLES = ("build", "fixture", "ignore")
 
@@ -27,6 +28,8 @@ class PartView:
         self.highlights: dict = {}       # "start" / "base" -> actor
         self.highlighted: dict = {}      # "start" / "base" -> face id
         self._pick_cb = self._pick_obs = None
+        self._keep = False               # coat-face picking: keep picking after each click
+        self.coat_actor, self.coat_faces = None, set()   # the coat faces, highlighted together
         self.section_plane = None        # vtkPlane while the section is on
         self.section_axis = "x"
         pl.set_background("white")
@@ -38,6 +41,7 @@ class PartView:
         self.cancel_pick()
         for a in self.actors + list(self.highlights.values()):
             self.pl.remove_actor(a)
+        self.highlight_coat(set())
         self.part, self.actors, self.triangles, self.highlights, self.highlighted = part, [], [], {}, {}
         self.roles, self.visible = list(roles), [True] * len(roles)
         for b in range(part.n_bodies):
@@ -61,6 +65,8 @@ class PartView:
         self.actors[body].SetVisibility(on)
         for kind, actor in self.highlights.items():       # a face is hidden with its body
             actor.SetVisibility(self.visible[self.part.body_of_face(self.highlighted[kind])])
+        if self.coat_faces:
+            self.highlight_coat(self.coat_faces)
         self.pl.render()
 
     def fit(self):
@@ -96,7 +102,7 @@ class PartView:
             if axis not in "xyz" or len(axis) != 1:
                 raise ValueError(f"axis must be x, y or z, not {axis!r}")
             self.section_axis = axis
-        for a in self.actors + list(self.highlights.values()):
+        for a in self._clipped():
             a.mapper.RemoveAllClippingPlanes()
         self.section_plane = None
         bounds = self._shown_bounds()
@@ -106,10 +112,13 @@ class PartView:
             self._apply_section()
         self.pl.render()
 
+    def _clipped(self) -> list:
+        return self.actors + list(self.highlights.values()) + ([self.coat_actor] if self.coat_actor is not None else [])
+
     def _apply_section(self):
         if self.section_plane is None:
             return
-        for a in self.actors + list(self.highlights.values()):
+        for a in self._clipped():
             planes = a.mapper.GetClippingPlanes()
             if planes is None or not any(planes.GetItemAsObject(k) is self.section_plane
                                          for k in range(planes.GetNumberOfItems())):
@@ -133,11 +142,31 @@ class PartView:
             self._apply_section()
         self.pl.render()
 
+    def highlight_coat(self, faces: set[int]):
+        """Show the coat faces (orange) on the visible bodies; an empty set clears them."""
+        if self.coat_actor is not None:
+            self.pl.remove_actor(self.coat_actor)
+        self.coat_actor, self.coat_faces = None, set(faces)
+        if faces and self.part is not None:
+            tri = np.isin(self.part.face_ids, list(faces))
+            if self.part.body_ids is not None:
+                tri &= np.isin(self.part.body_ids, [b for b, v in enumerate(self.visible) if v])
+            if tri.any():
+                actor = self.coat_actor = self.pl.add_mesh(_polydata(self.part.vertices, self.part.faces[tri]),
+                                                           color=COAT_FACE)
+                actor.mapper.SetResolveCoincidentTopologyToPolygonOffset()
+                actor.mapper.SetRelativeCoincidentTopologyPolygonOffsetParameters(-1, -10)
+                actor.SetPickable(False)
+                self._apply_section()
+        self.pl.render()
+
     # --- picking ----------------------------------------------------------------
-    def start_pick(self, callback, hint="") -> bool:
+    def start_pick(self, callback, hint="", keep=False) -> bool:
         """The next left click on a visible body calls `callback(face_id, body)`
-        once; clicks beside the part still turn the view."""
+        once (every click until `cancel_pick` with `keep`); clicks beside the
+        part still turn the view."""
         self.cancel_pick()
+        self._keep = keep
         if not self.actors or getattr(self.pl, "iren", None) is None:
             return False
         self._pick_cb = callback
@@ -150,6 +179,7 @@ class PartView:
         if self._pick_obs is not None:
             self.pl.iren.remove_observer(self._pick_obs)
         self._pick_cb = self._pick_obs = None
+        self._keep = False
         self.hint.SetText(2, "")
 
     def _click(self, iren, _event):
@@ -165,9 +195,11 @@ class PartView:
             self.pick_triangle(int(self.triangles[body][picker.GetCellId()]))
 
     def pick_triangle(self, tri: int):
-        """Report the CAD face and body of part triangle `tri` and stop picking."""
+        """Report the CAD face and body of part triangle `tri`; stop picking
+        unless it was started with `keep`."""
         callback = self._pick_cb
-        self.cancel_pick()
+        if not self._keep:
+            self.cancel_pick()
         if callback is not None:
             body = 0 if self.part.body_ids is None else int(self.part.body_ids[tri])
             callback(int(self.part.face_ids[tri]), body)
