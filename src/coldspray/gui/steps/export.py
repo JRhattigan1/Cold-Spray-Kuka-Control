@@ -57,15 +57,26 @@ class ExportStep:
         path, _, cell, _ = self.result
         f = self.program_fields
         f["name"].setText(path.name)
-        f["frames"].setText(f"{cell.base_number} · {cell.tool_number}")
+        on_part = self._part_base() is not None
+        f["frames"].setText(f"{cell.part_base_number if on_part else cell.base_number} · {cell.tool_number}"
+                            + ("  (KRL base on the part)" if on_part else ""))
         f["output"].setText(f"$OUT[{cell.gun_output}]")
         tt = cell.turntable
         f["table"].setText("none" if tt is None else
                            "coupled to BASE" if tt.coupled else "fixed base, axes on every point")
 
+    def _part_base(self):
+        """Faceplate BASE <- the KRL base picked on the part, or None."""
+        part = getattr(self, "part", None)
+        if part is None or getattr(part, "krl_base", None) is None:
+            return None
+        return part.placement @ part.krl_base
+
     def _save_krl(self):
         path, proc, cell, robot = self.result
-        items = open_items(export_checks(self.scene, cell, self.assets.tool, self._collision_state()))
+        part_base = self._part_base()
+        items = open_items(export_checks(self.scene, cell, self.assets.tool, self._collision_state(),
+                                         part_base=part_base is not None))
         if items and QMessageBox.question(self, "Open items", confirm_text(items)) \
                 != QMessageBox.StandardButton.Yes:
             return
@@ -76,7 +87,7 @@ class ExportStep:
         if not fn:
             return
         try:
-            Path(fn).write_text(to_krl(path, robot, cell, proc), newline="\r\n")
+            Path(fn).write_text(to_krl(path, robot, cell, proc, part_base), newline="\r\n")
         except (KRLError, ValueError) as e:
             QMessageBox.warning(self, "Could not write program", str(e))
             return

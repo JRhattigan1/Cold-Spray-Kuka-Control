@@ -125,8 +125,9 @@ def solve_checks(report) -> list[Check]:
     return out
 
 
-def robot_checks(cell, tool) -> list[Check]:
-    """Items not yet confirmed on the real robot (tool.yaml, cell.yaml, README list)."""
+def robot_checks(cell, tool, part_base: bool = False) -> list[Check]:
+    """Items not yet confirmed on the real robot (tool.yaml, cell.yaml, README list).
+    `part_base`: the program is written relative to a KRL base picked on the part."""
     out = []
     if tool.verified:
         out.append(Check("tcp", "ok", "Gun TCP verified on the robot"))
@@ -142,8 +143,15 @@ def robot_checks(cell, tool) -> list[Check]:
                 "fixed base: axis values added to every point")
         out.append(Check("coupling", "todo", f"Turntable coupling to BASE {b} not confirmed",
                          f"Assumed {mode} (cell.yaml turntable.coupled)"))
-    out.append(Check("base", "todo", f"BASE_DATA[{b}] taught at the faceplate centre",
-                     "Programs are written relative to the turntable faceplate top centre"))
+    if part_base:
+        out.append(Check("base", "todo", f"BASE_DATA[{cell.part_base_number}] taught on the part",
+                         "This program is relative to the KRL base picked in the Part step: teach it on the"
+                         " real part (3-point: origin corner, along the X edge, into the face's XY plane)"
+                         + ("" if cell.turntable is None or cell.turntable.coupled else ", table axes at 0")
+                         + " and compare with the program header"))
+    else:
+        out.append(Check("base", "todo", f"BASE_DATA[{b}] taught at the faceplate centre",
+                         "Programs are written relative to the turntable faceplate top centre"))
     if cell.gantry is not None:
         out.append(Check("e1_zero", "todo", f"{cell.gantry.axis} = 0 matches the CAD carriage position",
                          "And the gantry travel limits"))
@@ -159,9 +167,9 @@ def robot_checks(cell, tool) -> list[Check]:
     return out
 
 
-def export_checks(scene, cell, tool, collision_state, solve_report=None) -> list[Check]:
+def export_checks(scene, cell, tool, collision_state, solve_report=None, part_base=False) -> list[Check]:
     """The simulate checks plus the robot-side items for the "Before the robot" list."""
-    return simulate_checks(scene, cell, collision_state, solve_report) + robot_checks(cell, tool)
+    return simulate_checks(scene, cell, collision_state, solve_report) + robot_checks(cell, tool, part_base)
 
 
 def open_items(checks) -> list[Check]:

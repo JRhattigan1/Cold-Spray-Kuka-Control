@@ -12,19 +12,43 @@ round a cylinder) are sprayed as loops.
 Raster direction: strokes run along the longest extent of the selection as
 seen along its mean normal. If the normals cancel out (a full cylinder) the
 cuts are taken across the longest 3D extent instead, giving rings.
+
+Other infill patterns (`infill_pattern` other than zigzag): a region that faces
+one way is flattened along its mean normal, filled like a layer (contour
+passes, then the pattern; see patterns.py) and the strokes are dropped back
+onto the faces. Strokes more than 1.5 x step-over apart are joined by a lifted
+jump, as in Layers. A region that wraps round (a face turned away from its mean
+normal, e.g. a whole cylinder) can't be flattened and keeps the zigzag.
 """
 
+from typing import NamedTuple
+
 import numpy as np
+import shapely
 import trimesh
 from scipy.spatial import cKDTree
 from shapely.geometry import MultiPoint
 
 from coldspray.models import ProcessConfig
+from coldspray.planner.patterns import PATTERNS, contour_loops
 from coldspray.toolpath.model import Move, Toolpath, spray_frame
 
 RESAMPLE_MM = 2.0
 WEAK_MEAN = 0.3      # |mean normal| below this: no single "view" direction
 BRIDGE_DEG = 30.0    # pieces of one cut are joined if their normals agree this well
+FOLD_COS = 0.05      # pattern fill: every face must face the mean normal at least this much
+EDGE_MM = 1e-3       # pattern fill: strokes kept this far inside the region so they land on it
+OVERRUN_PATTERNS = ("oneway", "crosshatch")   # pattern strokes that run edge to edge get the overrun
+
+
+class Stroke(NamedTuple):
+    p: np.ndarray            # points on the surface
+    n: np.ndarray            # surface normals at them
+    closed: bool             # a loop (sprayed back to its start)
+    region: int
+    tag: str = "infill"
+    overrun: bool = True     # extended by overrun_mm at both ends (open strokes)
+    far_jumps: bool = False  # starts with a lifted jump when > 1.5 x step-over from the last stroke
 
 
 def raster_axes(points, normals, areas) -> tuple[np.ndarray, np.ndarray, bool]:
@@ -168,6 +192,59 @@ def surface_strokes(vertices, faces, coat_mask, step_over, blend_mm=10.0, max_ti
     return strokes, skipped
 
 
+def pattern_strokes(vertices, faces, coat_mask, proc, index=0, blend_mm=10.0, max_tilt_deg=60.0):
+    """Contour passes and `proc.infill_pattern` over a region that faces one way:
+    (strokes [(points, normals, closed, tag)], points skipped for tilt), or None when
+    the region wraps round and can't be flattened. `index` plays the layer index
+    (raster angle, seam position), so successive coats differ as layers do."""
+    mesh = trimesh.Trimesh(np.asarray(vertices, float), np.asarray(faces)[np.asarray(coat_mask, bool)])
+    if len(mesh.faces) == 0:
+        return [], 0
+    d, c, strong = raster_axes(mesh.vertices, mesh.face_normals, mesh.area_faces)
+    n = np.cross(d, c)                                   # the mean normal
+    if not strong or (mesh.face_normals @ n).min() < FOLD_COS:
+        return None
+    o = mesh.vertices.mean(0)
+    uv = (mesh.vertices - o) @ np.column_stack([d, c])
+    region = shapely.union_all(shapely.polygons(uv[mesh.faces]))
+    region = region.buffer(1e-4, join_style="mitre").buffer(-1e-4, join_style="mitre")   # seal seams
+    flat = [(s, "contour") for s in contour_loops(region, proc)]
+    start = flat[0][0][0] if flat else None
+    fill = region.buffer(-proc.contour_passes * proc.step_over_mm - EDGE_MM)
+    flat += [(s, "infill") for s in PATTERNS[proc.infill_pattern](fill, proc, index, start=start)]
+
+    rays = trimesh.ray.ray_triangle.RayMeshIntersector(mesh)
+    above = ((mesh.vertices - o) @ n).max() + 1.0
+    cos_max = np.cos(np.radians(max_tilt_deg))
+    out, skipped = [], 0
+    for s, tag in flat:
+        closed = len(s) > 3 and np.allclose(s[0], s[-1])
+        x, y = s[:, 0], s[:, 1]
+        if (abs(x @ np.roll(y, 1) - y @ np.roll(x, 1)) / 2 < proc.step_over_mm ** 2 if np.allclose(s[0], s[-1])
+                else np.linalg.norm(np.diff(s, axis=0), axis=1).sum() < proc.step_over_mm):
+            continue                         # slivers where an inset closes up (centre of a ring)
+        q, _, _ = resample(np.column_stack([s, np.zeros(len(s))]), np.tile([0.0, 0.0, 1.0], (len(s), 1)))
+        if closed:
+            q = q[:-1]
+        origins = o + q[:, :1] * d + q[:, 1:2] * c + n * above
+        loc, ray, tri = rays.intersects_location(origins, np.tile(-n, (len(q), 1)), multiple_hits=False)
+        p, fn, ok = np.zeros((len(q), 3)), np.tile(n, (len(q), 1)), np.zeros(len(q), bool)
+        p[ray], fn[ray], ok[ray] = loc, mesh.face_normals[tri], True
+        whole = ok.all()
+        runs = np.flatnonzero(np.diff(np.concatenate([[0], ok.astype(int), [0]])))
+        for a, b in zip(runs[::2], runs[1::2]):
+            arc = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(p[a:b], axis=0), axis=1))])
+            nb = blend(fn[a:b], arc, blend_mm, closed and whole)
+            good = nb @ n >= cos_max
+            skipped += int((~good).sum())
+            if closed and whole and good.all():
+                out.append((p[a:b], nb, True, tag))
+                continue
+            kept = np.flatnonzero(np.diff(np.concatenate([[0], good.astype(int), [0]])))
+            out += [(p[a:b][i:j], nb[i:j], False, tag) for i, j in zip(kept[::2], kept[1::2]) if j - i >= 2]
+    return out, skipped
+
+
 def coat_regions(vertices, faces, coat_mask) -> list[np.ndarray]:
     """The picked triangles split into separate regions, as masks over `faces`.
     Faces that share an edge are one region (strokes run on over the edge);
@@ -203,16 +280,39 @@ def plan_surface(vertices, faces, coat_mask, proc: ProcessConfig, name="surface"
                  blend_mm: float = 10.0) -> Toolpath:
     """Toolpath coating the triangles where `coat_mask` is true (vertices in BASE).
     Separate regions (coat_regions) are rastered one after the other, with a
-    jump (lifted by `jump_height_mm`) between them. The number of points dropped
-    for tilting more than `max_tilt_deg` from the mean normal is left in
-    `path.skipped_points`."""
-    strokes, skipped = [], 0
-    for r, mask in enumerate(coat_regions(vertices, faces, coat_mask)):
-        s, k = surface_strokes(vertices, faces, mask, proc.step_over_mm, blend_mm, max_tilt_deg)
-        strokes += [(p, n, c, r) for p, n, c in s]
-        skipped += k
+    jump (lifted by `jump_height_mm`) between them. Each region is filled with
+    `proc.infill_pattern` where it can be flattened, else zigzagged (module doc).
+    The number of points dropped for tilting more than `max_tilt_deg` from the
+    mean normal is left in `path.skipped_points`; `path.zigzag_regions` counts
+    regions that had to fall back to the zigzag."""
+    regions = coat_regions(vertices, faces, coat_mask)
+    pattern = getattr(proc, "infill_pattern", "zigzag")
+    cut: dict[int, list] = {}                # region -> plane-cut strokes, planned once
+    strokes, skipped, fallback = [], 0, set()
+    for coat in range(coats):
+        # odd coats run the regions, and the zigzag strokes, backwards
+        order = range(len(regions)) if coat % 2 == 0 else range(len(regions) - 1, -1, -1)
+        for r in order:
+            filled = (pattern_strokes(vertices, faces, regions[r], proc, coat, blend_mm, max_tilt_deg)
+                      if pattern != "zigzag" else None)
+            if filled is not None:
+                s, k = filled
+                skipped += k
+                strokes += [Stroke(p, n, c, r, tag, pattern in OVERRUN_PATTERNS and tag == "infill", True)
+                            for p, n, c, tag in s]
+                continue
+            if pattern != "zigzag":
+                fallback.add(r)
+            if r not in cut:
+                cut[r] = surface_strokes(vertices, faces, regions[r], proc.step_over_mm, blend_mm, max_tilt_deg)
+            s, k = cut[r]
+            skipped += k
+            if coat % 2:
+                s = [(p[::-1], n[::-1], c) for p, n, c in s[::-1]]
+            strokes += [Stroke(p, n, c, r) for p, n, c in s]
     path = Toolpath(name)
-    path.skipped_points = skipped * coats
+    path.skipped_points = skipped
+    path.zigzag_regions = len(fallback)
     if not strokes:
         return path
 
@@ -221,40 +321,38 @@ def plan_surface(vertices, faces, coat_mask, proc: ProcessConfig, name="surface"
             travel = np.eye(3)[np.argmin(np.abs(n))]
         return spray_frame(p + n * proc.standoff_mm, -n, travel)
 
-    for coat in range(coats):
-        run = strokes if coat % 2 == 0 else [(p[::-1], n[::-1], c, r) for p, n, c, r in strokes[::-1]]
-        for k, (p, n, closed, region) in enumerate(run):
-            if closed:
-                p, n = np.vstack([p, p[:1]]), np.vstack([n, n[:1]])
-            else:
-                p, n = _extend(p, n, proc.overrun_mm)
-            tang = np.gradient(p, axis=0)
-            if not path.moves:
-                lift = p[0] + n[0] * proc.approach_height_mm
-                path.moves.append(Move(pose(lift, n[0], tang[0]), proc.rapid_speed_mm_s, kind="PTP",
-                                       axes=dict(table_axes or {}), tag="approach"))
-                path.moves.append(Move(pose(p[0], n[0], tang[0]), proc.rapid_speed_mm_s, tag="approach"))
-            elif region != prev_region:
-                # another region: jump across the gap, lifted by jump_height_mm, as Layers does
-                h, travel = proc.jump_height_mm, p[0] - prev_p
-                for q, nn in ((prev_p + prev_n * h, prev_n), (p[0] + n[0] * h, n[0]), (p[0], n[0])):
-                    path.moves.append(Move(pose(q, nn, travel), proc.rapid_speed_mm_s, gun_on=True, tag="jump"))
-            else:
-                # turn to the next stroke, lifted mid-turn by jump_height_mm along the mean
-                # normal (0: straight across at spray height; the solver lifts any that collide)
-                travel = p[0] - prev_p
-                if proc.jump_height_mm > 0:
-                    nm = prev_n + n[0]
-                    nm = nm / np.linalg.norm(nm) if np.linalg.norm(nm) > 1e-9 else n[0]
-                    mid = (prev_p + p[0]) / 2 + nm * proc.jump_height_mm
-                    path.moves.append(Move(pose(mid, nm, travel), proc.traverse_speed_mm_s,
-                                           gun_on=True, tag="turn"))
-                path.moves.append(Move(pose(p[0], n[0], travel),
-                                       proc.traverse_speed_mm_s, gun_on=True, tag="turn"))
-            for i in range(1, len(p)):
-                path.moves.append(Move(pose(p[i], n[i], tang[i]), proc.traverse_speed_mm_s,
-                                       gun_on=True, tag="infill"))
-            prev_p, prev_n, prev_region = p[-1], n[-1], region
+    for p, n, closed, region, tag, overrun, far_jumps in strokes:
+        if closed:
+            p, n = np.vstack([p, p[:1]]), np.vstack([n, n[:1]])
+        elif overrun:
+            p, n = _extend(p, n, proc.overrun_mm)
+        tang = np.gradient(p, axis=0)
+        if not path.moves:
+            lift = p[0] + n[0] * proc.approach_height_mm
+            path.moves.append(Move(pose(lift, n[0], tang[0]), proc.rapid_speed_mm_s, kind="PTP",
+                                   axes=dict(table_axes or {}), tag="approach"))
+            path.moves.append(Move(pose(p[0], n[0], tang[0]), proc.rapid_speed_mm_s, tag="approach"))
+        elif region != prev_region or (far_jumps and np.linalg.norm(p[0] - prev_p) > 1.5 * proc.step_over_mm):
+            # another region, or across a hole: jump, lifted by jump_height_mm, as Layers does
+            h, travel = proc.jump_height_mm, p[0] - prev_p
+            for q, nn in ((prev_p + prev_n * h, prev_n), (p[0] + n[0] * h, n[0]), (p[0], n[0])):
+                path.moves.append(Move(pose(q, nn, travel), proc.rapid_speed_mm_s, gun_on=True, tag="jump"))
+        elif not (far_jumps and np.allclose(p[0], prev_p)):
+            # turn to the next stroke, lifted mid-turn by jump_height_mm along the mean
+            # normal (0: straight across at spray height; the solver lifts any that collide)
+            travel = p[0] - prev_p
+            if proc.jump_height_mm > 0:
+                nm = prev_n + n[0]
+                nm = nm / np.linalg.norm(nm) if np.linalg.norm(nm) > 1e-9 else n[0]
+                mid = (prev_p + p[0]) / 2 + nm * proc.jump_height_mm
+                path.moves.append(Move(pose(mid, nm, travel), proc.traverse_speed_mm_s,
+                                       gun_on=True, tag="turn"))
+            path.moves.append(Move(pose(p[0], n[0], travel),
+                                   proc.traverse_speed_mm_s, gun_on=True, tag="turn"))
+        for i in range(1, len(p)):
+            path.moves.append(Move(pose(p[i], n[i], tang[i]), proc.traverse_speed_mm_s,
+                                   gun_on=True, tag=tag))
+        prev_p, prev_n, prev_region = p[-1], n[-1], region
     last = path.moves[-1].pose
     up = last.copy()
     up[:3, 3] = last[:3, 3] - last[:3, 0] * proc.approach_height_mm

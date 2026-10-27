@@ -71,6 +71,11 @@ tied to the switch (see `plans/`).
      surface at standoff, curved faces allowed. `surface_coats` coats,
      alternating direction; points tilted more than `surface_max_tilt_deg`
      from the mean normal are skipped. No coat faces: go back to step 1.
+     `infill_pattern` other than zigzag: a region that faces one way (an end
+     face, a plate top, a curved panel) is filled like a layer - contour
+     passes, then the pattern - and the strokes are laid on the faces. A
+     region that wraps round (e.g. a whole cylinder) is zigzagged; the
+     summary says how many.
    `turn_mode` / `turn_plane` (turning points off the part, for an overspray
    mask) are in the form but do nothing yet: in progress, see `plans/`.
 4. **Simulate** - reach, gun angle and collision results (the collision check

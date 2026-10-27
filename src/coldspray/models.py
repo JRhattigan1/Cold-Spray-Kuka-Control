@@ -117,6 +117,7 @@ class CellConfig(BaseModel):
     turntable: TurntableConfig | None = None
     base_number: int
     base: XYZABC
+    part_base_number: int = 2        # BASE_DATA taught on the part, when a KRL base is picked on it
     tool_number: int
     gun_output: int
     ptp_velocity_pct: int

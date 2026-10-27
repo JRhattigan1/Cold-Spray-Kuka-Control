@@ -2,6 +2,52 @@
 
 **Start here.** This replaces the old session hand-offs and run-sheet; git history has them. The feature plan is `plans/2026-10-27-feature-plan.md`. Its §5 tracker, §8 run log and `plans/ROADMAP.md` are **out of date**, so trust this file. Each agent's detail is in `plans/reports/<ID>-1.md`.
 
+## Session 4 (2026-10-27): branch `surface-patterns`, not merged
+Two features, committed together on `surface-patterns` (from `main` at `3324d09`).
+
+**1. Surface mode uses `infill_pattern` (`planner/surface.py`).**
+- **How it works:**
+  - A region that faces one way is flattened along its mean normal, filled like a layer and laid back on the faces by ray cast. Examples: the tube end, plate tops, a curved panel.
+  - The fill is `contour_passes` loops, then the pattern.
+  - Strokes more than 1.5 × step-over apart are joined by a lifted jump.
+- **Zigzag is unchanged.** It still uses the plane-cut raster, and the KRL regression hashes still pass.
+- **Regions that wrap round fall back to zigzag**, for example a whole cylinder, or the tube end plus its sides as one connected region. `path.zigzag_regions` counts them, and the summary line says so.
+- **Slivers:** where a concentric inset closes up (the centre line of a ring), the slivers are dropped. Loops under step-over² in area and open strokes under one step-over go.
+- **Coats:** pattern coats use the coat number as the layer index, so crosshatch crosses and seams rotate.
+- **Overrun:** only `oneway` and `crosshatch` infill get it.
+- **Tests:** these pass: `tests/test_surface*.py` (4 new tests) and `test_krl_regression.py`.
+- **Open questions:**
+  - Should a wrapping region be split per CAD face, so the end face gets the pattern while the sides zigzag?
+  - Contour passes are not applied in zigzag Surface mode.
+  - Pattern step-over is measured in the flattened plane, so it opens up on steep parts of a curved face.
+  - The zigzag still sprays across holes (pieces of a cut are bridged). The user's tube-end comment ("covering the whole area") may have been about this. Ask them.
+
+**2. Optional KRL base on the part (user request).**
+- **Part step:** new "KRL base (optional)" section, with one click on a flat face near a corner.
+  - +Z is the face's outward normal.
+  - +X runs along the straight edge nearest the click.
+  - The origin is that edge's end nearest the click.
+  - Code: `cad/part.py:krl_base_frame`, stored as `Part.krl_base` and `krl_base_face`.
+  - Arrows are drawn by `PartView.show_frame`.
+- **KRL output:** `to_krl(..., part_base)` writes LIN points relative to `placement @ krl_base` and selects `BASE_DATA[cell.part_base_number]` (new, default 2, in `cell.yaml`).
+  - The header gives the expected BASE values: in the cell's WORLD with the table at 0 when not coupled, relative to the faceplate when coupled.
+  - PTP joint values and the simulation are unchanged.
+- **Export:** the Export step and the "Before the robot" check list follow it (`gui/checks.py`, `part_base=`).
+- **Tests:** `tests/test_krl_base.py` passes, as do `test_krl.py` and the regression test.
+- **Not done:**
+  - The GUI has not been checked by hand.
+  - `_part_key` ignores the base. That's intended: only the KRL changes.
+  - No README section yet.
+  - The user may later want other ways to define it (3 points, typed values). They chose "face and edge for now".
+  - Picking happens in part-CAD with `vtkCellPicker.GetPickPosition()`. Check the click point is right when the section view is on.
+
+**Next:**
+1. Run the full suite on `surface-patterns`. It was started and hadn't finished at the end of the session.
+2. Check by hand in the app (`.\run`):
+   - Surface mode with each pattern on the tube end;
+   - pick a KRL base on `test_block` and save the KRL, then check the header and the `BAS(#BASE, 2)` line.
+3. Merge with `--no-ff` and run the full suite.
+
 ## State (2026-10-27, end of session 3)
 - **`main`:** every feature package is merged: constraints, patterns, contour tilt, Surface mode, purge, Simple/Advanced, turning points off the part, and the solver. Nothing is pushed.
 - **Tests:** the last full suite passed 474 plus 3 xfails, before the session-3 work below. A fast run after S5 passed 495. Since then only the affected tests have run: jump height, Surface regions, test parts. **Run the full suite first.**

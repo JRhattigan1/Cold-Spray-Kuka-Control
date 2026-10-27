@@ -239,7 +239,9 @@ def plan_part(part: Part, proc: ProcessConfig, mode="layers", tilt_deg=0.0, rota
                             coats=getattr(proc, "surface_coats", 1),
                             max_tilt_deg=getattr(proc, "surface_max_tilt_deg", 60.0))
         n = getattr(proc, "surface_coats", 1)
-        return f"{len(coat)} face(s), {n} coat(s)", _hold_gun(add_purge(path, cell), cell, roll_deg, wrist)
+        note = (f"; {path.zigzag_regions} region(s) wrap round, zigzagged instead"
+                if getattr(path, "zigzag_regions", 0) else "")
+        return f"{len(coat)} face(s), {n} coat(s){note}", _hold_gun(add_purge(path, cell), cell, roll_deg, wrist)
     # Layers grow away from the start face, or up from the bottom of the build
     # body (on the plate, or on the component a repair patch sits on)
     to_base = build_frame(part)

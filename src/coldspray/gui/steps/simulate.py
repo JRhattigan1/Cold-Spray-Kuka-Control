@@ -113,7 +113,8 @@ class SimulateStep:
         self.checks_section.set_chip("running" if state == "running" else
                                      f"{problems} to look at" if problems else "all clear",
                                      "neutral" if state == "running" else "crash" if problems else "good")
-        self.export_list.set_checks(export_checks(scene, cell, self.assets.tool, state, self._report()))
+        self.export_list.set_checks(export_checks(scene, cell, self.assets.tool, state, self._report(),
+                                                  part_base=self._part_base() is not None))
         n_open = self.export_list.open_count()
         self.robot_section.set_chip(f"{n_open} open" if n_open else "", "warn")
         self.info.setText(self.summary_head)

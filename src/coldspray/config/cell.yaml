@@ -23,6 +23,9 @@ gantry:
 # Z -1509.18, A 90.27} in KUKA WORLD - compare once $WORLD/$ROBROOT are known.
 base_number: 1
 base: {x: -884.56, y: -421.0, z: 1469.94, a: 0.0, b: 0.0, c: 0.0}
+# A KRL base picked on the part (Part step) writes programs relative to
+# BASE_DATA[part_base_number] instead, taught on the real part.
+part_base_number: 2
 
 # GTV KDT3000 tilting turntable, axes measured from the cell CAD:
 #  tilt axis along world Y through the tilt trunnions, which sits exactly at
