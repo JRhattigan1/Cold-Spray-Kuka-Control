@@ -162,3 +162,45 @@ def test_simple_mode_shows_only_the_essentials(panel):
     widgets.set_mode(widgets.ADVANCED)
     for w in (h.place["Z"], h.e1, h.snap_btn, h.purge_dwell, h.sub_check, h.constraints):
         assert w.isVisible(), w
+
+
+def test_simple_mode_never_hides_non_default_values(panel):
+    h = panel
+    widgets.set_mode(widgets.SIMPLE)
+    h.tilt.setMaximum(90)
+    h.tilt.setValue(30)
+    h.e1.setMaximum(5000)
+    h.e1.setValue(100)
+    h.roll.setValue(20)
+    h.place["Z"].setValue(5)
+    h.sub_fields["length"].setValue(h.sub_fields["length"].value() + 10)
+    for w in (h.tilt, h.e1, h.roll, h.place["Z"], h.sub_fields["length"]):
+        assert w.isVisible(), w
+    assert not h.place["B"].isVisible() and not h.rotation.isVisible()
+    h.tilt.setValue(0)
+    assert not h.tilt.isVisible()
+    h.sub_check.setChecked(False)
+    assert h.sub_check.isVisible()
+    h.purge_on.setChecked(True)
+    h.purge_dwell.setValue(9)
+    assert h.purge_dwell.isVisible()
+
+
+def test_auto_position_status_shows_note(panel, monkeypatch):
+    import types
+    from coldspray.planner.position import Position
+    import coldspray.gui.steps.position as pos_mod
+    h = panel
+    msgs = []
+    h._status, h.part, h.scene = msgs.append, object(), object()
+    h.assets = types.SimpleNamespace(robot=None, cell=None)
+    h.mode = types.SimpleNamespace(currentData=lambda: "surface")
+    h.coats = types.SimpleNamespace(value=lambda: 1)
+    h.read_process = lambda: None
+    h._work_cell = lambda: None
+    h.job = types.SimpleNamespace(start=lambda *_: None, finish=lambda *_: None, update=lambda *_: None,
+                                  is_cancelled=lambda: False)
+    monkeypatch.setattr(pos_mod, "auto_position", lambda *a, **k: Position(
+        0.0, 0.0, None, 1.0, "Purge point is out of reach"))
+    assert h._auto_position(quiet=True)
+    assert "Purge point is out of reach" in msgs[-1]
