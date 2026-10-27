@@ -88,3 +88,24 @@ def test_rotate_seam_moves_start_but_keeps_loop():
     r = rotate_seam(loop, 3)
     assert np.allclose(r[0], r[-1]) and Polygon(r).equals(Polygon(loop))
     assert np.array_equal(rotate_seam(loop, 0), loop)
+
+
+def _points(strokes):
+    return np.vstack(strokes)
+
+
+@pytest.mark.parametrize("a, b", [("zigzag", "crosshatch"), ("concentric", "spiral")])
+def test_patterns_differ_by_path_not_just_count(a, b):
+    """Same stroke count is fine; the same sprayed points over the first layers is not."""
+    reg = box(0, 0, 40, 30)
+    same = [np.array_equal(_points(PATTERNS[a](reg, PROC, k)), _points(PATTERNS[b](reg, PROC, k)))
+            for k in range(4)]
+    assert not all(same)
+
+
+def test_spiral_steps_in_without_closing_each_loop():
+    """A spiral leaves each ring before closing it, heading straight for the next one."""
+    reg = box(0, 0, 40, 30)
+    stroke = max(PATTERNS["spiral"](reg, PROC, 0), key=len)
+    # no point is visited twice (closed rings would return to their start)
+    assert len({tuple(np.round(p, 9)) for p in stroke[:-1]}) == len(stroke) - 1
