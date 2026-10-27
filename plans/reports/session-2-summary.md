@@ -1,62 +1,92 @@
-# Session 2 summary: review, fixes, hand-off work (2026-10-27)
+# Session 2 summary: review, fixes and hand-off work (2026-10-27)
 
-Written by the coordinator just before the session cap. **Read this first next session.** Then check `git branch --no-merged main --list "wp/*"`: any branch listed there was not merged before the cap (except `wp/WP0-wip`, which is obsolete).
+**Read this first next session.** Session 2 reviewed the session-1 merge for bugs, then worked through the session-1 hand-off list. Every agent ran in a 10-minute slot (4 minutes for X1–X10) and **every agent has reported**. Nothing has been pushed.
 
-## What ran (all agents had a 10-minute slot)
-| Agent | Job | Outcome at time of writing |
+## Where things stand
+- **`main`** is at `6d965de`.
+  - The full suite last ran at `03cd818` (after the E1b merge): **419 passed**, nothing failed, and the import check passed (M2).
+  - Since then, the only code merged is F2b (purge save and custom direction). Its own tests passed on its branch, but the full suite has not been run with it on `main`.
+- **Merged this session:**
+  - R2: the solver fix
+  - A2b: datum labels and `set_size`
+  - E1b: Simple/Advanced now hides advanced toolpath settings
+  - F2b: save the purge point to `cell.yaml`, and a custom spray direction
+  - DOC1 + X7: README
+  - DOC2: plan §5 tracker, §8 run log, `plans/ROADMAP.md`
+- **15 branches are finished but not merged.** All have passing tests and a report. See the merge plan below.
+- `wp/WP0-wip` is obsolete; never merge it. `wp/M2-fix` holds only M2's report.
+
+## Bugs the review found
+| Severity | Bug | Status |
 |---|---|---|
-| R1 | Review and fix: planning, purge, KRL, `plan_layers`, surface wiring | Running when the stop was sent. See `R1-1.md` on `wp/R1` |
-| R2 | Review and fix: constraints, part, step_io, config | **Merged.** Fixed the solver, which couldn't turn a part over (touch/align from a 180° flip). Reported 6 more problems, listed below |
-| R2b | Fix two of R2's problems: clear errors for wrong entity types; `grow_tangent` per body and faster | Running when the stop was sent |
-| R3 | Review and fix: interface, end-to-end offscreen run, screenshots | Running when the stop was sent. See `R3-1.md` and `plans/reports/screens/` on `wp/R3` |
-| A3 | Constraints panel (`gui/constraints_panel.py`) | Running when the stop was sent |
-| G1 | Turning points off the part (`planner/turns.py`) | Running when the stop was sent |
-| A2b | Datum labels and `set_size` | **Merged** (`set_size` not yet called from `viewer.py`) |
-| E1b | Toolpath settings form follows Simple/Advanced | **Merged** |
-| F2b | Purge "Save to cell.yaml" (`config_io.save_purge`) and custom direction | Done; queued with M1 |
-| T1 | End-to-end tests for every pattern and for Surface mode (bugs marked as expected failures, not fixed) | Running when the stop was sent |
-| DOC1 | README update | Done; queued with M1. **Out of date in two places:** it says Simple/Advanced has no controls hooked up (fixed by E1b) and that the purge can't be saved (fixed by F2b) |
-| DOC2 | Plan §5 tracker, §8 run log, `plans/ROADMAP.md` | Done on `wp/DOC2`. Session-2 statuses in it are placeholders; update them from this file |
-| M1 | Only agent merging into `main` | Running |
-| M2 | Full suite on the latest `main`, fixes on `wp/M2-fix` | Running. See `M2-*.md` |
+| High | The constraint solver couldn't turn a part over: touch or align from a face pointing the opposite way returned "conflicting" and the part never moved | **Fixed, merged** (R2) |
+| High | Purge moves were not rolled: the roll was applied before `add_purge`, so the purge poses written to KRL weren't the ones checked for reach | Fixed on `wp/R1` |
+| High | Coat faces changed after the part has gone into the cell never reach `self.part`, because `_part_key` ignores coat faces. Surface mode then plans with an old selection and isn't marked out of date | **Not fixed.** The fix is written out in `R3-1.md`, and `wp/R3` has a test that is expected to fail until it's applied |
+| High | G1's turn plane is applied in the part's own coordinates, not BASE, so beyond-plane turns are wrong once the part is moved or tilted | Not fixed. Pass `to_base` from `plan_part` to `plan_layers` |
+| Medium | `skipped_points` was lost by roll, transform and purge | Fixed on `wp/R1` |
+| Medium | Wrong constraint inputs crashed with a bare KeyError or AttributeError | Fixed on `wp/R2b` (clear `ValueError`s) |
+| Medium | "Grow to tangent faces" could spread onto a different body, and was slow on big parts | Fixed on `wp/R2b` |
+| Low | Time estimate ignored dwell | Fixed on `wp/R1` |
+| Low | `tessellate_bodies` meshed the shape twice | Fixed on `wp/X10` |
 
-## R2's unfixed problems (for the next pass, if R2b didn't cover them)
-- `turn_mode` / `turn_plane` are shown in the form but no code reads them. G1 wires them in.
-- In `constraints.reference`, a face that is neither flat nor cylindrical raises a bare KeyError, and using a cylinder axis where a plane is needed gives an AttributeError (R2b).
-- Angle constraints at 0° or 180° converge slowly and report one degree of freedom too many. The `distance` residual uses `abs()`, so the user can't choose which side.
-- `grow_tangent` is quadratic on big meshes and can cross into another body that sits flush against it (R2b).
-- `tessellate_bodies` meshes the shape twice (only costs time).
+## Still open (not on any branch)
+- **Constraints:**
+  - At 0° or 180°, angle constraints converge slowly and report one degree of freedom too many.
+  - The `distance` residual uses `abs()`, so the user can't choose which side.
+- **Purge:**
+  - In Surface mode, `approach` tags may count as layer ends and trigger the every-N-layers purge (unchecked).
+  - When an out-of-reach purge point makes auto-position fail, nothing says the purge point is the cause.
+- **Patterns:** crosshatch has the same move count as zigzag (910), and spiral the same as concentric (1564). Check they really produce different paths.
+- **Surface turns** (X6): there is no clearance check, so a very wide turn over a strongly curved part could still pass close.
+- **Contour tilt** (X5): very sharp corners (under about 30°) can still make the gun jump.
+- **Not yet in the interface:**
+  - picking faces for constraints in 3D, and the `centre_between` and `fix` rows (A3)
+  - a combo box for `turn_plane` (G1)
+  - saving constraints with the Part step choices
+- **Clean-up:**
+  - Five leftover `getattr` fallbacks for fields that now exist (pipeline.py 146–148, layers.py 44 and 49) do no harm.
+  - F2's purge-section workarounds are also still there: the `model_fields` guard and `PURGE_DEFAULTS`.
+- **Flaky test:** `test_constraints.py::test_fast` (under 50 ms) can fail when the machine is busy.
+
+## Unmerged branches, in suggested merge order
+| # | Branch | What it adds | Notes before merging |
+|---|---|---|---|
+| 1 | `wp/R1` | Purge roll fix, `skipped_points` field, dwell in time estimate | Full suite 419 passing on the branch |
+| 2 | `wp/R2b` | Clear constraint errors; `grow_tangent` per body and faster | 46 tests passing |
+| 3 | `wp/T1` | End-to-end tests: every pattern on test_block; Surface on test_repair (5 faces) and test_tube | Tests only. About 3.5 min run time; no collision checks yet |
+| 4 | `wp/A3` | Constraints panel (`gui/constraints_panel.py`), faces picked from combo boxes | Partial; see "Still open" |
+| 5 | `wp/G1` | Turning points off the part: overrun and beyond-plane (`planner/turns.py`) | **Fix the frame bug first** |
+| 6 | `wp/R3` | Slow (~5 min) end-to-end interface test, `tests/test_workflow.py` | **Apply the coat-face fix from `R3-1.md`** and remove the expected-failure mark. Consider marking the test as slow |
+| 7 | `wp/X10` | `tessellate_bodies` meshes once | KRL hashes unchanged |
+| 8 | `wp/X1` | Datum planes sized to 1.2 × the turntable/faceplate span | No test of the sizing itself |
+| 9 | `wp/X4` | Simple mode opens the Advanced section when it holds changes | |
+| 10 | `wp/X9` | Ctrl+1..5 step shortcuts, Ctrl+G Generate | Ctrl+G not exercised by the test |
+| 11 | `wp/X3` | "Move gun here" for the purge point | Purge section: merge X3, X8 and X2 one at a time and expect small conflicts |
+| 12 | `wp/X8` | `approach_mm` spin box | Same purge section as X3 |
+| 13 | `wp/X2` | Drag the purge ghost gun | Same purge section; the drag itself is untested and rotation is ignored |
+| 14 | `wp/X6` | Surface turns lift off the surface | Changed two existing tests' expected values on purpose |
+| 15 | `wp/X5` | Gun turns at most about 6.3° per pose at 90° corners on tilted contours (was 45°) | Also changes `outward_normals` smoothing |
+
+Merge rules (from M1): `git merge --no-ff`, keep both sides on conflict, then run the touched tests plus `tests/test_krl_regression.py`. Run tests with `PYTHONPATH` set to the checkout's `src`. If git claims a merge is in progress when it isn't, `git merge --quit` clears the stale state OneDrive leaves behind.
 
 ## Next session, in order
-1. Merge whatever is still unmerged: R1, R3, R2b, A3, G1, T1, DOC2, M2-fix, and F2b/DOC1 if M1 didn't get to them. Use the M1 rules: keep both sides, then run the touched tests plus `test_krl_regression`.
-2. Run the full suite. Any T1 expected failures are real bugs; fix them.
-3. Correct the two out-of-date README lines (Simple/Advanced and purge save) and the session-2 statuses in plan §5 and §8.
-4. Small follow-ups: call `datums.set_size` from `viewer.py`, sized to the faceplate bounds; ghost-gun drag and "Move gun here" for the purge marker; open the Advanced section automatically in Simple mode when it holds changes; per-move orientation limit on contour tilt; lift on Surface-mode turns.
-5. E2 on its own (interface sweep, shortcuts, README), then a human check in the app (`.\run`), then the robot-cell checks in the README.
+1. Merge the 15 branches above in that order, applying the two fixes noted (G1 frame, R3 coat faces).
+2. Run the full suite on `main`.
+3. Update the session-2 statuses in plan §5 and §8 and in `plans/ROADMAP.md`. They were written while agents were still running.
+4. Check by hand in the app (`.\run`):
+   - every infill pattern and contour tilt on test_block;
+   - datum planes;
+   - coat faces on test_tube, then Surface mode;
+   - the purge section, including dragging the marker and "Move gun here";
+   - the constraints panel;
+   - the Simple/Advanced switch;
+   - Ctrl+1..5 and Ctrl+G.
+5. E2 on its own: the interface sweep across the Part, Position, Simulate and Export steps.
+6. Robot-cell checks from the README's "Before running on the real robot":
+   - the purge `spray_dir` CHECK;
+   - collision results for purge moves, which travel with the spray on;
+   - T1 runs watching for wrist flips with contour tilt and Surface mode.
 
-## Late results (after this file was first written)
-- **M1** merged F2b, DOC1 and DOC2. Main has not been re-tested since.
-- **R3 (`wp/R3`, not merged):** found a **high-severity bug**. Coat faces changed after the part has entered the cell never reach `self.part`, because `_part_key` ignores coat faces. Surface mode then plans with a stale selection and is not marked out of date. The fix is spelled out in `R3-1.md` and has an xfail test. R3's other point, "Simple/Advanced changes nothing", is out of date now that E1b is merged. R3 also added a slow (~5 min) end-to-end test, `tests/test_workflow.py`, which passes for Layers with all patterns, purge and tilt.
-- **G1 (`wp/G1`, not merged, partial):** overrun and beyond-plane turns work with tests. **Bug:** the plane is applied in the part frame, not BASE. It needs `to_base` passed in from `plan_part`. There is no GUI combo yet.
-- **T1 (`wp/T1`, not merged):** new end-to-end tests pass. Every pattern reaches fully on test_block, and Surface mode reaches on test_repair (5 faces) and test_tube. Check whether crosshatch and spiral really differ from zigzag and concentric: they have the same move counts.
-- **X1–X10:** 4-minute agents launched at the very end. Status at the cap:
-
-| Branch | Task | State |
-|---|---|---|
-| `wp/X1` | Call `datums.set_size` from viewer.py (1.2 × the largest XY span of the turntable and faceplate meshes, else 600) | Done, 5 tests passing, not merged. No test covers the sizing itself |
-| `wp/X2` | Drag the purge ghost gun (`Scene._make_purge_widget` → `PositionStep._purge_dragged`) | Done (61ae51c), 7 tests passing, not merged. The drag itself is untested (needs an interactive window); rotation is ignored |
-| `wp/X3` | "Move gun here" button for the purge point (`_purge_ik`, shared with the reach chip) | Done, 5 tests passing, not merged |
-| `wp/X4` | Simple mode opens the Advanced section when it holds changes; hidden text fields not counted as changed | Done, 3 tests passing, not merged |
-| `wp/X5` | At most 10° gun turn per move on tilted contours | Done (a319ed9), 11 tests passing, not merged. At 90° corners the gun turns at most about 6.3° per pose (was 45°). Also changes `outward_normals` smoothing; very sharp corners (under about 30°) can still jump |
-| `wp/X6` | Lift Surface-mode turns off the surface | Done (c855f47), 5 tests passing, not merged. Each turn has a midpoint raised one standoff along the averaged normal; there is no clearance check, so a very wide turn over a strongly curved part could still pass close. It changed two existing tests' expected values on purpose |
-| `wp/X7` | README matches Simple/Advanced and purge save | **Merged** |
-| `wp/X8` | `approach_mm` spin box in the purge section | Done (4f88dce), 4 tests passing, not merged |
-| `wp/X9` | Ctrl+1..5 step shortcuts and Ctrl+G Generate | Done (44affdb), 1 test passing, not merged. Ctrl+G is never triggered in the test |
-| `wp/X10` | `tessellate_bodies` meshes once (`meshed=True` flag) | Done; test_part and KRL regression pass (26), hashes unchanged; not merged |
-
-X2, X3 and X8 all edit the purge section in `gui/steps/position.py`: merge them one at a time and expect small conflicts.
-- **R1 (`wp/R1`, not merged, full suite 419 passing on the branch):** fixed a **high-severity bug**: purge moves weren't rolled, because the roll was applied before `add_purge`, so exported purge poses differed from the ones checked for reach. Also made `skipped_points` a proper field so it survives roll, transform and purge, and made `estimate_time_s` count dwell. Open questions: Surface-mode `approach` tags may trigger every-N purges, and there's no message when an out-of-reach purge point makes auto-position fail.
-- **R2b (`wp/R2b`, not merged, 46 tests passing):** clear `ValueError`s for wrong constraint entity types and unsupported faces, and `grow_tangent` now stays in one body and is no longer quadratic.
-- **A3 (`wp/A3`, not merged, partial):** Constraints section (`gui/constraints_panel.py`) with touch, align, distance, parallel, perpendicular, angle and centre, picked from combos, plus a solve hook in position.py. Not done: picking in 3D, centre_between and fix rows. Note: `test_constraints.py::test_fast` (under 50 ms) is flaky under load.
-- **M2:** the full suite passed on main at `03cd818` (after the E1b merge): **419 passed**, nothing failed, and the import check passed. It needed no fixes, so `wp/M2-fix` holds only its report. Merges after `03cd818` (F2b, DOC1, DOC2, X7) have **not** been run through the full suite. Five leftover `getattr` fallbacks for fields that now exist (pipeline.py 146–148, layers.py 44 and 49) do no harm; tidy them up when convenient.
-- **Suggested merge order next session:** R1, R2b, T1, A3, G1 (fix its frame bug first), R3 (apply its fix #1), then X10, X1, X4, X9, X3, X8, X2, X6, X5. Every agent has now reported.
+## Housekeeping
+- Worktrees for every branch above are still in `C:\Users\qrb21117\worktrees\cs-*`. Remove each with `git worktree remove` after its branch merges. If a `.git\worktrees\<name>` folder is left behind locked, PowerShell `Remove-Item -Recurse -Force` cleared it this session.
+- Reports for each agent are in `plans/reports/<name>-<n>.md` on its branch, and on `main` once merged.
