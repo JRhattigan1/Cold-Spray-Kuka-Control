@@ -42,7 +42,7 @@ Two features, committed together on `surface-patterns` (from `main` at `3324d09`
   - Picking happens in part-CAD with `vtkCellPicker.GetPickPosition()`. Check the click point is right when the section view is on.
 
 **Next:**
-1. Run the full suite on `surface-patterns`. It was started and hadn't finished at the end of the session.
+1. Run the full suite on `surface-patterns` again. With the Surface pattern change only, before the KRL base work, it passed 521 plus 3 xfails in 12 minutes. The KRL base change has only had its own tests and the KRL tests.
 2. Check by hand in the app (`.\run`):
    - Surface mode with each pattern on the tube end;
    - pick a KRL base on `test_block` and save the KRL, then check the header and the `BAS(#BASE, 2)` line.
