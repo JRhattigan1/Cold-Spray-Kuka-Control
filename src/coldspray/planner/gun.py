@@ -21,7 +21,6 @@ import numpy as np
 
 from coldspray.cell import base_world, robroot
 from coldspray.toolpath.model import Toolpath
-from coldspray.transforms import frame
 
 VERTICAL = 0.9          # |spray . up| above this: too near vertical to level
 
@@ -43,20 +42,41 @@ def level_gun(path: Toolpath, cell, wrist, angle_deg: float = 0.0) -> Toolpath:
     side = robroot(cell)[:3, 3] - base_world(cell)[:3, 3]           # towards the robot, WORLD
     side[2] = 0.0
     side = side / np.linalg.norm(side) if np.linalg.norm(side) > 1e-9 else np.array([1.0, 0.0, 0.0])
-    moves, held = [], None                                          # held: wrist direction, WORLD
-    for m, axes in zip(path.moves, path.axis_values()):
-        bw = base_world(cell, axes)[:3, :3]
-        r = bw @ m.pose[:3, :3]                                     # tool axes in WORLD
-        x = r[:, 0]
+    n = len(path.moves)
+    poses = np.empty((n, 4, 4))
+    for i, m in enumerate(path.moves):
+        poses[i] = m.pose
+    bws, rots = {}, np.empty((n, 3, 3))                             # base rotation once per distinct table position
+    for i, axes in enumerate(path.axis_values()):
+        key = tuple(sorted(axes.items()))
+        if key not in bws:
+            bws[key] = base_world(cell, axes)[:3, :3]
+        rots[i] = bws[key]
+    r_all = rots @ poses[:, :3, :3]                                 # tool axes in WORLD
+    xs, cur_all = r_all[:, :, 0], r_all @ w
+    turns = np.empty(n)
+    held = None                                                     # wrist direction, WORLD
+    for i in range(n):                                              # sequential: each pose carries the last
+        x, cur = xs[i], cur_all[i]
         options = ([held] if held is not None else []) + ([up] if held is not None or abs(x @ up) <= VERTICAL
                                                            else []) + [side]
         for want in options:                                        # first one not along the spray
             d = want - (want @ x) * x
-            if np.linalg.norm(d) > 0.1:
+            nd = np.sqrt(d @ d)
+            if nd > 0.1:
                 break
-        d /= np.linalg.norm(d)
-        cur = r @ w
-        turn = np.degrees(np.arctan2(x @ np.cross(cur, d), cur @ d))
+        d = d / nd
+        c = cur @ d
+        s = x @ (np.array([cur[1] * d[2] - cur[2] * d[1], cur[2] * d[0] - cur[0] * d[2],
+                           cur[0] * d[1] - cur[1] * d[0]]))
+        turns[i] = np.arctan2(s, c)
         held = d
-        moves.append(replace(m, pose=m.pose @ frame(c=turn + angle_deg), axes=dict(m.axes)))
+    turns += np.radians(angle_deg)
+    cs, sn = np.cos(turns), np.sin(turns)
+    new = poses[:, :3, :3].copy()                                   # pose @ rotation about tool X
+    y, z = poses[:, :3, 1], poses[:, :3, 2]
+    new[:, :, 1] = y * cs[:, None] + z * sn[:, None]
+    new[:, :, 2] = -y * sn[:, None] + z * cs[:, None]
+    poses[:, :3, :3] = new
+    moves = [replace(m, pose=poses[i], axes=dict(m.axes)) for i, m in enumerate(path.moves)]
     return replace(path, moves=moves)
