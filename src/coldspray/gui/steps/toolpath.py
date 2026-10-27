@@ -97,6 +97,60 @@ def advanced_row(text: str, box: QWidget, default) -> QWidget:
     return widgets.advanced(row, changed=lambda: box_differs(box, default), chip=chip)
 
 
+PLANES = ("XY", "XZ", "YZ")
+
+
+def split_plane(spec: str) -> tuple[str, float]:
+    """"NAME" / "datum:NAME" / "NAME:offset" -> (NAME or "" , offset mm)."""
+    name, offset = spec.removeprefix("datum:"), 0.0
+    head, _, tail = name.rpartition(":")
+    try:
+        offset, name = float(tail), head
+    except ValueError:
+        pass
+    return (name if name in PLANES else ""), offset
+
+
+def join_plane(name: str, offset: float) -> str:
+    """Inverse of split_plane: "" for no plane, else "NAME" or "NAME:offset"."""
+    if not name:
+        return ""
+    return f"{name}:{offset:g}" if offset else name
+
+
+def plane_row(edit: QLineEdit, on_change) -> QWidget:
+    """Datum plane combo + offset spin that write the turn_plane string into `edit`."""
+    row = QWidget()
+    h = QHBoxLayout(row)
+    h.setContentsMargins(0, 0, 0, 0)
+    combo, spin = QComboBox(), QDoubleSpinBox()
+    combo.addItem("none", "")
+    for n in PLANES:
+        combo.addItem(f"datum {n}", n)
+    spin.setRange(-100000.0, 100000.0)
+    spin.setDecimals(2)
+    spin.setSuffix(" mm")
+    spin.setKeyboardTracking(False)
+    name, offset = split_plane(edit.text())
+    combo.setCurrentIndex(combo.findData(name))
+    spin.setValue(offset)
+    spin.setEnabled(bool(name))
+
+    def changed(*_):
+        spin.setEnabled(bool(combo.currentData()))
+        edit.setText(join_plane(combo.currentData(), spin.value()))
+        on_change()
+
+    combo.currentIndexChanged.connect(changed)
+    spin.valueChanged.connect(changed)
+    combo.setToolTip(edit.toolTip())
+    h.addWidget(QLabel("Turn plane"))
+    h.addWidget(combo, 1)
+    h.addWidget(spin)
+    row.combo, row.spin = combo, spin
+    return row
+
+
 def estimate_time_s(path, proc: ProcessConfig) -> float:
     """Rough program time: robot moves at their speed over the part, plus spray settling.
     Pure table rotations count at their speed over the part too; dwells add their wait."""
@@ -139,6 +193,9 @@ class ToolpathStep:
             box = make_process_box(name, info, getattr(proc, name), self._process_changed)
             self.fields[name] = box
             if isinstance(box, QLineEdit):
+                if name == "turn_plane":
+                    self.plane_row = plane_row(box, self._process_changed)
+                    advanced_form.addRow(self.plane_row)
                 continue            # free text (e.g. a datum plane name): set elsewhere, not in the form
             text, _ = _label(name)
             if field_level(name) == "basic":
@@ -150,7 +207,7 @@ class ToolpathStep:
         layout.addWidget(proc_box)
         layout.addWidget(self.advanced_section)
         widgets.on_mode_changed(lambda _mode: self._sync_advanced())
-        self._sync_advanced()
+        self._process_changed()
 
         self.generate_btn = primary_button("Generate toolpath", self.generate)
         self.save_settings_btn = QPushButton("Save as default")
@@ -180,7 +237,10 @@ class ToolpathStep:
     def _process_changed(self, *_):
         """An edited process value: re-sync the advanced rows; a toolpath is now out of date."""
         self._sync_advanced()
-        if self.result is not None:
+        row = getattr(self, "plane_row", None)
+        if row is not None:             # the plane only matters when passes turn beyond it
+            row.setVisible(box_value(self.fields["turn_mode"]) == "beyond_plane")
+        if getattr(self, "result", None) is not None:
             self._invalidate(TOOLPATH)
 
     def _sync_advanced(self):
