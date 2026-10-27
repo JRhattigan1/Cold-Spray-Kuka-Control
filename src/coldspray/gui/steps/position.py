@@ -102,6 +102,7 @@ class PositionStep:
         layout.addWidget(place_box)
         self.constraints = ConstraintsPanel()
         self.constraints.changed.connect(lambda: self.part is not None and self._set_placement(self.part.placement))
+        self.constraints.message.connect(lambda m: self._status(m))
         layout.addWidget(widgets.advanced(self.constraints))
 
         sub_box = self.sub_section = Section("Substrate plate")
@@ -228,6 +229,7 @@ class PositionStep:
         self.scene.set_part(self.part)
         self.scene.set_constrained(self._kept())
         self.scene.highlight_face(self.part.start_face)
+        self.constraints.set_scene(self.scene)            # rows pick their faces in this view
         self.cell_part_label.setText(f"<b>{src.name}</b>: {self.part.n_bodies} bodies in the cell"
                                      if self.part.n_bodies > 1 else f"<b>{src.name}</b>")
         self._enter_setup()
