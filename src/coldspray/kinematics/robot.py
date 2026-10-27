@@ -57,7 +57,21 @@ class Robot:
         candidates.sort(key=lambda v: np.max(np.abs(v - seed)))
         return candidates
 
-    def ik_path(self, poses, seed_deg=HOME_DEG) -> np.ndarray:
+    def ik_all(self, tcp_pose) -> list[np.ndarray]:
+        """Every in-limit joint solution for a TCP pose (A6 also at +-360 deg), unsorted."""
+        flange = np.asarray(tcp_pose) @ np.linalg.inv(self.tool)
+        target = flange @ np.linalg.inv(self._opw_to_kuka)
+        out = []
+        for sol in opw.inverse(self.params, target):
+            q = np.degrees(sol)
+            for turn in (-360.0, 0.0, 360.0):
+                v = q.copy()
+                v[5] += turn
+                if self.within_limits(v):
+                    out.append(v)
+        return out
+
+    def ik_path(self, poses, seed_deg=HOME_DEG, hint=None) -> np.ndarray:
         """Joint angles for a sequence of TCP poses, each solved from the
         previous one so the arm configuration stays continuous.
         Unreachable poses give a row of NaN.
@@ -65,6 +79,8 @@ class Robot:
         out = np.full((len(poses), 6), np.nan)
         seed = np.asarray(seed_deg, dtype=float)
         for i, pose in enumerate(poses):
+            if hint is not None and not np.isnan(hint[i, 0]):
+                seed = np.asarray(hint[i], dtype=float)     # solver's chosen configuration
             sols = self.ik(pose, seed)
             if sols:
                 out[i] = seed = sols[0]
