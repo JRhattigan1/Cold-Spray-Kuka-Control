@@ -41,7 +41,7 @@
 ## Liquid Glass UI overhaul: merged on `surface-patterns`, NEEDS FIXING FIRST
 - **What was done:**
   - Code consolidation `91ecd77`, full suite 619 passed: one OPW forward/inverse implementation (batch), `Robot.link_frames_batch`, `cell.base_worlds`, no config getattr fallbacks, `Toolpath.zigzag_regions`.
-  - 13 UI agents merged, U1–U13 except U2 (step bar), which was still running at the end. Its branch is `wp/U2`.
+  - All 14 UI agents are merged (U1–U13, U16).
   - `tools/ui_screenshots.py OUTDIR [--theme dark]` renders every step to PNG. Use it to check the look.
 - **Seen in the light screenshot of the Toolpath step:**
   - Spin boxes show no values: text colour or glass fill in the U1 QSS or the U11 card.
