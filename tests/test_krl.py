@@ -79,3 +79,24 @@ def test_unreachable_ptp_raises(setup):
     path = Toolpath("bad", [Move(frame(9000, 0, 0), 100, kind="PTP")])
     with pytest.raises(KRLError):
         to_krl(path, robot, cell, proc)
+
+
+def test_dwell_waits_after_the_point_without_blending(setup):
+    robot, cell, proc = setup
+    path = plate_raster(proc, 100, 100)
+    i = next(i for i, m in enumerate(path.moves) if m.gun_on and m.kind == "LIN") + 1
+    path.moves[i].dwell_s = 1.5
+    lines = to_krl(path, robot, cell, proc).splitlines()
+    w = lines.index("WAIT SEC 1.5  ;dwell")
+    assert lines[w - 1].startswith("LIN") and not lines[w - 1].endswith("C_DIS")
+    assert lines[w + 1].startswith("LIN")
+    assert sum(l.startswith("WAIT SEC 1.5") for l in lines) == 1
+
+
+def test_dwell_after_ptp(setup):
+    robot, cell, proc = setup
+    path = _rotate_in_place(robot, cell)
+    path.moves[0].dwell_s = 2
+    lines = to_krl(path, robot, cell, proc).splitlines()
+    w = lines.index("WAIT SEC 2  ;dwell")
+    assert lines[w - 1].startswith("PTP {A1") and "E1" in lines[w - 1]

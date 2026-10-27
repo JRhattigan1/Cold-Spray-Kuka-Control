@@ -14,7 +14,8 @@ Turntable modes (cell.turntable.coupled):
                 both take the planned time (speed over the part).
 
 Spray on/off uses WAIT SEC to stop the advance run, so outputs switch exactly
-when the robot reaches the point rather than early.
+when the robot reaches the point rather than early. A move's `dwell_s` is a
+WAIT SEC after it (e.g. at a powder purge point).
 """
 
 import numpy as np
@@ -92,6 +93,11 @@ def to_krl(path: Toolpath, robot: Robot, cell: CellConfig, proc: ProcessConfig) 
             vel[var] = text
             lines.append(f"{var} = {text}" + (f"  ;{comment}" if comment else ""))
 
+    def dwell(m):
+        """Wait at the point; the move there is never blended, so the robot stops on it."""
+        if m.dwell_s > 0:
+            lines.append(f"WAIT SEC {m.dwell_s:g}  ;dwell")
+
     for i, m in enumerate(moves):
         if m.gun_on != gun_on:
             lines += ["WAIT SEC 0", f"{gun} = {'TRUE' if m.gun_on else 'FALSE'}"]
@@ -105,6 +111,7 @@ def to_krl(path: Toolpath, robot: Robot, cell: CellConfig, proc: ProcessConfig) 
                 raise KRLError(f"move {i}: PTP target is unreachable")
             seed = sols[0]
             lines.append(f"PTP {_axis(seed, e1 | table[i])}")
+            dwell(m)
             continue
 
         if i == 0 or coupled or not tt:
@@ -128,8 +135,9 @@ def to_krl(path: Toolpath, robot: Robot, cell: CellConfig, proc: ProcessConfig) 
                     if deg > 1e-9 and limits[k]:
                         set_vel(f"$VEL_EXTAX[{k[1:]}]", min(100.0, 100.0 * deg / t / limits[k]))
         nxt = moves[i + 1] if i + 1 < len(moves) else None
-        blend = nxt is not None and nxt.gun_on == m.gun_on and nxt.kind == "LIN"
+        blend = nxt is not None and nxt.gun_on == m.gun_on and nxt.kind == "LIN" and not m.dwell_s
         lines.append(f"LIN {_pos(cartesian(i), table[i])}" + (" C_DIS" if blend else ""))
+        dwell(m)
 
     if gun_on:
         lines += ["WAIT SEC 0", f"{gun} = FALSE"]
