@@ -4,10 +4,15 @@ Their look comes from the app stylesheet (gui/style.py), through object names an
 Qt properties: chip `kind`, section header `open`, button `primary`, label `note`.
 """
 
-from PySide6.QtCore import Qt, Signal
+from dataclasses import dataclass
+from typing import Callable
+
+import shiboken6
+from PySide6.QtCore import QSettings, Qt, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
-    QDoubleSpinBox, QFrame, QHBoxLayout, QLabel, QLayout, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
+    QButtonGroup, QDoubleSpinBox, QFrame, QHBoxLayout, QLabel, QLayout, QPushButton, QSizePolicy, QVBoxLayout,
+    QWidget,
 )
 
 CHIP_KINDS = ("good", "bad", "warn", "crash", "neutral")
@@ -144,3 +149,131 @@ def wrap_label(text: str = "") -> QLabel:
     label = QLabel(text)
     label.setWordWrap(True)
     return label
+
+
+# --- Simple / Advanced mode ---------------------------------------------------------
+# Widgets most users won't need are registered with `advanced(w)`; Simple mode hides them.
+# A registered widget can pass `changed`: while it returns True (the value differs from the
+# default) the widget stays visible in Simple mode and its `chip` says "changed", so Simple
+# mode never hides a value that changes the output. Call `refresh()` after such values change.
+
+SIMPLE, ADVANCED = "simple", "advanced"
+SETTINGS_SCOPE = ("ColdSpray", "KukaControl")    # QSettings organisation, application
+MODE_KEY = "ui/mode"
+
+
+@dataclass
+class _Entry:
+    widget: QWidget
+    changed: Callable[[], bool] | None = None
+    chip: Chip | None = None
+
+
+_entries: list[_Entry] = []
+_mode = ADVANCED
+_listeners: list[Callable[[str], None]] = []
+
+
+def settings() -> QSettings:
+    """The app's persistent settings (Windows registry under SETTINGS_SCOPE)."""
+    return QSettings(*SETTINGS_SCOPE)
+
+
+def mode() -> str:
+    return _mode
+
+
+def is_simple() -> bool:
+    return _mode == SIMPLE
+
+
+def advanced(widget: QWidget, changed: Callable[[], bool] | None = None, chip: Chip | None = None) -> QWidget:
+    """Register `widget` as Advanced-only and apply the current mode to it; returns it.
+
+    changed: () -> bool, True when the value differs from its default (keeps it shown in Simple).
+    chip: a Chip shown as "changed" when that is why the widget is visible in Simple mode.
+    """
+    _entries.append(_Entry(widget, changed, chip))
+    _apply(_entries[-1])
+    return widget
+
+
+def set_mode(new: str):
+    """Switch every registered widget to SIMPLE or ADVANCED and tell the listeners."""
+    global _mode
+    if new not in (SIMPLE, ADVANCED):
+        raise ValueError(f"mode must be {SIMPLE!r} or {ADVANCED!r}")
+    _mode = new
+    refresh()
+    for fn in list(_listeners):
+        fn(new)
+
+
+def on_mode_changed(fn: Callable[[str], None]):
+    """Call fn(mode) after every mode switch (e.g. to re-lay out a form)."""
+    _listeners.append(fn)
+
+
+def refresh():
+    """Re-apply the mode, e.g. after an advanced value was edited; drops deleted widgets."""
+    _entries[:] = [e for e in _entries if shiboken6.isValid(e.widget)]
+    for e in _entries:
+        _apply(e)
+
+
+def hidden_count() -> int:
+    """How many registered widgets the current mode hides."""
+    return sum(1 for e in _entries if shiboken6.isValid(e.widget) and e.widget.isHidden())
+
+
+def _apply(e: _Entry):
+    changed = bool(e.changed and e.changed())
+    e.widget.setVisible(_mode == ADVANCED or changed)
+    if e.chip is not None and shiboken6.isValid(e.chip):
+        e.chip.set("changed" if changed and _mode == SIMPLE else "", "warn")
+
+
+def _reset_mode_state():
+    """Forget all registrations and listeners (tests)."""
+    global _mode
+    _entries.clear()
+    _listeners.clear()
+    _mode = ADVANCED
+
+
+class ModeToggle(QWidget):
+    """The `Simple | Advanced` segmented switch for the header. Reads the saved mode on
+    creation, applies it with `set_mode`, and saves every change to `store` (QSettings)."""
+
+    def __init__(self, store: QSettings | None = None, parent=None):
+        super().__init__(parent)
+        self.setObjectName("modeToggle")
+        self.store = store if store is not None else settings()
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(2)
+        self.group = QButtonGroup(self)
+        self.buttons: dict[str, QPushButton] = {}
+        for key, text, tip in ((SIMPLE, "Simple", "Show the settings most jobs need"),
+                               (ADVANCED, "Advanced", "Show every setting")):
+            btn = QPushButton(text)
+            btn.setCheckable(True)
+            btn.setToolTip(tip)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setProperty("step", True)          # reuse the step-pill look from the stylesheet
+            btn.clicked.connect(lambda _=False, k=key: self.choose(k))
+            self.group.addButton(btn)
+            self.buttons[key] = btn
+            row.addWidget(btn)
+        saved = self.store.value(MODE_KEY, SIMPLE)
+        self.choose(saved if saved in (SIMPLE, ADVANCED) else SIMPLE, save=False)
+
+    def choose(self, key: str, save: bool = True):
+        set_mode(key)
+        for k, btn in self.buttons.items():
+            btn.setChecked(k == key)
+            btn.setProperty("state", "current" if k == key else "todo")
+            _repolish(btn)
+        if save:
+            self.store.setValue(MODE_KEY, key)
+            self.store.sync()
