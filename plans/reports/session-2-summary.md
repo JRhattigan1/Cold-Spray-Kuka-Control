@@ -44,14 +44,14 @@ Written by the coordinator just before the session cap. **Read this first next s
 | Branch | Task | State |
 |---|---|---|
 | `wp/X1` | Call `datums.set_size` from viewer.py (1.2 × the largest XY span of the turntable and faceplate meshes, else 600) | Done, 5 tests passing, not merged. No test covers the sizing itself |
-| `wp/X2` | Drag the purge ghost gun | **No commits by the cap.** Redo |
+| `wp/X2` | Drag the purge ghost gun (`Scene._make_purge_widget` → `PositionStep._purge_dragged`) | Done (61ae51c), 7 tests passing, not merged. The drag itself is untested (needs an interactive window); rotation is ignored |
 | `wp/X3` | "Move gun here" button for the purge point (`_purge_ik`, shared with the reach chip) | Done, 5 tests passing, not merged |
 | `wp/X4` | Simple mode opens the Advanced section when it holds changes; hidden text fields not counted as changed | Done, 3 tests passing, not merged |
 | `wp/X5` | At most 10° gun turn per move on tilted contours | **No commits by the cap.** Redo |
 | `wp/X6` | Lift Surface-mode turns off the surface | **No commits by the cap.** Redo |
 | `wp/X7` | README matches Simple/Advanced and purge save | **Merged** |
-| `wp/X8` | `approach_mm` spin box in the purge section | Committed (4f88dce); no report seen yet. Check its tests |
-| `wp/X9` | Ctrl+1..5 step shortcuts and Ctrl+G Generate | Committed (44affdb); no report seen yet. Check its tests |
+| `wp/X8` | `approach_mm` spin box in the purge section | Done (4f88dce), 4 tests passing, not merged |
+| `wp/X9` | Ctrl+1..5 step shortcuts and Ctrl+G Generate | Done (44affdb), 1 test passing, not merged. Ctrl+G is never triggered in the test |
 | `wp/X10` | `tessellate_bodies` meshes once (`meshed=True` flag) | Done; test_part and KRL regression pass (26), hashes unchanged; not merged |
 
 X2, X3 and X8 all edit the purge section in `gui/steps/position.py`: merge them one at a time and expect small conflicts.
@@ -59,4 +59,4 @@ X2, X3 and X8 all edit the purge section in `gui/steps/position.py`: merge them 
 - **R2b (`wp/R2b`, not merged, 46 tests passing):** clear `ValueError`s for wrong constraint entity types and unsupported faces, and `grow_tangent` now stays in one body and is no longer quadratic.
 - **A3 (`wp/A3`, not merged, partial):** Constraints section (`gui/constraints_panel.py`) with touch, align, distance, parallel, perpendicular, angle and centre, picked from combos, plus a solve hook in position.py. Not done: picking in 3D, centre_between and fix rows. Note: `test_constraints.py::test_fast` (under 50 ms) is flaky under load.
 - **M2:** no report by the cap. Check `wp/M2-fix`.
-- **Suggested merge order next session:** R1, R2b, T1, A3, G1 (fix its frame bug first), R3 (apply its fix #1), then X10, X1, X4, X9, X3, X8. Redo X2, X5 and X6.
+- **Suggested merge order next session:** R1, R2b, T1, A3, G1 (fix its frame bug first), R3 (apply its fix #1), then X10, X1, X4, X9, X3, X8, X2. Redo X5 (contour tilt rate limit) and X6 (Surface turn lift).
