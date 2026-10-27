@@ -10,8 +10,8 @@ styling and icons; there are no colours here.
 """
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QAction, QActionGroup
-from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QMenu, QSpinBox, QToolButton, QWidget,
+from PySide6.QtGui import QAction, QActionGroup, QColor, QPainter, QPainterPath, QPen
+from PySide6.QtWidgets import (QFrame, QGraphicsDropShadowEffect, QHBoxLayout, QLabel, QMenu, QSizePolicy, QSpinBox, QToolButton, QWidget,
                                QWidgetAction)
 
 PRESETS = {
@@ -24,6 +24,30 @@ PRESETS = {
     "side": ("Side", "View from the side", ("cell", "part")),
     "bottom": ("Bottom", "View from below", ("part",)),
 }
+
+
+def _rgba(hex_colour: str, alpha: float) -> str:
+    c = QColor(hex_colour)
+    return f"rgba({c.red()},{c.green()},{c.blue()},{int(alpha * 255)})"
+
+
+def glass_button_qss(t: dict | None = None) -> str:
+    """Round glass buttons: faint translucent fill on hover, orange tint when checked."""
+    from coldspray.gui.style import tokens
+    t = t or tokens()
+    return f"""
+QToolButton {{ background: transparent; border: 1px solid transparent; border-radius: 14px;
+    padding: 3px 10px; min-height: 22px; color: {t['ink']}; }}
+QToolButton:hover {{ background: {_rgba(t['ink'], 0.08)}; border-color: {_rgba('#ffffff', 0.35)}; }}
+QToolButton:pressed {{ background: {_rgba(t['ink'], 0.16)}; }}
+QToolButton:checked {{ background: {_rgba(t['accent'], 0.22)}; border: 1px solid {_rgba(t['accent'], 0.7)};
+    color: {t['accent']}; }}
+QToolButton:disabled {{ color: {t['muted']}; }}
+QToolButton::menu-indicator {{ image: none; width: 0px; }}
+QToolButton::menu-button {{ border: none; width: 12px; }}
+"""
+
+
 LAYER_MODES = (("all", "All layers"), ("upto", "Up to layer"), ("only", "Only layer"))
 
 
@@ -37,8 +61,15 @@ class ViewBar(QWidget):
         self.target, self.render, self.kind = target, render, kind
         self.setObjectName(f"view_bar_{kind}")
         row = QHBoxLayout(self)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(2)
+        row.setContentsMargins(10, 4, 10, 4)
+        row.setSpacing(3)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(18)
+        shadow.setOffset(0, 3)
+        shadow.setColor(QColor(0, 0, 0, 70))
+        self.setGraphicsEffect(shadow)
+        self.apply_glass()
         self.buttons: dict[str, QToolButton] = {}
 
         for name, (label, tip, kinds) in PRESETS.items():
@@ -121,8 +152,29 @@ class ViewBar(QWidget):
             b.setPopupMode(QToolButton.InstantPopup)
             row.addWidget(b)
             self.layer_mode = "all"
-        row.addStretch(1)
+        self.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)   # a capsule, not a full-width bar
         self.refresh()
+
+    def apply_glass(self):
+        """(Re)read the theme tokens: restyle the buttons; the capsule is painted in paintEvent."""
+        from coldspray.gui.style import tokens
+        self._tokens = t = tokens()
+        self.setStyleSheet(glass_button_qss(t) + f"QFrame#view_sep {{ color: {_rgba(t['ink'], 0.15)}; }}")
+        self.update()
+
+    def paintEvent(self, _event):
+        t = self._tokens
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        r = self.rect().adjusted(2, 2, -2, -4)
+        path = QPainterPath()
+        path.addRoundedRect(r, r.height() / 2, r.height() / 2)
+        fill = QColor(t["panel"])
+        fill.setAlpha(158)
+        p.fillPath(path, fill)
+        hi = QColor(255, 255, 255, 140)
+        p.setPen(QPen(hi, 1))
+        p.drawPath(path)
 
     def _button(self, name: str, label: str, tip: str) -> QToolButton:
         b = QToolButton(self)

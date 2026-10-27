@@ -6,6 +6,7 @@
 
 from PySide6.QtWidgets import QDoubleSpinBox, QHBoxLayout, QLabel, QMenu, QToolButton, QWidget, QWidgetAction
 
+from coldspray.gui.view_bar import glass_button_qss
 from coldspray.sim.datums import NORMALS
 
 
@@ -33,6 +34,7 @@ def marker_button(scene, plotter) -> QToolButton:
         act.toggled.connect(lambda on, kind=kind: (scene.set_marker_visible(kind, on), plotter.render()))
         button.actions_by_kind[kind] = act
     button.setMenu(menu)
+    button.setStyleSheet(glass_button_qss())
     return button
 
 
@@ -58,6 +60,7 @@ def datum_button(scene, plotter) -> QToolButton:
         menu.addAction(wa)
         button.actions_by_plane[k] = (act, off)
     button.setMenu(menu)
+    button.setStyleSheet(glass_button_qss())
     return button
 
 
