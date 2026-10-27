@@ -6,7 +6,7 @@ follows the travel direction. A move may also set external axes (turntable
 tilt and rotation, degrees); axes it doesn't mention keep their previous value.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
 import numpy as np
@@ -22,6 +22,8 @@ class Move:
     gun_on: bool = False              # spray state during this move
     kind: Literal["LIN", "PTP"] = "LIN"
     axes: dict[str, float] = field(default_factory=dict)  # e.g. {"E2": 0.0, "E5": 90.0}
+    tag: str = ""                     # what the move is for: contour, infill, turn, jump, purge, approach
+    dwell_s: float = 0.0              # wait this long at the point after arriving
 
 
 @dataclass
@@ -52,15 +54,13 @@ class Toolpath:
         return out
 
     def transformed(self, t: np.ndarray) -> "Toolpath":
-        """Copy with every pose replaced by `t @ pose` (speeds, spray state and axes kept)."""
-        return Toolpath(self.name, [Move(t @ m.pose, m.speed, m.gun_on, m.kind, dict(m.axes))
-                                    for m in self.moves])
+        """Copy with every pose replaced by `t @ pose` (everything else kept)."""
+        return Toolpath(self.name, [replace(m, pose=t @ m.pose, axes=dict(m.axes)) for m in self.moves])
 
     def rolled(self, deg: float) -> "Toolpath":
         """Copy with the gun turned `deg` about its spray axis (tool X) at every pose."""
         r = frame(c=deg)
-        return Toolpath(self.name, [Move(m.pose @ r, m.speed, m.gun_on, m.kind, dict(m.axes))
-                                    for m in self.moves])
+        return Toolpath(self.name, [replace(m, pose=m.pose @ r, axes=dict(m.axes)) for m in self.moves])
 
     def sample(self, step: float = 5.0, angle_step: float = 2.0) -> Samples:
         """Points every ~`step` mm (and every ~`angle_step` degrees of external

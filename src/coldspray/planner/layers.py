@@ -87,6 +87,7 @@ def plan_layers(layers: list[Layer], proc: ProcessConfig, name="part", table_axe
         angle = (layer.index * proc.raster_angle_step_deg) % 180
         infill_area = layer.region.buffer(-proc.contour_passes * proc.step_over_mm)
         strokes = contour_loops(layer.region, proc)
+        n_contour = len(strokes)
         start = strokes[0][0] if strokes else np.zeros(2)
         strokes += _order(raster_segments(infill_area, proc.step_over_mm, angle), start)
         if not strokes:
@@ -95,18 +96,20 @@ def plan_layers(layers: list[Layer], proc: ProcessConfig, name="part", table_axe
         first = strokes[0][0]
         kind = "PTP" if not path.moves else "LIN"
         path.moves.append(Move(at(first, z + proc.approach_height_mm), proc.rapid_speed_mm_s, kind=kind,
-                               axes=dict(table_axes or {}) if kind == "PTP" else {}))
-        path.moves.append(Move(at(first, z), proc.rapid_speed_mm_s))
-        for stroke in strokes:
+                               axes=dict(table_axes or {}) if kind == "PTP" else {}, tag="approach"))
+        path.moves.append(Move(at(first, z), proc.rapid_speed_mm_s, tag="approach"))
+        for k, stroke in enumerate(strokes):
             here = path.moves[-1].pose[:2, 3]
             if np.linalg.norm(stroke[0] - here) > 1.5 * proc.step_over_mm:
                 up = z + proc.jump_height_mm
                 for p, h in ((here, up), (stroke[0], up), (stroke[0], z)):
-                    path.moves.append(Move(at(p, h), proc.rapid_speed_mm_s, gun_on=True))
-            for p in stroke:
+                    path.moves.append(Move(at(p, h), proc.rapid_speed_mm_s, gun_on=True, tag="jump"))
+            tag = "contour" if k < n_contour else "infill"
+            for i, p in enumerate(stroke):
                 if np.allclose(path.moves[-1].pose[:2, 3], p):
-                    continue
-                path.moves.append(Move(at(p, z), proc.traverse_speed_mm_s, gun_on=True))
+                    continue                                    # the join to a stroke's start is a turn
+                path.moves.append(Move(at(p, z), proc.traverse_speed_mm_s, gun_on=True,
+                                       tag="turn" if i == 0 else tag))
         last = strokes[-1][-1]
-        path.moves.append(Move(at(last, z + proc.approach_height_mm), proc.rapid_speed_mm_s))
+        path.moves.append(Move(at(last, z + proc.approach_height_mm), proc.rapid_speed_mm_s, tag="approach"))
     return path

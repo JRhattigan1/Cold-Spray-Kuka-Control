@@ -58,3 +58,9 @@ def test_toolpath_transformed():
     assert [(m.speed, m.gun_on, m.kind, m.axes) for m in moved.moves] == \
         [(m.speed, m.gun_on, m.kind, m.axes) for m in path.moves]
     assert moved.moves[0].axes is not path.moves[0].axes
+
+
+def test_transformed_and_rolled_keep_tag_and_dwell():
+    p = Toolpath("t", [Move(frame(), 10.0, True, tag="purge", dwell_s=3.0)])
+    for q in (p.transformed(frame(1, 2, 3)), p.rolled(30)):
+        assert (q.moves[0].tag, q.moves[0].dwell_s) == ("purge", 3.0)

@@ -82,6 +82,16 @@ def test_plan_stays_on_part(layers):
     assert np.all(np.linalg.norm(np.diff(pts, axis=0), axis=1) > 1e-9)
 
 
+def test_plan_tags_moves(layers):
+    proc = load_process()
+    path = plan_layers(layers, proc, "block")
+    tags = {m.tag for m in path.moves}
+    assert tags <= {"approach", "contour", "infill", "turn", "jump"} and {"contour", "infill"} <= tags
+    assert path.moves[0].tag == path.moves[-1].tag == "approach"
+    assert all(m.gun_on for m in path.moves if m.tag in ("contour", "infill", "turn", "jump"))
+    assert all(m.tag != "jump" for m in path.moves if m.speed == proc.traverse_speed_mm_s)
+
+
 def test_raster_rotates_between_layers(layers):
     proc = load_process()
     seg0 = raster_segments(layers[0].region, 2.0, 0)
