@@ -380,15 +380,23 @@ class PositionStep:
         for axis, box_ in zip("XYZ", self.purge_xyz):
             form.addRow(axis, box_)
         form.addRow("Direction", self.purge_dir)
+        self.purge_custom = [spin(-1, 1, 0, "", decimals=3, tip=f"Custom spray direction, WORLD {a}") for a in "XYZ"]
+        for axis, box_ in zip("XYZ", self.purge_custom):
+            form.addRow(f"  dir {axis}", box_)
+        self.purge_save_btn = QPushButton("Save to cell.yaml")
+        self.purge_save_btn.setToolTip("Write these settings into the purge: block of cell.yaml")
+        self.purge_save_btn.clicked.connect(self._purge_save)
         form.addRow("Dwell", self.purge_dwell)
         form.addRow(self.purge_start)
         form.addRow(self.purge_end)
         form.addRow("Every", self.purge_every)
+        form.addRow(self.purge_save_btn)
         box.add(form)
+        self._purge_form = form
         self.purge_cfg = dict(self.PURGE_DEFAULTS)
         self._purge_loading = False
         self._purge_load()
-        for w in (*self.purge_xyz, self.purge_dwell, self.purge_every):
+        for w in (*self.purge_xyz, *self.purge_custom, self.purge_dwell, self.purge_every):
             w.setKeyboardTracking(False)
             w.valueChanged.connect(self._purge_changed)
         for w in (self.purge_on, self.purge_start, self.purge_end):
@@ -415,6 +423,8 @@ class PositionStep:
         for box, v in zip(self.purge_xyz, c["point"]):
             box.setValue(v)
         self.purge_dir.setCurrentText(preset_for(c["spray_dir"]))
+        for box, v in zip(self.purge_custom, c["spray_dir"]):
+            box.setValue(v)
         self.purge_dwell.setValue(c["dwell_s"])
         self.purge_start.setChecked(c["at_start"])
         self.purge_end.setChecked(c["at_end"])
@@ -428,7 +438,7 @@ class PositionStep:
         c = self.purge_cfg
         name = self.purge_dir.currentText()
         c.update(enabled=self.purge_on.isChecked(), point=tuple(b.value() for b in self.purge_xyz),
-                 spray_dir=DIRECTION_PRESETS.get(name, c["spray_dir"]), dwell_s=self.purge_dwell.value(),
+                 spray_dir=DIRECTION_PRESETS.get(name) or self._purge_custom_dir(c["spray_dir"]), dwell_s=self.purge_dwell.value(),
                  at_start=self.purge_start.isChecked(), at_end=self.purge_end.isChecked(),
                  every_n_layers=int(self.purge_every.value()))
         cell = self._purge_cell()
@@ -436,6 +446,22 @@ class PositionStep:
             from coldspray.models import PurgeConfig
             cell.purge = PurgeConfig(**c)
         self._purge_show()
+
+    def _purge_custom_dir(self, old):
+        """Unit vector from the Custom X/Y/Z boxes (`old` if they are all zero)."""
+        v = np.array([b.value() for b in self.purge_custom])
+        n = np.linalg.norm(v)
+        return tuple(float(x) for x in v / n) if n > 1e-9 else tuple(old)
+
+    def _purge_save(self):
+        from coldspray.config_io import save_purge
+        from coldspray.models import PurgeConfig
+        try:
+            path = save_purge(PurgeConfig(**self.purge_cfg))
+        except (OSError, ValidationError) as e:
+            QMessageBox.warning(self, "Save purge point", f"Could not save: {e}")
+            return
+        self._status(f"Purge point saved to {path}")
 
     def _purge_reachable(self, pose) -> bool | None:
         """Can the robot put the gun at `pose` (WORLD) with the gantry at the current E1?"""
@@ -448,6 +474,9 @@ class PositionStep:
     def _purge_show(self):
         """Move the ghost gun and set the chip: off / reachable / out of reach."""
         c = self.purge_cfg
+        custom = self.purge_dir.currentText() == "Custom"
+        for box in self.purge_custom:
+            self._purge_form.setRowVisible(box, custom)
         pose = marker_pose(c["point"], c["spray_dir"])
         ok = self._purge_reachable(pose) if c["enabled"] else None
         if not c["enabled"]:
