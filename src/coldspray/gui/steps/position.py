@@ -12,11 +12,13 @@ from coldspray.cad.part import (
     Substrate, build_frame, centre_on_faceplate, constrain, drop_on_plate, lower_to_floor, placed_vertices,
     snap_face_down,
 )
+from coldspray.cell import robroot
 from coldspray.gui.stepper import TOOLPATH
 from coldspray.gui.widgets import Section, primary_button, spin, wrap_label
 from coldspray.pipeline import check_placement, plan_part
 from coldspray.planner.position import auto_position, layer_tilts
 from coldspray.sim.cell_model import OPTIONAL
+from coldspray.sim.markers import DIRECTION_PRESETS, marker_pose, preset_for
 from coldspray.sim.viewer import camera_axes
 from coldspray.transforms import frame, xyzabc
 
@@ -125,6 +127,7 @@ class PositionStep:
         self.auto_btn.clicked.connect(self._auto_position)
         cell_box.add(self.auto_btn)
         layout.addWidget(cell_box)
+        layout.addWidget(self._build_purge_section())
 
         show_box = self.show_section = Section("Show")
         self.group_checks = {}
@@ -353,3 +356,103 @@ class PositionStep:
         self.scene.set_part_placement()
         self._show_placement()
         self.sm_moved_part = True
+
+    # --- warm-up / powder purge point (F2) ----------------------------------------
+    # Settings live in `cell.purge` (PurgeConfig) when the model has that field, else
+    # in the plain dict `self.purge_cfg`. The ghost gun shows the purge pose in WORLD.
+    PURGE_DEFAULTS = dict(enabled=False, point=(-884.56, 400.0, 2000.0), spray_dir=(0.0, -1.0, 0.0),
+                          dwell_s=5.0, at_start=True, at_end=True, every_n_layers=0, approach_mm=100.0)
+
+    def _build_purge_section(self) -> Section:
+        box = self.purge_section = Section("Warm-up / purge point")
+        form = QFormLayout()
+        self.purge_on = QCheckBox("Go to the purge point")
+        self.purge_on.setToolTip("Spray on at a point in free space before (and after) the part")
+        self.purge_xyz = [spin(-20000, 20000, 0, " mm", tip=f"Nozzle exit target, WORLD {a}") for a in "XYZ"]
+        self.purge_dir = QComboBox()
+        self.purge_dir.addItems([*DIRECTION_PRESETS, "Custom"])
+        self.purge_dir.setToolTip("Spray direction at the purge point (WORLD)")
+        self.purge_dwell = spin(0, 600, 5, " s", tip="Spray on at the point before moving off")
+        self.purge_start = QCheckBox("At start")
+        self.purge_end = QCheckBox("At end")
+        self.purge_every = spin(0, 1000, 0, " layers", decimals=0, tip="Also go back every N layers (0: never)")
+        form.addRow(self.purge_on)
+        for axis, box_ in zip("XYZ", self.purge_xyz):
+            form.addRow(axis, box_)
+        form.addRow("Direction", self.purge_dir)
+        form.addRow("Dwell", self.purge_dwell)
+        form.addRow(self.purge_start)
+        form.addRow(self.purge_end)
+        form.addRow("Every", self.purge_every)
+        box.add(form)
+        self.purge_cfg = dict(self.PURGE_DEFAULTS)
+        self._purge_loading = False
+        self._purge_load()
+        for w in (*self.purge_xyz, self.purge_dwell, self.purge_every):
+            w.setKeyboardTracking(False)
+            w.valueChanged.connect(self._purge_changed)
+        for w in (self.purge_on, self.purge_start, self.purge_end):
+            w.toggled.connect(self._purge_changed)
+        self.purge_dir.currentIndexChanged.connect(self._purge_changed)
+        box.toggled.connect(lambda on: on and self._purge_load())
+        return box
+
+    def _purge_cell(self):
+        a = getattr(self, "assets", None)
+        return a.cell if a is not None else None
+
+    def _purge_load(self):
+        """Fill the widgets from `cell.purge` if set (else the current settings)."""
+        cell = self._purge_cell()
+        cfg = getattr(cell, "purge", None) if cell is not None else None
+        if cfg is not None:
+            self.purge_cfg = cfg.model_dump() if hasattr(cfg, "model_dump") else dict(cfg)
+        c = self.purge_cfg
+        self._purge_loading = True
+        self.purge_on.setChecked(c["enabled"])
+        for box, v in zip(self.purge_xyz, c["point"]):
+            box.setValue(v)
+        self.purge_dir.setCurrentText(preset_for(c["spray_dir"]))
+        self.purge_dwell.setValue(c["dwell_s"])
+        self.purge_start.setChecked(c["at_start"])
+        self.purge_end.setChecked(c["at_end"])
+        self.purge_every.setValue(c["every_n_layers"])
+        self._purge_loading = False
+        self._purge_show()
+
+    def _purge_changed(self, *_):
+        if self._purge_loading:
+            return
+        c = self.purge_cfg
+        name = self.purge_dir.currentText()
+        c.update(enabled=self.purge_on.isChecked(), point=tuple(b.value() for b in self.purge_xyz),
+                 spray_dir=DIRECTION_PRESETS.get(name, c["spray_dir"]), dwell_s=self.purge_dwell.value(),
+                 at_start=self.purge_start.isChecked(), at_end=self.purge_end.isChecked(),
+                 every_n_layers=int(self.purge_every.value()))
+        cell = self._purge_cell()
+        if cell is not None and "purge" in type(cell).model_fields:
+            from coldspray.models import PurgeConfig
+            cell.purge = PurgeConfig(**c)
+        self._purge_show()
+
+    def _purge_reachable(self, pose) -> bool | None:
+        """Can the robot put the gun at `pose` (WORLD) with the gantry at the current E1?"""
+        a = getattr(self, "assets", None)
+        if a is None:
+            return None
+        cell = self._work_cell()
+        return bool(a.robot.ik(np.linalg.inv(robroot(cell)) @ pose, cell.home_deg))
+
+    def _purge_show(self):
+        """Move the ghost gun and set the chip: off / reachable / out of reach."""
+        c = self.purge_cfg
+        pose = marker_pose(c["point"], c["spray_dir"])
+        ok = self._purge_reachable(pose) if c["enabled"] else None
+        if not c["enabled"]:
+            self.purge_section.set_chip("off")
+        elif ok is None:
+            self.purge_section.set_chip("")
+        else:
+            self.purge_section.set_chip("reachable" if ok else "out of reach", "good" if ok else "bad")
+        if getattr(self, "scene", None) is not None:
+            self.scene.set_purge_marker(pose, visible=c["enabled"], reachable=ok is not False)
