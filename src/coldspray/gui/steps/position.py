@@ -519,4 +519,13 @@ class PositionStep:
         else:
             self.purge_section.set_chip("reachable" if ok else "out of reach", "good" if ok else "bad")
         if getattr(self, "scene", None) is not None:
+            self.scene.on_purge_moved = self._purge_dragged
             self.scene.set_purge_marker(pose, visible=c["enabled"], reachable=ok is not False)
+
+    def _purge_dragged(self, point, final: bool = True):
+        """Ghost gun dragged in the 3-D view: put the point in the X/Y/Z boxes."""
+        for box, v in zip(self.purge_xyz, point):
+            box.blockSignals(True)
+            box.setValue(float(v))
+            box.blockSignals(False)
+        self._purge_changed()
