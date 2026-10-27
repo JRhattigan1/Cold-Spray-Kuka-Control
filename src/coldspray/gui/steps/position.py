@@ -5,7 +5,7 @@ from scipy.spatial.transform import Rotation
 from pydantic import ValidationError
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFormLayout, QGridLayout, QMessageBox, QPushButton, QVBoxLayout,
-    QWidget,
+    QHBoxLayout, QLabel, QWidget,
 )
 
 from coldspray.cad.part import (
@@ -16,7 +16,7 @@ from coldspray.cell import robroot
 from coldspray.gui.constraints_panel import ConstraintsPanel
 from coldspray.gui.stepper import TOOLPATH
 from coldspray.gui import widgets
-from coldspray.gui.widgets import Section, primary_button, spin, wrap_label
+from coldspray.gui.widgets import Chip, Section, primary_button, spin, wrap_label
 from coldspray.models import PurgeConfig
 from coldspray.pipeline import check_placement, plan_part
 from coldspray.planner.position import auto_position, layer_tilts
@@ -36,8 +36,6 @@ class PositionStep:
 
         place_box = self.placement_section = Section("Placement on the faceplate")
         grid = QFormLayout()
-        adv_grid = QFormLayout()                 # Z, B, C: Advanced only
-        adv_grid.setContentsMargins(0, 0, 0, 0)
         self.place = {}
         for key, lo, hi, unit, tip in (
                 ("X", -500, 500, " mm", "Along the faceplate X axis"),
@@ -49,10 +47,12 @@ class PositionStep:
             box = spin(lo, hi, 0, unit, tip=tip)
             box.setKeyboardTracking(False)
             box.valueChanged.connect(self._placement_typed)
-            (grid if key in "XYA" else adv_grid).addRow(key, box)
             self.place[key] = box
+            if key in "XYA":
+                grid.addRow(key, box)
         place_box.add(grid)
-        place_box.add(widgets.advanced(self._holder(adv_grid)))
+        for key in "ZBC":                        # Advanced only, shown in Simple while non-zero
+            place_box.add(self._adv_field(key, self.place[key], 0.0))
         self.keep_on_plate = QCheckBox("Keep on plate")
         self.keep_on_plate.setToolTip("Stand the part on its base face on the plate (or the faceplate)\n"
                                       "and lock Z, B and C. Untick to place it anywhere in 3D\n"
@@ -98,6 +98,8 @@ class PositionStep:
                                   "stands directly on the faceplate")
         self.sub_check.toggled.connect(self._substrate_changed)
         sub_box.add(self.sub_check)
+        sub_chip = Chip()
+        sub_box.add(sub_chip)
         sform = QFormLayout()
         s = self.substrate
         self.sub_fields = {
@@ -110,7 +112,13 @@ class PositionStep:
             box.valueChanged.connect(self._substrate_changed)
             sform.addRow(key.capitalize(), box)
         sub_box.add(sform)
-        layout.addWidget(widgets.advanced(sub_box))
+        sub_defaults = {k: getattr(s, k) for k in self.sub_fields}
+        widgets.advanced(sub_box, chip=sub_chip, changed=lambda: not self.sub_check.isChecked() or any(
+            not np.isclose(b.value(), sub_defaults[k]) for k, b in self.sub_fields.items()))
+        for b in self.sub_fields.values():
+            b.valueChanged.connect(widgets.refresh)
+        self.sub_check.toggled.connect(widgets.refresh)
+        layout.addWidget(sub_box)
 
         cell_box = self.table_section = Section("Table and gantry")
         cform = QFormLayout()
@@ -123,15 +131,14 @@ class PositionStep:
         self.roll = spin(-180, 180, 0, " °", tip="Gun turned about its spray axis (changes how the wrist reaches;\n"
                                                  "the spray itself is unchanged)")
         cform.addRow("Nozzle", self.nozzle)
-        cform.addRow("Table tilt", self.tilt)
-        cform.addRow("Table rotation", self.rotation)
-        cform.addRow("Gantry E1", self.e1)
-        cform.addRow("Gun roll", self.roll)
         for box in (self.e1, self.tilt, self.rotation, self.roll):
             box.setKeyboardTracking(False)
             box.valueChanged.connect(self._enter_setup)
         self.nozzle.currentIndexChanged.connect(self._enter_setup)
         cell_box.add(widgets.advanced(self._holder(cform)))
+        for text, box in (("Table tilt", self.tilt), ("Table rotation", self.rotation),
+                          ("Gantry E1", self.e1), ("Gun roll", self.roll)):
+            cell_box.add(self._adv_field(text, box, 0.0))
         self.auto_btn = QPushButton("Auto position (gun level)")
         self.auto_btn.setToolTip("Choose table tilt, gun roll and gantry E1 so the gun is as level as allowed\n"
                                  "and the whole path is reachable (also done when a part is loaded)")
@@ -154,6 +161,19 @@ class PositionStep:
         layout.addWidget(primary_button("Next: Toolpath  →", lambda: self.go_to(TOOLPATH)))
         layout.addStretch(1)
         return inner
+
+    @staticmethod
+    def _adv_field(text, box, default) -> QWidget:
+        """A label + box + "changed" chip row, Advanced-only unless the value differs from `default`."""
+        row = QWidget()
+        h = QHBoxLayout(row)
+        h.setContentsMargins(0, 0, 0, 0)
+        chip = Chip()
+        h.addWidget(QLabel(text))
+        h.addWidget(box, 1)
+        h.addWidget(chip)
+        box.valueChanged.connect(widgets.refresh)
+        return widgets.advanced(row, chip=chip, changed=lambda: not np.isclose(box.value(), default))
 
     @staticmethod
     def _holder(lay) -> QWidget:
@@ -419,7 +439,9 @@ class PositionStep:
         self.purge_goto_btn.setToolTip("Preview: put the robot at the purge pose (gantry at the current E1)")
         self.purge_goto_btn.clicked.connect(self._purge_goto)
         form.addRow(self.purge_goto_btn)
-        box.add(widgets.advanced(self._holder(form)))
+        purge_chip = Chip()
+        box.add(purge_chip)
+        box.add(widgets.advanced(self._holder(form), chip=purge_chip, changed=self._purge_nondefault))
         self._purge_form = form
         self.purge_cfg = PurgeConfig(point=(-884.56, 400.0, 2000.0), enabled=False).model_dump()
         self._purge_loading = False
@@ -427,11 +449,25 @@ class PositionStep:
         for w in (*self.purge_xyz, *self.purge_custom, self.purge_dwell, self.purge_approach, self.purge_every):
             w.setKeyboardTracking(False)
             w.valueChanged.connect(self._purge_changed)
+            w.valueChanged.connect(widgets.refresh)
         for w in (self.purge_on, self.purge_start, self.purge_end):
             w.toggled.connect(self._purge_changed)
+        self.purge_on.toggled.connect(widgets.refresh)
         self.purge_dir.currentIndexChanged.connect(self._purge_changed)
+        for w in (self.purge_start, self.purge_end):
+            w.toggled.connect(widgets.refresh)
+        self.purge_dir.currentIndexChanged.connect(widgets.refresh)
         box.toggled.connect(lambda on: on and self._purge_load())
         return box
+
+    def _purge_nondefault(self) -> bool:
+        """Purge enabled with advanced values (point, direction, dwell, ...) other than the defaults."""
+        if not self.purge_on.isChecked():
+            return False
+        d = PurgeConfig(point=(-884.56, 400.0, 2000.0)).model_dump()
+        c = self.purge_cfg
+        return any(not np.allclose(c[k], d[k]) if not isinstance(d[k], bool) else c[k] != d[k]
+                   for k in ("point", "spray_dir", "dwell_s", "approach_mm", "at_start", "at_end", "every_n_layers"))
 
     def _purge_cell(self):
         a = getattr(self, "assets", None)
