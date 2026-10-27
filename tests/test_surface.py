@@ -26,7 +26,8 @@ def test_block_top_is_a_flat_plate_raster():
     top = v[:, 2].max()
     v, mask = _face_mask(part, lambda c, n: (n[:, 2] > 0.99) & np.isclose(c[:, 2], top))
     path = plan_surface(v, part.faces, mask, proc)
-    spray = [m for m in path.moves if m.gun_on]
+    spray = [m for i, m in enumerate(path.moves) if m.gun_on
+             and not (m.tag == "turn" and path.moves[i - 1].tag != "turn")]   # skip lifted mid-turns
     pts = np.array([m.pose[:3, 3] for m in spray])
     assert np.allclose(pts[:, 2], top + proc.standoff_mm, atol=1e-6)
     assert all(np.allclose(m.pose[:3, 0], [0, 0, -1], atol=1e-6) for m in spray)
@@ -85,7 +86,24 @@ def test_coats_and_tilt_limit():
     one = plan_surface(box.vertices, box.faces, mask, proc, max_tilt_deg=90.0)
     two = plan_surface(box.vertices, box.faces, mask, proc, coats=2, max_tilt_deg=90.0)
     n1 = sum(m.gun_on for m in one.moves)
-    assert sum(m.gun_on for m in two.moves) == 2 * n1 + 1   # one extra turn between coats
+    assert sum(m.gun_on for m in two.moves) == 2 * n1 + 2   # one extra (lifted, 2-move) turn between coats
     tight = plan_surface(box.vertices, box.faces, mask, proc, max_tilt_deg=20.0)
     assert tight.skipped_points > 0
     assert sum(m.gun_on for m in tight.moves) < n1
+
+
+def test_turns_lift_off_convex_surface_by_standoff():
+    proc = load_process()
+    part = load_part("test_tube")
+    v = placed_vertices(part)
+    axis = v[:, :2].mean(0)
+    v, mask = _face_mask(part, lambda c, n: (np.abs(n[:, 2]) < 0.1)
+                         & (np.linalg.norm(c[:, :2] - axis, axis=1) > 50))
+    path = plan_surface(v, part.faces, mask, proc)
+    moves = path.moves
+    mids = [m for i, m in enumerate(moves[1:-1], 1)
+            if m.tag == "turn" and moves[i - 1].tag != "turn"]
+    assert mids
+    for m in mids:
+        r = np.linalg.norm(m.pose[:3, 3][:2] - axis)
+        assert r >= 60 + 2 * proc.standoff_mm - 0.5      # lifted a further standoff mid-turn
