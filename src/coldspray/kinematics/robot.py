@@ -56,12 +56,20 @@ class Robot:
 
     def _in_limits(self, tcp_pose) -> np.ndarray:
         """(n, 6) in-limit solutions, in OPW order with A6 -360 / 0 / +360 variants."""
-        target = np.asarray(tcp_pose) @ self._to_opw
-        sols = np.degrees(np.asarray(opw.inverse(self.params, target), dtype=float)).reshape(-1, 6)
-        cands = np.repeat(sols, 3, axis=0)
-        cands[:, 5] += np.tile([-360.0, 0.0, 360.0], len(sols))
-        ok = np.all((cands >= self.limits[:, 0]) & (cands <= self.limits[:, 1]), axis=1)
-        return cands[ok]
+        cands = self._candidates(np.asarray(tcp_pose, dtype=float)[None])[0]
+        return cands[~np.isnan(cands[:, 0])]
+
+    def _candidates(self, tcp_poses) -> np.ndarray:
+        """(n, 24, 6) solutions for n TCP poses: the 8 OPW branches, each with A6
+        -360 / 0 / +360, in OPW order. Unreachable or out-of-limit rows are NaN."""
+        targets = np.asarray(tcp_poses, dtype=float).reshape(-1, 4, 4) @ self._to_opw
+        sols = np.degrees(_opw_inverse_batch(self.params, targets))           # (n, 8, 6)
+        cands = np.repeat(sols, 3, axis=1)
+        cands[:, :, 5] += np.tile([-360.0, 0.0, 360.0], 8)
+        with np.errstate(invalid="ignore"):
+            ok = np.all((cands >= self.limits[:, 0]) & (cands <= self.limits[:, 1]), axis=2)
+        cands[~ok] = np.nan
+        return cands
 
     def ik_path(self, poses, seed_deg=HOME_DEG, hint=None) -> np.ndarray:
         """Joint angles for a sequence of TCP poses, each solved from the
@@ -69,13 +77,20 @@ class Robot:
         Unreachable poses give a row of NaN.
         """
         out = np.full((len(poses), 6), np.nan)
+        if not len(poses):
+            return out
+        cands = self._candidates(np.asarray(poses, dtype=float))               # (n, 24, 6)
+        valid = ~np.isnan(cands[:, :, 0])
+        any_ok = valid.any(axis=1)
+        filled = np.where(np.isnan(cands), np.inf, cands)
         seed = np.asarray(seed_deg, dtype=float)
-        for i, pose in enumerate(poses):
-            if hint is not None and not np.isnan(hint[i, 0]):
+        use_hint = np.zeros(len(poses), bool) if hint is None else ~np.isnan(np.asarray(hint)[:, 0])
+        for i in range(len(poses)):
+            if use_hint[i]:
                 seed = np.asarray(hint[i], dtype=float)     # solver's chosen configuration
-            sols = self.ik(pose, seed)
-            if sols:
-                out[i] = seed = sols[0]
+            if any_ok[i]:
+                c = filled[i]
+                out[i] = seed = c[np.argmin(np.max(np.abs(c - seed), axis=1))]
         return out
 
     def link_frames(self, joints_deg) -> list[np.ndarray]:
@@ -126,3 +141,67 @@ class Robot:
     def within_limits(self, joints_deg) -> bool:
         q = np.asarray(joints_deg)
         return bool(np.all(q >= self.limits[:, 0]) and np.all(q <= self.limits[:, 1]))
+
+
+def _acos_or_nan(x):
+    with np.errstate(invalid="ignore"):
+        return np.where((x >= -1.0) & (x <= 1.0), np.arccos(np.clip(x, -1.0, 1.0)), np.nan)
+
+
+def _opw_inverse_batch(p: opw.OPWParams, poses) -> np.ndarray:
+    """opw.inverse over (n, 4, 4) flange poses at once: (n, 8, 6) radians, in
+    opw.inverse's branch order, with NaN rows for unreachable branches."""
+    rot = poses[:, :3, :3]
+    cx, cy, cz = (poses[:, :3, 3] - p.c4 * rot[:, :, 2]).T
+    with np.errstate(invalid="ignore", divide="ignore"):
+        nx1 = np.sqrt(np.maximum(cx**2 + cy**2 - p.b**2, 0.0)) - p.a1
+        tmp1 = np.arctan2(cy, cx)
+        tmp2 = np.arctan2(p.b, nx1 + p.a1)
+        t1_i = tmp1 - tmp2
+        t1_ii = tmp1 + tmp2 - np.pi
+
+        dz = cz - p.c1
+        s1_2 = nx1**2 + dz**2
+        s2_2 = (nx1 + 2 * p.a1) ** 2 + dz**2
+        kappa_2 = p.a2**2 + p.c3**2
+        c2_2 = p.c2**2
+        psi3 = np.arctan2(p.a2, p.c3)
+
+        s1, s2 = np.sqrt(s1_2), np.sqrt(s2_2)
+        a = _acos_or_nan((s1_2 + c2_2 - kappa_2) / (2 * s1 * p.c2))
+        b = np.arctan2(nx1, dz)
+        c = _acos_or_nan((s2_2 + c2_2 - kappa_2) / (2 * s2 * p.c2))
+        d = np.arctan2(nx1 + 2 * p.a1, dz)
+        e = _acos_or_nan((s1_2 - c2_2 - kappa_2) / (2 * p.c2 * np.sqrt(kappa_2)))
+        f = _acos_or_nan((s2_2 - c2_2 - kappa_2) / (2 * p.c2 * np.sqrt(kappa_2)))
+
+    arms = [
+        (t1_i, -a + b, e - psi3),
+        (t1_i, a + b, -e - psi3),
+        (t1_ii, -c - d, f - psi3),
+        (t1_ii, c - d, -f - psi3),
+    ]
+    r = lambda i, j: rot[:, i, j]
+    offsets, signs = np.asarray(p.offsets, float), np.asarray(p.signs, float)
+    out = np.full((len(poses), 8, 6), np.nan)
+    for k, (t1, t2, t3) in enumerate(arms):
+        bad = np.isnan(t2) | np.isnan(t3)
+        st1, ct1 = np.sin(t1), np.cos(t1)
+        s23, c23 = np.sin(t2 + t3), np.cos(t2 + t3)
+        m = r(0, 2) * s23 * ct1 + r(1, 2) * s23 * st1 + r(2, 2) * c23
+        t5 = np.arctan2(np.sqrt(np.maximum(1.0 - m * m, 0.0)), m)
+        t4 = np.arctan2(
+            r(1, 2) * ct1 - r(0, 2) * st1,
+            r(0, 2) * c23 * ct1 + r(1, 2) * c23 * st1 - r(2, 2) * s23,
+        )
+        t6 = np.arctan2(
+            r(0, 1) * s23 * ct1 + r(1, 1) * s23 * st1 + r(2, 1) * c23,
+            -r(0, 0) * s23 * ct1 - r(1, 0) * s23 * st1 - r(2, 0) * c23,
+        )
+        for w, (w4, w5, w6) in enumerate(((t4, t5, t6), (t4 + np.pi, -t5, t6 - np.pi))):
+            q = np.stack([t1, t2, t3, w4, w5, w6], axis=1)
+            q = (q - offsets) * signs
+            q = (q + np.pi) % (2 * np.pi) - np.pi
+            q[bad] = np.nan
+            out[:, 2 * k + w] = q
+    return out
