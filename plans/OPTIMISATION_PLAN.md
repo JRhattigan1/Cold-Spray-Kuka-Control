@@ -11,7 +11,7 @@ These numbers were measured on WearPlate2 (`Downloads/WearPlate2.stp`) in Surfac
 | Build collision checker | 17.1 s | FCL BVH builds in `trimesh` `add_object` (15 s) |
 | Collision `check_path` (14,054 checks) | 40.3 s | `_place` per check (22 s, scipy forward kinematics), FCL queries (17 s) |
 | Layers plan, test_block | 1.1 s | fine |
-| Layers plan, WearPlate2 (about 800 layers) | still running after several minutes | Auto position used to run this when entering Position |
+| Layers plan, WearPlate2 (about 800 layers, 214,557 moves) | **429 s** | Auto position used to run this on entering Position, once per tilt. Steps 1 and 2 apply: per-move overhead, and merging the straight infill LINs |
 
 Generate, Auto position and Simulate's IK all run on the window's thread, so the app freezes for the whole time. Auto position also plans the part, and then Generate plans it again.
 
