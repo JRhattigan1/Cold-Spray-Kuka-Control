@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QApplication, QHBoxLayout, QMainWindow, QMenu, QPushButton, QScrollArea, QStackedWidget, QToolButton,
+    QApplication, QFrame, QHBoxLayout, QMainWindow, QMenu, QPushButton, QScrollArea, QStackedWidget, QToolButton,
     QVBoxLayout, QWidget,
 )
 from pyvistaqt import QtInteractor
@@ -98,6 +98,12 @@ class MainWindow(QMainWindow, PartStep, PositionStep, ToolpathStep, SimulateStep
         # Left: one scrolling panel per step (built in order: later panels use earlier widgets)
         self.panels = QStackedWidget()
         self.panels.setFixedWidth(PANEL_WIDTH)
+        self.sidebar = QFrame()             # floating glass card around the panels
+        self.sidebar.setObjectName("sidebar")
+        side = QVBoxLayout(self.sidebar)
+        side.setContentsMargins(6, 6, 6, 6)
+        side.addWidget(self.panels)
+        self.stepbar.setObjectName("glassHeader")
         for build in (self._build_part_panel, self._build_position_panel, self._build_toolpath_panel,
                       self._build_simulate_panel, self._build_export_panel):
             self.panels.addWidget(self._scroll(build()))
@@ -117,7 +123,9 @@ class MainWindow(QMainWindow, PartStep, PositionStep, ToolpathStep, SimulateStep
 
         body = QWidget()
         hbox = QHBoxLayout(body)
-        hbox.addWidget(self.panels)
+        hbox.setContentsMargins(14, 10, 14, 14)
+        hbox.setSpacing(14)
+        hbox.addWidget(self.sidebar)
         hbox.addWidget(self.views, 1)
         central = QWidget()
         vbox = QVBoxLayout(central)
@@ -129,6 +137,7 @@ class MainWindow(QMainWindow, PartStep, PositionStep, ToolpathStep, SimulateStep
         self.job = JobProgress()          # progress + Cancel for slow jobs
         self.statusBar().addPermanentWidget(self.job)
         self.theme_choice = "system"
+        self._glass()
         self._refresh_steps()
         # Keyboard: Ctrl+1..5 jump to a step, Ctrl+G generates the toolpath
         self.shortcuts = [QShortcut(QKeySequence(f"Ctrl+{n + 1}"), self, lambda n=n: self.go_to(n))
@@ -221,8 +230,25 @@ class MainWindow(QMainWindow, PartStep, PositionStep, ToolpathStep, SimulateStep
         theme.apply(QApplication.instance(), choice)
         self._apply_view_theme()
 
+    def _glass(self):
+        """Liquid-glass chrome: translucent header bar, floating rounded sidebar, capsule toggle."""
+        t = style.tokens(style.current_mode())
+        self.stepbar.setStyleSheet(
+            f"#glassHeader {{ background: {t['panel']}d9; border: 1px solid {t['line']};"
+            f" border-radius: 18px; margin: 10px 14px 0 14px; }}")
+        self.sidebar.setStyleSheet(
+            f"#sidebar {{ background: {t['panel']}e6; border: 1px solid {t['line']}; border-radius: 22px; }}"
+            " #sidebar QScrollArea, #sidebar QScrollArea > QWidget,"
+            " #sidebar QScrollArea > QWidget > QWidget { background: transparent; }")
+        self.mode_toggle.setStyleSheet(
+            f"#modeToggle {{ background: {t['soft']}; border: 1px solid {t['line']}; border-radius: 14px; }}"
+            " #modeToggle QPushButton { border-radius: 12px; border: none; padding: 4px 14px;"
+            " background: transparent; }"
+            f" #modeToggle QPushButton:checked {{ background: {t['accent']}; color: #ffffff; }}")
+
     def _apply_view_theme(self):
         mode = style.current_mode()
+        self._glass()
         self.theme_btn.setIcon(icons.icon("theme", mode))
         self.job.refresh_icons(mode)
         for plotter in (self.plotter, self.part_plotter):
