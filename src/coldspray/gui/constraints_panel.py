@@ -195,13 +195,18 @@ class ConstraintRow(QFrame):
         """Status as a tinted dot: grey suppressed, red conflict, green satisfied."""
         t = tokens()
         if residual is None:
-            colour, tip = t["muted"], "Suppressed"
+            colour, tip, glyph = t["muted"], "Suppressed", "\u2022"
         elif residual > TOL:
-            colour, tip = t["bad"], f"Conflict: residual {residual:.3g}"
+            colour, tip, glyph = t["bad"], f"Conflict: residual {residual:.3g}", "\u2717"
         else:
-            colour, tip = t["good"], "Satisfied"
-        self.status.setText("\u25cf")
-        self.status.setStyleSheet(f"color:{colour}; font-size:14px")
+            colour, tip, glyph = t["good"], "Satisfied", "\u2713"
+        self.status.setText(glyph)
+        self.status.setAlignment(Qt.AlignCenter)
+        self.status.setFixedSize(18, 18)
+        c = colour.lstrip("#")
+        rgb = f"{int(c[0:2], 16)},{int(c[2:4], 16)},{int(c[4:6], 16)}"
+        self.status.setStyleSheet(f"color:{colour}; background:rgba({rgb},0.18); border:1px solid rgba({rgb},0.6); "
+                                  "border-radius:9px; font-size:11px")
         self.status.setToolTip(tip)
 
 
