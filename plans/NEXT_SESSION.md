@@ -54,6 +54,7 @@
   - The 3D gradient from U6 is hard-coded light; it should come from `style.view_background(mode)`.
   - U4 toolbars and U13 markers read colours once and don't follow theme changes.
   - Dark screenshots were taken but not reviewed.
+- **User's verdict (2026-10-27):** a very good start, but lots of small things are a bit wrong. Next session, check the scaling and positions of the windows and panels (DPI, sidebar width, how the 3D view and panels share space and resize), along with the regressions above.
 - **Not run since the UI merges:** the full suite. Run it, plus a by-hand check in the app, before anything else.
 - **Housekeeping:** about 60 worktrees and the merged `wp/*` branches, the UI ones included. A dry run of their removal was started but nothing was deleted.
 
