@@ -98,3 +98,14 @@ def test_raster_rotates_between_layers(layers):
     seg1 = raster_segments(layers[1].region, 2.0, proc.raster_angle_step_deg)
     d0, d1 = seg0[0][1] - seg0[0][0], seg1[0][1] - seg1[0][0]
     assert abs(np.dot(d0, d1)) < 1e-6 * np.linalg.norm(d0) * np.linalg.norm(d1)
+
+
+def test_layer_transfers_use_jump_height():
+    """Between layers the gun lifts by jump_height_mm (0: stays at spray height);
+    only the first approach and the last retract use approach_height_mm."""
+    from coldspray.pipeline import load_part, plan_part
+    proc = load_process().model_copy(update={"jump_height_mm": 0.0})
+    m = plan_part(load_part("test_u_block"), proc, "layers")[1].moves
+    dz = [b.pose[2, 3] - a.pose[2, 3] for a, b in zip(m, m[1:])]
+    assert np.isclose(dz[0], -proc.approach_height_mm) and np.isclose(dz[-1], proc.approach_height_mm)
+    assert max(abs(d) for d in dz[1:-1]) <= proc.layer_thickness_mm + 1e-6

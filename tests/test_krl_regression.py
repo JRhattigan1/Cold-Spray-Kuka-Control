@@ -1,7 +1,8 @@
 """to_krl output for the built-in parts must not change unless a change means it to.
 
 The hashes were recorded on unchanged code (main at 453e4e3). A deliberate
-output change updates them and says so in the commit."""
+output change updates them and says so in the commit. Layers hashes updated
+2026-10-27: moves between layers lift by jump_height_mm, not approach_height_mm."""
 
 import hashlib
 
@@ -14,9 +15,9 @@ from coldspray.post.krl import to_krl
 
 CASES = {  # part: (mode, table tilt, gun roll, E1, sha256 of the program); positions from auto_position
     "test_block": ("layers", 90.0, -135.0, 2000.0,
-                   "eef8bd3c0d7cd4f17d68f1a26ef4b977f901d6f3f4a3595d200c2901c0412198"),
+                   "71ecd0f87f7f2a0c3b32eed07619478bd1a9427f5ea2557c6449c93b9531fa76"),
     "test_repair": ("layers", 90.0, -135.0, 2000.0,
-                    "f3810b9f19425d1109e4ebbb3df5f274eaed5f3297f45d5f27978d5a3eecb2fc"),
+                    "89c900db1c213f9ce0d3728e98b1917ad136ec8606df47bb83e01896d7eb9cfc"),
     "test_tube": ("revolve", 0.0, -45.0, 2500.0,
                   "dcf903640c58a4c359fdc13c94474513e8b141a8fb4994e364faa0c11d943a28"),
 }

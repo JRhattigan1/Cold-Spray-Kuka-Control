@@ -9,10 +9,15 @@ the move to the next layer.
 Neighbouring strokes (gap up to 1.5 x step-over) are joined at spray height.
 Longer gaps are "jumps": the gun lifts by `jump_height_mm` and moves at rapid
 speed, so little powder deposits on the way across holes or between islands.
+The move from one layer to the next lifts by `jump_height_mm` too (0: the gun
+transfers at spray height); only the approach into the job and the retract at
+the end use `approach_height_mm`.
 
 The gun points straight down, except contour passes with `contour_tilt_deg > 0`
 (see contour_tilt.py).
 """
+
+from dataclasses import replace
 
 import numpy as np
 
@@ -72,7 +77,8 @@ def plan_layers(layers: list[Layer], proc: ProcessConfig, name="part", table_axe
 
         first = strokes[0][0]
         kind = "PTP" if not path.moves else "LIN"
-        path.moves.append(Move(pose(0, 0, z + proc.approach_height_mm), proc.rapid_speed_mm_s, kind=kind,
+        clear = proc.approach_height_mm if kind == "PTP" else proc.jump_height_mm   # into the job / between layers
+        path.moves.append(Move(pose(0, 0, z + clear), proc.rapid_speed_mm_s, kind=kind,
                                axes=dict(table_axes or {}) if kind == "PTP" else {}, tag="approach"))
         path.moves.append(Move(pose(0, 0, z), proc.rapid_speed_mm_s, tag="approach"))
         here, last_ki = first, (0, 0)                           # aim point of the last move
@@ -90,5 +96,9 @@ def plan_layers(layers: list[Layer], proc: ProcessConfig, name="part", table_axe
                                        tag="turn" if i == 0 or (extended and k >= n_contour
                                                                 and len(stroke) == 4 and i in (1, 3)) else tag))
                 here, last_ki = p, (k, i)
-        path.moves.append(Move(pose(len(strokes) - 1, -1, z + proc.approach_height_mm), proc.rapid_speed_mm_s, tag="approach"))
+        # Lift by the jump height to go to the next layer; only the last layer leaves at approach height
+        path.moves.append(Move(pose(*last_ki, z + proc.jump_height_mm), proc.rapid_speed_mm_s, tag="approach"))
+        leave = pose(*last_ki, z + proc.approach_height_mm)
+    if path.moves:
+        path.moves[-1] = replace(path.moves[-1], pose=leave)
     return path
