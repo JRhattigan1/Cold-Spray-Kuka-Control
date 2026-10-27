@@ -18,7 +18,7 @@ import numpy as np
 import pyvista as pv
 from scipy.spatial.transform import Rotation
 
-from coldspray.cell import base_world, turntable_motion
+from coldspray.cell import base_world, robroot, turntable_motion
 from coldspray.kinematics.robot import HOME_DEG, Robot
 from coldspray.models import CellConfig
 from coldspray.planner.position import gun_down_deg
@@ -438,9 +438,15 @@ class Scene:
 
         s = path.sample(step, angle_step)
         self.samples = s
-        robot_from_world = np.linalg.inv(self.world_from_robot)
         self.base_frames = np.array([base_world(cell, s.axes_at(i)) for i in range(len(s))])
-        targets = [robot_from_world @ b @ p for b, p in zip(self.base_frames, s.poses)]
+        # E1 per sample when the path sets it (solver / KRL); else the placement as given
+        self.e1 = s.axes.get(cell.gantry.axis) if cell.gantry is not None else None
+        if self.e1 is None:
+            roots = [self.world_from_robot] * len(s)
+        else:
+            roots = [robroot(cell, float(e)) for e in self.e1]
+        self.root_frames = roots
+        targets = [np.linalg.inv(r) @ b @ p for r, b, p in zip(roots, self.base_frames, s.poses)]
         self.joints = self.robot.ik_path(targets, seed_deg=HOME_DEG if home is None else home)
         self.reachable = ~np.isnan(self.joints[:, 0])
         self.gun_down = gun_down_deg(self.base_frames @ s.poses)
@@ -526,6 +532,8 @@ class Scene:
         self.current = i
         axes = self.samples.axes_at(i)
         self._set_table(axes)
+        if self.e1 is not None:
+            self.set_placement(self.root_frames[i], np.asarray(self.cell_cfg.gantry.direction) * self.e1[i])
         for a in self.path_actors:
             a.user_matrix = self.base_frames[i]
         table = "  ".join(f"{k} {v:.1f}" for k, v in axes.items())

@@ -3,7 +3,7 @@
 Cartesian points are written inline relative to BASE_DATA[base_number], so
 no .dat file is needed. PTP moves are written as joint angles (from our IK)
 so the arm configuration on the robot matches the simulation. External axes:
-E1 (gantry) is set by the PTP moves; the turntable axes are written on every
+E1 (gantry) is set by the PTP moves (a move's axes["E1"], else the cell's position); the turntable axes are written on every
 point.
 
 Turntable modes (cell.turntable.coupled):
@@ -51,11 +51,14 @@ def to_krl(path: Toolpath, robot: Robot, cell: CellConfig, proc: ProcessConfig) 
     table_names = table_axis_names(cell)
     coupled = bool(tt and tt.coupled)
     fixed_base_inv = np.linalg.inv(base_world(cell, {k: 0.0 for k in table_names}))
-    e1 = {cell.gantry.axis: gantry_position(cell)} if cell.gantry else {}
+    e1_axis = cell.gantry.axis if cell.gantry else None
+    e1_default = gantry_position(cell) if cell.gantry else None
 
     defaults = {tt.tilt.axis: tt.tilt.position_deg, tt.rotation.axis: tt.rotation.position_deg} if tt else {}
     axes_per_move = [defaults | a for a in path.axis_values()]
     table = [{k: a[k] for k in table_names} for a in axes_per_move]
+    # E1 per move: set on a move's axes (solver), else the cell's position
+    e1s = [({e1_axis: gantry_position(cell, a.get(e1_axis))} if e1_axis else {}) for a in axes_per_move]
 
     def cartesian(i):
         """TCP pose of move i as written in the program."""
@@ -106,11 +109,11 @@ def to_krl(path: Toolpath, robot: Robot, cell: CellConfig, proc: ProcessConfig) 
             gun_on = m.gun_on
 
         if m.kind == "PTP":
-            sols = robot.ik(base_in_robot(cell, table[i]) @ m.pose, seed)
+            sols = robot.ik(base_in_robot(cell, table[i], e1s[i].get(e1_axis)) @ m.pose, seed)
             if not sols:
                 raise KRLError(f"move {i}: PTP target is unreachable")
             seed = sols[0]
-            lines.append(f"PTP {_axis(seed, e1 | table[i])}")
+            lines.append(f"PTP {_axis(seed, e1s[i] | table[i])}")
             dwell(m)
             continue
 
