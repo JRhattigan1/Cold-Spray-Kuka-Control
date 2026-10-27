@@ -13,6 +13,7 @@ from coldspray.cad.part import (
     snap_face_down,
 )
 from coldspray.cell import robroot
+from coldspray.gui.constraints_panel import ConstraintsPanel
 from coldspray.gui.stepper import TOOLPATH
 from coldspray.gui.widgets import Section, primary_button, spin, wrap_label
 from coldspray.pipeline import check_placement, plan_part
@@ -80,6 +81,9 @@ class PositionStep:
         self.sm_part.setVisible(False)
         place_box.add(self.sm_part)
         layout.addWidget(place_box)
+        self.constraints = ConstraintsPanel()
+        self.constraints.changed.connect(lambda: self.part is not None and self._set_placement(self.part.placement))
+        layout.addWidget(self.constraints)
 
         sub_box = self.sub_section = Section("Substrate plate")
         self.sub_check = QCheckBox("Build on a substrate plate")
@@ -162,6 +166,7 @@ class PositionStep:
         self.part = src.without(ignored)
         self.part.placement = self._start_placement(self.part)
         self.cell_key = key
+        self.constraints.set_part(self.part, self.substrate)
         has_base = self.part.base_face is not None
         self.keep_on_plate.blockSignals(True)
         self.keep_on_plate.setChecked(has_base)
@@ -263,6 +268,7 @@ class PositionStep:
             return
         placement = np.asarray(placement, float)
         self.part.placement = constrain(self.part, placement, self._floor()) if self._kept() else placement
+        self.part.placement = self.constraints.apply(self.part.placement)
         if redraw:
             self.scene.set_part_placement()
         self._show_placement()
@@ -323,6 +329,7 @@ class PositionStep:
         self.substrate = (Substrate(**{k: box.value() for k, box in self.sub_fields.items()})
                           if self.sub_check.isChecked() else None)
         self._substrate_ui()
+        self.constraints.substrate = self.substrate
         if self.scene:
             self.scene.set_substrate(self._substrate_mesh())
         if self.part is not None:
@@ -353,6 +360,7 @@ class PositionStep:
         step[:3, 3] = centre - rot @ centre + to_base @ move
         placement = step @ self.part.placement
         self.part.placement = constrain(self.part, placement, self._floor()) if self._kept() else placement
+        self.part.placement = self.constraints.apply(self.part.placement)
         self.scene.set_part_placement()
         self._show_placement()
         self.sm_moved_part = True
@@ -373,6 +381,7 @@ class PositionStep:
         self.purge_dir.addItems([*DIRECTION_PRESETS, "Custom"])
         self.purge_dir.setToolTip("Spray direction at the purge point (WORLD)")
         self.purge_dwell = spin(0, 600, 5, " s", tip="Spray on at the point before moving off")
+        self.purge_approach = spin(0, 500, 100, " mm", tip="Approach / retract distance along the spray axis")
         self.purge_start = QCheckBox("At start")
         self.purge_end = QCheckBox("At end")
         self.purge_every = spin(0, 1000, 0, " layers", decimals=0, tip="Also go back every N layers (0: never)")
@@ -387,16 +396,21 @@ class PositionStep:
         self.purge_save_btn.setToolTip("Write these settings into the purge: block of cell.yaml")
         self.purge_save_btn.clicked.connect(self._purge_save)
         form.addRow("Dwell", self.purge_dwell)
+        form.addRow("Approach", self.purge_approach)
         form.addRow(self.purge_start)
         form.addRow(self.purge_end)
         form.addRow("Every", self.purge_every)
         form.addRow(self.purge_save_btn)
+        self.purge_goto_btn = QPushButton("Move gun here")
+        self.purge_goto_btn.setToolTip("Preview: put the robot at the purge pose (gantry at the current E1)")
+        self.purge_goto_btn.clicked.connect(self._purge_goto)
+        form.addRow(self.purge_goto_btn)
         box.add(form)
         self._purge_form = form
         self.purge_cfg = dict(self.PURGE_DEFAULTS)
         self._purge_loading = False
         self._purge_load()
-        for w in (*self.purge_xyz, *self.purge_custom, self.purge_dwell, self.purge_every):
+        for w in (*self.purge_xyz, *self.purge_custom, self.purge_dwell, self.purge_approach, self.purge_every):
             w.setKeyboardTracking(False)
             w.valueChanged.connect(self._purge_changed)
         for w in (self.purge_on, self.purge_start, self.purge_end):
@@ -426,6 +440,7 @@ class PositionStep:
         for box, v in zip(self.purge_custom, c["spray_dir"]):
             box.setValue(v)
         self.purge_dwell.setValue(c["dwell_s"])
+        self.purge_approach.setValue(c["approach_mm"])
         self.purge_start.setChecked(c["at_start"])
         self.purge_end.setChecked(c["at_end"])
         self.purge_every.setValue(c["every_n_layers"])
@@ -439,6 +454,7 @@ class PositionStep:
         name = self.purge_dir.currentText()
         c.update(enabled=self.purge_on.isChecked(), point=tuple(b.value() for b in self.purge_xyz),
                  spray_dir=DIRECTION_PRESETS.get(name) or self._purge_custom_dir(c["spray_dir"]), dwell_s=self.purge_dwell.value(),
+                 approach_mm=self.purge_approach.value(),
                  at_start=self.purge_start.isChecked(), at_end=self.purge_end.isChecked(),
                  every_n_layers=int(self.purge_every.value()))
         cell = self._purge_cell()
@@ -463,13 +479,30 @@ class PositionStep:
             return
         self._status(f"Purge point saved to {path}")
 
-    def _purge_reachable(self, pose) -> bool | None:
-        """Can the robot put the gun at `pose` (WORLD) with the gantry at the current E1?"""
+    def _purge_ik(self, pose):
+        """IK solutions for the gun at `pose` (WORLD), gantry at the current E1; None without assets."""
         a = getattr(self, "assets", None)
         if a is None:
             return None
         cell = self._work_cell()
-        return bool(a.robot.ik(np.linalg.inv(robroot(cell)) @ pose, cell.home_deg))
+        return a.robot.ik(np.linalg.inv(robroot(cell)) @ pose, cell.home_deg)
+
+    def _purge_reachable(self, pose) -> bool | None:
+        """Can the robot put the gun at `pose` (WORLD) with the gantry at the current E1?"""
+        sols = self._purge_ik(pose)
+        return None if sols is None else bool(sols)
+
+    def _purge_goto(self):
+        """Show the robot at the purge pose (first IK solution), or say why not."""
+        c = self.purge_cfg
+        sols = self._purge_ik(marker_pose(c["point"], c["spray_dir"]))
+        if not sols:
+            self._status("Purge point: no part/cell loaded" if sols is None
+                         else "Purge point is out of reach at this gantry position")
+            return
+        if getattr(self, "scene", None) is not None:
+            self.scene.set_robot_pose(sols[0])
+        self._status("Robot shown at the purge point")
 
     def _purge_show(self):
         """Move the ghost gun and set the chip: off / reachable / out of reach."""
@@ -486,4 +519,13 @@ class PositionStep:
         else:
             self.purge_section.set_chip("reachable" if ok else "out of reach", "good" if ok else "bad")
         if getattr(self, "scene", None) is not None:
+            self.scene.on_purge_moved = self._purge_dragged
             self.scene.set_purge_marker(pose, visible=c["enabled"], reachable=ok is not False)
+
+    def _purge_dragged(self, point, final: bool = True):
+        """Ghost gun dragged in the 3-D view: put the point in the X/Y/Z boxes."""
+        for box, v in zip(self.purge_xyz, point):
+            box.blockSignals(True)
+            box.setValue(float(v))
+            box.blockSignals(False)
+        self._purge_changed()

@@ -79,4 +79,4 @@ def add_purge(path: Toolpath, cell, speed: float | None = None) -> Toolpath:
             out[k].gun_on = True
             if out[k].kind == "PTP":
                 out[k].kind = "LIN"             # spray on: keep the gun on a straight line
-    return Toolpath(path.name, out)
+    return Toolpath(path.name, out, path.skipped_points)

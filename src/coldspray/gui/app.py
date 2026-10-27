@@ -9,6 +9,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QHBoxLayout, QMainWindow, QMenu, QPushButton, QScrollArea, QStackedWidget, QToolButton,
     QVBoxLayout, QWidget,
@@ -123,6 +124,10 @@ class MainWindow(QMainWindow, PartStep, PositionStep, ToolpathStep, SimulateStep
         self.statusBar().addPermanentWidget(self.job)
         self.theme_choice = "system"
         self._refresh_steps()
+        # Keyboard: Ctrl+1..5 jump to a step, Ctrl+G generates the toolpath
+        self.shortcuts = [QShortcut(QKeySequence(f"Ctrl+{n + 1}"), self, lambda n=n: self.go_to(n))
+                          for n in (PART, POSITION, TOOLPATH, SIMULATE, EXPORT)]
+        self.shortcuts.append(QShortcut(QKeySequence("Ctrl+G"), self, self.generate))
         self.statusBar().showMessage("Starting...")
         QTimer.singleShot(50, self._startup)
 

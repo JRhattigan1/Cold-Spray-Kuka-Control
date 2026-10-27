@@ -98,13 +98,19 @@ def grow_tangent(part: Part, faces, max_deg: float = 10.0) -> set[int]:
     pairs = mesh.face_adjacency
     ids = part.face_ids[pairs]
     across = ids[:, 0] != ids[:, 1]
+    if part.body_ids is not None:               # never cross into another body
+        across &= part.body_ids[pairs[:, 0]] == part.body_ids[pairs[:, 1]]
     n = mesh.face_normals
     cos = np.einsum("ij,ij->i", n[pairs[across, 0]], n[pairs[across, 1]])
-    links = ids[across][cos >= np.cos(np.radians(max_deg))]
+    links = np.unique(np.sort(ids[across][cos >= np.cos(np.radians(max_deg))], axis=1), axis=0)
+    nbrs: dict[int, list[int]] = {}
+    for f, g in links.tolist():
+        nbrs.setdefault(f, []).append(g)
+        nbrs.setdefault(g, []).append(f)
     out, todo = set(faces), list(faces)
     while todo:
         f = todo.pop()
-        for g in links[(links == f).any(axis=1)].ravel().tolist():
+        for g in nbrs.get(f, ()):
             if g not in out:
                 out.add(g)
                 todo.append(g)

@@ -54,11 +54,12 @@ def test_values_update_settings_and_marker(host):
     host.purge_dir.setCurrentText("+X")
     host.purge_dwell.setValue(8)
     host.purge_every.setValue(3)
+    host.purge_approach.setValue(150)
     host.purge_end.setChecked(False)
     c = settings(host)
     assert c["enabled"] and np.allclose(c["point"], (100, -300, 1800))
     assert np.allclose(c["spray_dir"], DIRECTION_PRESETS["+X"])
-    assert c["dwell_s"] == 8 and c["every_n_layers"] == 3 and c["at_end"] is False
+    assert c["dwell_s"] == 8 and c["every_n_layers"] == 3 and c["at_end"] is False and c["approach_mm"] == 150
     m = host.scene.purge_marker
     assert m.visible
     assert np.allclose(m.pose, marker_pose((100, -300, 1800), (1, 0, 0)))
@@ -100,3 +101,15 @@ def test_save_button_writes_cell_yaml(host, tmp_path, monkeypatch):
     saved = load_cell(tmp_path / "cell.yaml").purge
     assert saved.enabled and saved.dwell_s == 9
     assert msgs and "saved" in msgs[0]
+
+
+def test_move_gun_here(host, monkeypatch):
+    msgs, poses = [], []
+    host._status = msgs.append
+    monkeypatch.setattr(host.scene, "set_robot_pose", poses.append)
+    host.purge_cfg["point"] = (1e5, 0.0, 0.0)
+    host.purge_goto_btn.click()
+    assert not poses and "out of reach" in msgs[-1]
+    host.purge_cfg["point"] = host.PURGE_DEFAULTS["point"]
+    host.purge_goto_btn.click()
+    assert len(poses) == 1

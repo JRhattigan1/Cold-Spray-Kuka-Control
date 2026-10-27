@@ -64,3 +64,18 @@ def test_transformed_and_rolled_keep_tag_and_dwell():
     p = Toolpath("t", [Move(frame(), 10.0, True, tag="purge", dwell_s=3.0)])
     for q in (p.transformed(frame(1, 2, 3)), p.rolled(30)):
         assert (q.moves[0].tag, q.moves[0].dwell_s) == ("purge", 3.0)
+
+
+def test_skipped_points_survive_roll_transform_and_purge():
+    from types import SimpleNamespace
+    from coldspray.planner.purge import add_purge
+    p = Toolpath("t", [Move(np.eye(4), 10.0)], skipped_points=3)
+    assert p.rolled(45).skipped_points == 3 and p.transformed(np.eye(4)).skipped_points == 3
+    assert add_purge(p, SimpleNamespace(purge=None)).skipped_points == 3
+
+
+def test_estimate_time_counts_dwell():
+    from coldspray.gui.steps.toolpath import estimate_time_s
+    proc = load_process()
+    a = Toolpath("t", [Move(np.eye(4), 10.0), Move(np.eye(4), 10.0, dwell_s=4.0)])
+    assert estimate_time_s(a, proc) == 4.0

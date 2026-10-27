@@ -98,3 +98,16 @@ def test_krl_dwell_and_single_spray_toggle(setup):
     assert sum(l == f"{gun} = FALSE" for l in src) == 2   # the init line and the final switch-off
     on = src.index(f"{gun} = TRUE")
     assert src.index("WAIT SEC 4  ;dwell") > on
+
+
+def test_plan_part_rolls_purge_moves_too(setup):
+    """auto_position checks roll on every pose (purge included), so plan_part must roll them too."""
+    from coldspray.pipeline import load_part, plan_part
+    from coldspray.transforms import frame
+    _, cell, proc = setup
+    c = _cell(cell, point=(1500.0, 0.0, 800.0), spray_dir=(0.0, -1.0, 0.0))
+    part = load_part("test_block")
+    _, p0 = plan_part(part, proc, tilt_deg=90, cell=c)
+    _, p45 = plan_part(part, proc, tilt_deg=90, cell=c, roll_deg=45)
+    for a, b in zip(p0.moves, p45.moves):
+        assert np.allclose(a.pose @ frame(c=45), b.pose)

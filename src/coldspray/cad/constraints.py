@@ -98,7 +98,11 @@ def reference(name: str, part=None, substrate=None, offset: float = 0.0):
     kind, _, arg = name.partition(":")
     if kind == "face":
         fid = int(arg)
-        return part_plane(part, fid) if fid in part.planar else part_axis(part, fid)
+        if fid in part.planar:
+            return part_plane(part, fid)
+        if fid in getattr(part, "cylinders", {}):
+            return part_axis(part, fid)
+        raise ValueError(f"face {fid} is not flat or cylindrical")
     if kind == "datum":
         return datum(arg, offset)
     if kind == "faceplate":
@@ -128,6 +132,32 @@ class Constraint:
     def __post_init__(self):
         if self.kind not in KINDS:
             raise ValueError(f"unknown constraint {self.kind!r}")
+        _check(self, partial=True)
+
+
+_PLANES = ("touch", "align", "distance", "centre_between")
+_DIRECTED = ("parallel", "perpendicular", "angle")
+
+
+def _check(k: Constraint, partial: bool = False):
+    """Clear ValueError when an entity is the wrong type for the constraint
+    (missing entities are allowed while `partial`, i.e. while building)."""
+    if k.kind == "fix":
+        return
+    ents = [k.a, k.b] + ([k.c] if k.kind == "centre_between" else [])
+    for e in ents:
+        if e is None:
+            if partial:
+                continue
+            raise ValueError(f"{k.kind} needs {'three' if len(ents) == 3 else 'two'} entities")
+        if k.kind in _PLANES and not isinstance(e, Plane):
+            raise ValueError(f"{k.kind} needs plane(s), got {type(e).__name__.lower()}")
+        if k.kind in _DIRECTED and not isinstance(e, (Plane, Axis)):
+            raise ValueError(f"{k.kind} needs a plane or axis, got {type(e).__name__.lower()}")
+        if k.kind == "centre" and not isinstance(e, (Axis, PointRef)):
+            raise ValueError(f"centre needs an axis (or point), got {type(e).__name__.lower()}")
+    if k.kind == "centre" and all(isinstance(e, PointRef) for e in ents):
+        raise ValueError("centre needs an axis (or point), got two points")
 
 
 def touch(a, b): return Constraint("touch", a, b)
@@ -233,6 +263,8 @@ def solve(placement, constraints, pivot=None, tol=TOL) -> SolveResult:
     start = np.array(placement, float)
     pivot = np.zeros(3) if pivot is None else np.asarray(pivot, float)
     active = [k for k in constraints if not k.suppressed]
+    for k in active:
+        _check(k)
 
     def cons(x):
         t = _pose(x, start, pivot)

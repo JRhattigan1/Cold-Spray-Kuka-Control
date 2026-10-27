@@ -26,7 +26,19 @@ def _layer(region):
 def test_densify_adds_points_near_corners():
     ring = np.array([[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]], float)
     out = densify_corners(ring, 2.0)
-    assert len(out) == 13 and np.allclose(out[1], [1, 0])
+    assert all(any(np.allclose(q, v) for q in out) for v in ring[:4])
+    assert any(np.allclose(q, [1, 0]) for q in out) and any(np.allclose(q, [9, 0]) for q in out)
+    assert not any(1.01 < q[0] < 8.99 for q in out if q[1] == 0)   # straight runs stay sparse
+
+
+@pytest.mark.parametrize("width", [2.0, 5.0])
+def test_normal_turns_at_most_10deg_per_point(width):
+    region = box(0, 0, 40, 30).difference(Point(20, 15).buffer(6))
+    for ring in [region.exterior.coords, *[r.coords for r in region.interiors]]:
+        pts = densify_corners(np.array(ring), width)
+        n = outward_normals(pts, region, width)
+        turn = np.degrees(np.arccos(np.clip((n[:-1] * n[1:]).sum(1), -1, 1)))
+        assert turn.max() <= 10.0
 
 
 def test_normals_point_away_from_material(proc):

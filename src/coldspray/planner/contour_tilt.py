@@ -19,16 +19,36 @@ DOWN = np.array([0.0, 0.0, -1.0])
 ALONG_X = (1.0, 0.0, 0.0)
 
 
-def densify_corners(ring: np.ndarray, width: float) -> np.ndarray:
-    """Closed ring (first == last) with extra points `width/2` either side of
-    each vertex, so the smoothed normal turns only near the corners."""
+def densify_corners(ring: np.ndarray, width: float, max_turn_deg: float = 10.0) -> np.ndarray:
+    """Closed ring (first == last) with extra points within `width/2` of each
+    vertex, so the smoothed normal turns only near the corners, and spaced
+    finely enough that it turns at most about `max_turn_deg` per point."""
     pts = np.asarray(ring, float)[:, :2]
+    d = np.diff(pts, axis=0)
+    keep = np.concatenate([[True], np.linalg.norm(d, axis=1) > 1e-9])
+    pts = pts[keep]
+    d = np.diff(pts, axis=0)
+    if len(d) < 2:
+        return pts
+    ang = np.arctan2(d[:, 1], d[:, 0])
+    turn = np.abs((ang - np.roll(ang, 1) + np.pi) % (2 * np.pi) - np.pi)  # at start vertex of each edge
+    turn_end = np.roll(turn, -1)                                          # at end vertex
+    step = np.radians(max_turn_deg) / 2   # margin: the window weighting is not linear
     out = [pts[0]]
-    for a, b in zip(pts[:-1], pts[1:]):
+    for i, (a, b) in enumerate(zip(pts[:-1], pts[1:])):
         L = np.linalg.norm(b - a)
-        if L > 2 * width:
-            u = (b - a) / L
-            out += [a + u * width / 2, b - u * width / 2]
+        u = (b - a) / L
+        h = min(width / 2, L / 2)
+        na = int(np.ceil(turn[i] / 2 / step)) if turn[i] > 1e-6 else 0
+        nb = int(np.ceil(turn_end[i] / 2 / step)) if turn_end[i] > 1e-6 else 0
+        na, nb = max(na, 1), max(nb, 1)
+        ds = [h * j / na for j in range(1, na + 1)]
+        ds += [L - h * j / nb for j in range(nb, 0, -1)]
+        last = 0.0
+        for s_ in ds:
+            if s_ - last > 1e-6 and L - s_ > 1e-6:
+                out.append(a + u * s_)
+                last = s_
         out.append(b)
     return np.array(out)
 
@@ -36,7 +56,7 @@ def densify_corners(ring: np.ndarray, width: float) -> np.ndarray:
 def outward_normals(ring: np.ndarray, region, width: float) -> np.ndarray:
     """Unit horizontal normals at each ring vertex pointing away from material
     (out of the part for exteriors, into the hole for holes), averaged over
-    edges within `width/2` of arc length either side of the vertex."""
+    edge length within `width/2` of arc length either side of the vertex."""
     pts = np.asarray(ring, float)[:, :2]
     d = np.diff(pts, axis=0)
     L = np.linalg.norm(d, axis=1)
@@ -48,7 +68,9 @@ def outward_normals(ring: np.ndarray, region, width: float) -> np.ndarray:
     total = L.sum()
     gap = np.abs(s_vert[:, None] - s_mid[None, :])
     gap = np.minimum(gap, total - gap)                       # closed ring: wrap around
-    w = (gap < width / 2 + L[None, :] / 2 - 1e-9) * L[None, :]
+    # weight = length of each edge inside the +-width/2 arc window (overlap, so a
+    # long edge only counts for the part near the vertex and the normal turns smoothly)
+    w = (np.minimum(gap + L[None, :] / 2, width / 2) - np.maximum(gap - L[None, :] / 2, -width / 2)).clip(0)
     n = w @ n_edge
     n /= np.linalg.norm(n, axis=1, keepdims=True).clip(1e-12)
     # Which side is outward? Stepping outward gets closer to the region edge.

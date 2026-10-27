@@ -130,10 +130,10 @@ def plan_part(part: Part, proc: ProcessConfig, mode="layers", tilt_deg=0.0, rota
         v = v - [0.0, 0.0, floor]
         up = frame(z=floor)
         path = plan_revolve(v, faces, proc, part.name, coats=coats, tilt_deg=tilt_deg,
-                            tilt_axis=tilt_axis, rotation_axis=rot_axis).transformed(up).rolled(roll_deg)
+                            tilt_axis=tilt_axis, rotation_axis=rot_axis).transformed(up)
         passes = sum(1 for a, b in zip(path.moves, path.moves[1:]) if b.gun_on and a.gun_on
                      and abs(b.pose[2, 3] - a.pose[2, 3]) > 1e-9)
-        return f"{coats} coat(s), {passes + coats} passes", add_purge(path, cell)
+        return f"{coats} coat(s), {passes + coats} passes", add_purge(path, cell).rolled(roll_deg)
     if mode == "surface":                       # the picked faces, on any body
         coat = getattr(part, "coat_faces", set())
         if not coat:
@@ -144,14 +144,14 @@ def plan_part(part: Part, proc: ProcessConfig, mode="layers", tilt_deg=0.0, rota
         mask = np.isin(part.face_ids, sorted(coat))
         path = plan_surface(placed_vertices(part), part.faces, mask, proc, part.name, table,
                             coats=getattr(proc, "surface_coats", 1),
-                            max_tilt_deg=getattr(proc, "surface_max_tilt_deg", 60.0)).rolled(roll_deg)
+                            max_tilt_deg=getattr(proc, "surface_max_tilt_deg", 60.0))
         n = getattr(proc, "surface_coats", 1)
-        return f"{len(coat)} face(s), {n} coat(s)", add_purge(path, cell)
+        return f"{len(coat)} face(s), {n} coat(s)", add_purge(path, cell).rolled(roll_deg)
     # Layers grow away from the start face, or up from the bottom of the build
     # body (on the plate, or on the component a repair patch sits on)
     to_base = build_frame(part)
     layers = slice_mesh((v - to_base[:3, 3]) @ to_base[:3, :3], faces, proc.layer_thickness_mm)
     table = {tilt_axis: tilt_deg, rot_axis: rotation_deg} if tt else {}
-    path = plan_layers(layers, proc, part.name, table_axes=table).transformed(to_base).rolled(roll_deg)
+    path = plan_layers(layers, proc, part.name, table_axes=table, to_base=to_base).transformed(to_base)
     start = f" from start face {part.start_face}" if part.start_face is not None else ""
-    return f"{len(layers)} layers{start}", add_purge(path, cell)
+    return f"{len(layers)} layers{start}", add_purge(path, cell).rolled(roll_deg)

@@ -99,8 +99,8 @@ def advanced_row(text: str, box: QWidget, default) -> QWidget:
 
 def estimate_time_s(path, proc: ProcessConfig) -> float:
     """Rough program time: robot moves at their speed over the part, plus spray settling.
-    Pure table rotations count at their speed over the part too."""
-    total, on = 0.0, False
+    Pure table rotations count at their speed over the part too; dwells add their wait."""
+    total, on = sum(m.dwell_s for m in path.moves), False
     for a, b in zip(path.moves, path.moves[1:]):
         total += np.linalg.norm(b.pose[:3, 3] - a.pose[:3, 3]) / b.speed
         if b.gun_on and not on:
@@ -185,12 +185,17 @@ class ToolpathStep:
 
     def _sync_advanced(self):
         """Show how many advanced values differ from process.yaml and apply the Simple/Advanced mode."""
+        # free-text fields (QLineEdit, e.g. turn_plane) have no row in the form: don't count them
         changed = [n for n, box in self.fields.items()
-                   if field_level(n) != "basic" and box_differs(box, getattr(self.process_defaults, n))]
+                   if field_level(n) != "basic" and not isinstance(box, QLineEdit)
+                   and box_differs(box, getattr(self.process_defaults, n))]
         self.advanced_section.set_chip(f"{len(changed)} changed" if changed else "", "warn")
         widgets.refresh()
-        # Simple mode: the Advanced section only shows when it holds a changed value
-        self.advanced_section.setVisible(not widgets.is_simple() or bool(changed))
+        # Simple mode: the Advanced section only shows (and opens) when it holds a changed value
+        simple = widgets.is_simple()
+        self.advanced_section.setVisible(not simple or bool(changed))
+        if simple and changed:
+            self.advanced_section.set_open(True)
 
     def read_process(self) -> ProcessConfig:
         return ProcessConfig(**{name: box_value(box) for name, box in self.fields.items()})

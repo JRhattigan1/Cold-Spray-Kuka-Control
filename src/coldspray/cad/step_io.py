@@ -98,7 +98,8 @@ def tessellate_bodies(shape, deflection=0.1, angle=0.2):
     cylinders = {}
     for b, body in enumerate(bodies(shape)):
         cyl = {}
-        v, f, i, p, count = _mesh(body, deflection, angle, planes=True, count=True, cylinders=cyl)
+        v, f, i, p, count = _mesh(body, deflection, angle, planes=True, count=True, cylinders=cyl,
+                                    meshed=True)
         cylinders |= {k + n_faces: c for k, c in cyl.items()}
         vs.append(v)
         fs.append(f + n_verts)
@@ -111,9 +112,11 @@ def tessellate_bodies(shape, deflection=0.1, angle=0.2):
     return np.vstack(vs), np.vstack(fs), np.concatenate(ids), planar, np.concatenate(body_ids), cylinders
 
 
-def _mesh(shape, deflection, angle, planes, count=False, cylinders=None):
-    """`cylinders`, if given, is filled with {face index: CylFace}."""
-    BRepMesh_IncrementalMesh(shape, deflection, False, angle, True)
+def _mesh(shape, deflection, angle, planes, count=False, cylinders=None, meshed=False):
+    """`cylinders`, if given, is filled with {face index: CylFace}.
+    `meshed=True` skips BRepMesh (the caller already meshed the shape)."""
+    if not meshed:
+        BRepMesh_IncrementalMesh(shape, deflection, False, angle, True)
     verts, faces, ids, planar, offset = [], [], [], {}, 0
     exp = TopExp_Explorer(shape, TopAbs_FACE)
     index = 0
