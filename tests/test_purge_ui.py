@@ -100,3 +100,15 @@ def test_save_button_writes_cell_yaml(host, tmp_path, monkeypatch):
     saved = load_cell(tmp_path / "cell.yaml").purge
     assert saved.enabled and saved.dwell_s == 9
     assert msgs and "saved" in msgs[0]
+
+
+def test_move_gun_here(host, monkeypatch):
+    msgs, poses = [], []
+    host._status = msgs.append
+    monkeypatch.setattr(host.scene, "set_robot_pose", poses.append)
+    host.purge_cfg["point"] = (1e5, 0.0, 0.0)
+    host.purge_goto_btn.click()
+    assert not poses and "out of reach" in msgs[-1]
+    host.purge_cfg["point"] = host.PURGE_DEFAULTS["point"]
+    host.purge_goto_btn.click()
+    assert len(poses) == 1
