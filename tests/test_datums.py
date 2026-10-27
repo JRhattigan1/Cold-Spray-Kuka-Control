@@ -57,3 +57,22 @@ def test_scene_datums_follow_tilt():
     nz = (frame[:3, :3] @ scene.datums.plane("XY")[1])[2]
     assert np.isclose(nz, np.cos(np.radians(30)), atol=1e-6)
     assert scene.pick_name(scene.part_actor) is None
+
+
+def test_datum_menu_toggles_planes():
+    from PySide6.QtWidgets import QApplication
+
+    from coldspray.gui.view_toolbar import datum_button
+
+    QApplication.instance() or QApplication([])
+    cell = load_cell()
+    pl = pv.Plotter(off_screen=True, window_size=(200, 150))
+    scene = Scene(pl, Robot(load_robot(), load_tool()), robroot(cell))
+    button = datum_button(scene, pl)
+    act, off = button.actions_by_plane["YZ"]
+    act.setChecked(True)
+    assert scene.datums.visible("YZ") and not scene.datums.visible("XY")
+    off.setValue(12.5)
+    assert np.allclose(scene.datums.plane("datum:YZ")[0], (12.5, 0, 0))
+    act.setChecked(False)
+    assert not scene.datums.visible("YZ")
