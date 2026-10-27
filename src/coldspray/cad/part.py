@@ -40,6 +40,7 @@ class Part:
     body_ids: np.ndarray | None = None    # (m,) body index per triangle; None = one body
     build_body: int = 0                   # the body that is sliced and sprayed
     start_face: int | None = None         # flat face of the build body the layers grow away from
+    coat_faces: set[int] = field(default_factory=set)   # CAD faces to coat (surface mode), any body
 
     @property
     def n_bodies(self) -> int:
@@ -58,7 +59,7 @@ class Part:
         """Copy without the given bodies (renumbered); the build body must stay."""
         drop = set(bodies) - {None}
         if not drop or self.body_ids is None:
-            return replace(self, placement=self.placement.copy())
+            return replace(self, placement=self.placement.copy(), coat_faces=set(self.coat_faces))
         if self.build_body in drop:
             raise ValueError("the build body can't be left out")
         keep = ~np.isin(self.body_ids, list(drop))
@@ -73,8 +74,31 @@ class Part:
                        placement=self.placement.copy(),
                        base_face=self.base_face if self.base_face in present else None,
                        start_face=self.start_face if self.start_face in present else None,
+                       coat_faces=self.coat_faces & present,
                        body_ids=renumber[self.body_ids[keep]] if len(kept) > 1 else None,
                        build_body=int(renumber[self.build_body]) if len(kept) > 1 else 0)
+
+
+def grow_tangent(part: Part, faces, max_deg: float = 10.0) -> set[int]:
+    """`faces` plus every CAD face reached from them across shared edges where
+    the triangle normals on the two sides are within `max_deg` (smooth joins,
+    e.g. a fillet onto a flat; not a sharp box edge)."""
+    mesh = trimesh.Trimesh(part.vertices, part.faces, process=False)
+    mesh.merge_vertices()                       # faces are tessellated apart: join their edges
+    pairs = mesh.face_adjacency
+    ids = part.face_ids[pairs]
+    across = ids[:, 0] != ids[:, 1]
+    n = mesh.face_normals
+    cos = np.einsum("ij,ij->i", n[pairs[across, 0]], n[pairs[across, 1]])
+    links = ids[across][cos >= np.cos(np.radians(max_deg))]
+    out, todo = set(faces), list(faces)
+    while todo:
+        f = todo.pop()
+        for g in links[(links == f).any(axis=1)].ravel().tolist():
+            if g not in out:
+                out.add(g)
+                todo.append(g)
+    return out
 
 
 @dataclass
