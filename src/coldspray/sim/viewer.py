@@ -183,6 +183,37 @@ class Scene:
         self.purge_marker.set_pose(pose)
         self.purge_marker.set_visible(visible)
         self.purge_marker.set_color(GHOST if reachable else BAD)
+        if not getattr(self, "_purge_dragging", False):
+            self._make_purge_widget(visible)
+
+    def _make_purge_widget(self, visible: bool):
+        """Affine widget on the ghost gun (like `_make_widget`); dragging calls
+        `on_purge_moved(point, final)` with the new nozzle-exit point (WORLD)."""
+        w = getattr(self, "purge_widget", None)
+        if w is not None:
+            w.remove()
+            self.purge_widget = None
+        if not visible or getattr(self.pl, "iren", None) is None:
+            return
+        m = self.purge_marker
+        self.purge_widget = self.pl.add_affine_transform_widget(
+            m.actors[0], origin=tuple(m.pose[:3, 3]), scale=0.4,
+            interact_callback=lambda mat: self._purge_dragged(mat, False),
+            release_callback=lambda mat: self._purge_dragged(mat, True))
+
+    def _purge_dragged(self, world_matrix, final: bool):
+        mat = np.asarray(world_matrix, float)
+        m = self.purge_marker
+        for a in m.actors[1:]:
+            a.user_matrix = mat           # keep nozzle + arrow with the dragged body
+        cb = getattr(self, "on_purge_moved", None)
+        if cb is None:
+            return
+        self._purge_dragging = True      # don't rebuild the widget inside its own callback
+        try:
+            cb(mat[:3, 3].copy(), final)
+        finally:
+            self._purge_dragging = False
 
     def set_group_visible(self, label: str, visible: bool):
         if label in self.group_actors:
@@ -455,7 +486,7 @@ class Scene:
         if crashes:
             parts.append(f"{crashes} collision points")
         if self.steep.any():
-            parts.append(f"{int(self.steep.sum())} points gun too steep (down {self.gun_down.max():.0f}°)")
+            parts.append(f"{int(self.steep.sum())} points gun too steep (down {self.gun_down.max():.0f}Â°)")
         self.summary.SetText(3, "\n".join(parts) if parts else "all points reachable")
         self.summary.GetTextProperty().SetColor(pv.Color(BAD if parts else "green").float_rgb)
 
@@ -484,7 +515,7 @@ class Scene:
         crash = self.collisions.get(i)
         crash_text = ("\nCOLLISION: " + ", ".join(f"{a} / {b}" for a, b in sorted(crash))) if crash else ""
         self.status.SetText(2, f"{self.path_name}  point {i}/{self.n_points - 1}  "
-                               f"spray {'ON' if self.gun_on[i] else 'off'}   gun {round(self.gun_down[i])}° down"
+                               f"spray {'ON' if self.gun_on[i] else 'off'}   gun {round(self.gun_down[i])}Â° down"
                                f"{'  TOO STEEP' if self.steep[i] else ''}\nA1..A6: {j}   {table}{crash_text}")
         self._follow_tool(i)
 
