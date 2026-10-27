@@ -107,3 +107,26 @@ def test_turns_lift_off_convex_surface_by_standoff():
     for m in mids:
         r = np.linalg.norm(m.pose[:3, 3][:2] - axis)
         assert r >= 60 + 2 * proc.standoff_mm - 0.5      # lifted a further standoff mid-turn
+
+
+def test_separate_faces_are_separate_regions_with_a_jump():
+    """The U-block's two prong tops, 20 mm apart, are coated one after the other: no
+    stroke runs across the slot, and the gun jumps between them."""
+    from coldspray.models import load_process
+    from coldspray.pipeline import load_part, plan_part
+    from coldspray.planner.surface import coat_regions
+    part = load_part("test_u_block")
+    up = part.placement[:3, :3].T @ [0.0, 0.0, 1.0]
+    top = max(f.point @ up for f in part.planar.values())
+    prongs = {k for k, f in part.planar.items() if f.normal @ up > 0.99 and np.isclose(f.point @ up, top)}
+    assert len(prongs) == 2
+    part.coat_faces = prongs
+    mask = np.isin(part.face_ids, sorted(prongs))
+    assert len(coat_regions(part.vertices, part.faces, mask)) == 2
+    proc = load_process().model_copy(update={"overrun_mm": 0.0})   # stroke ends: no deliberate overrun
+    path = plan_part(part, proc, "surface")[1]
+    tags = [m.tag for m in path.moves]
+    assert "jump" in tags
+    gaps = [np.linalg.norm(b.pose[:3, 3] - a.pose[:3, 3]) for a, b in zip(path.moves, path.moves[1:])
+            if a.tag == b.tag == "infill"]
+    assert max(gaps) < 5.0                     # within a stroke: resampled points, never across the slot

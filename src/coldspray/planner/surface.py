@@ -168,6 +168,26 @@ def surface_strokes(vertices, faces, coat_mask, step_over, blend_mm=10.0, max_ti
     return strokes, skipped
 
 
+def coat_regions(vertices, faces, coat_mask) -> list[np.ndarray]:
+    """The picked triangles split into separate regions, as masks over `faces`.
+    Faces that share an edge are one region (strokes run on over the edge);
+    faces with a gap between them are planned apart, so the gap isn't sprayed.
+    Regions are ordered along BASE X, then Y."""
+    faces = np.asarray(faces)
+    sel = np.flatnonzero(np.asarray(coat_mask, bool))
+    if not len(sel):
+        return []
+    mesh = trimesh.Trimesh(np.asarray(vertices, float), faces[sel], process=True, validate=False)
+    groups = trimesh.graph.connected_components(mesh.face_adjacency, nodes=np.arange(len(sel)), min_len=1)
+    out = []
+    for g in groups:
+        m = np.zeros(len(faces), bool)
+        m[sel[np.asarray(g)]] = True
+        out.append(m)
+    centre = [np.asarray(vertices)[faces[m]].reshape(-1, 3).mean(0) for m in out]
+    return [out[i] for i in sorted(range(len(out)), key=lambda i: (round(centre[i][0], 3), centre[i][1]))]
+
+
 def _extend(p, n, length):
     """Stroke with its ends pushed out tangentially by `length` (normals held)."""
     if length <= 0 or len(p) < 2:
@@ -182,9 +202,15 @@ def plan_surface(vertices, faces, coat_mask, proc: ProcessConfig, name="surface"
                  table_axes: dict | None = None, *, coats: int = 1, max_tilt_deg: float = 60.0,
                  blend_mm: float = 10.0) -> Toolpath:
     """Toolpath coating the triangles where `coat_mask` is true (vertices in BASE).
-    The number of points dropped for tilting more than `max_tilt_deg` from the
-    mean normal is left in `path.skipped_points`."""
-    strokes, skipped = surface_strokes(vertices, faces, coat_mask, proc.step_over_mm, blend_mm, max_tilt_deg)
+    Separate regions (coat_regions) are rastered one after the other, with a
+    jump (lifted by `jump_height_mm`) between them. The number of points dropped
+    for tilting more than `max_tilt_deg` from the mean normal is left in
+    `path.skipped_points`."""
+    strokes, skipped = [], 0
+    for r, mask in enumerate(coat_regions(vertices, faces, coat_mask)):
+        s, k = surface_strokes(vertices, faces, mask, proc.step_over_mm, blend_mm, max_tilt_deg)
+        strokes += [(p, n, c, r) for p, n, c in s]
+        skipped += k
     path = Toolpath(name)
     path.skipped_points = skipped * coats
     if not strokes:
@@ -196,8 +222,8 @@ def plan_surface(vertices, faces, coat_mask, proc: ProcessConfig, name="surface"
         return spray_frame(p + n * proc.standoff_mm, -n, travel)
 
     for coat in range(coats):
-        run = strokes if coat % 2 == 0 else [(p[::-1], n[::-1], c) for p, n, c in strokes[::-1]]
-        for k, (p, n, closed) in enumerate(run):
+        run = strokes if coat % 2 == 0 else [(p[::-1], n[::-1], c, r) for p, n, c, r in strokes[::-1]]
+        for k, (p, n, closed, region) in enumerate(run):
             if closed:
                 p, n = np.vstack([p, p[:1]]), np.vstack([n, n[:1]])
             else:
@@ -208,6 +234,11 @@ def plan_surface(vertices, faces, coat_mask, proc: ProcessConfig, name="surface"
                 path.moves.append(Move(pose(lift, n[0], tang[0]), proc.rapid_speed_mm_s, kind="PTP",
                                        axes=dict(table_axes or {}), tag="approach"))
                 path.moves.append(Move(pose(p[0], n[0], tang[0]), proc.rapid_speed_mm_s, tag="approach"))
+            elif region != prev_region:
+                # another region: jump across the gap, lifted by jump_height_mm, as Layers does
+                h, travel = proc.jump_height_mm, p[0] - prev_p
+                for q, nn in ((prev_p + prev_n * h, prev_n), (p[0] + n[0] * h, n[0]), (p[0], n[0])):
+                    path.moves.append(Move(pose(q, nn, travel), proc.rapid_speed_mm_s, gun_on=True, tag="jump"))
             else:
                 # lift mid-turn: gun goes a further standoff_mm off the surface along the mean
                 # normal, so a turn over a convex part cannot graze it
@@ -222,7 +253,7 @@ def plan_surface(vertices, faces, coat_mask, proc: ProcessConfig, name="surface"
             for i in range(1, len(p)):
                 path.moves.append(Move(pose(p[i], n[i], tang[i]), proc.traverse_speed_mm_s,
                                        gun_on=True, tag="infill"))
-            prev_p, prev_n = p[-1], n[-1]
+            prev_p, prev_n, prev_region = p[-1], n[-1], region
     last = path.moves[-1].pose
     up = last.copy()
     up[:3, 3] = last[:3, 3] - last[:3, 0] * proc.approach_height_mm
