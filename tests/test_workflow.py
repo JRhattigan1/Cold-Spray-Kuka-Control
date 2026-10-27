@@ -28,7 +28,7 @@ def win(tmp_path, monkeypatch):
     w.close()
 
 
-@pytest.mark.xfail(reason="R3 finding 1: _set_coat does not update the cell part", strict=True)
+@pytest.mark.slow
 def test_coat_change_reaches_cell_part(win):
     """Coat faces picked after the part went into the cell must reach the cell part (Surface mode)."""
     from coldspray.gui.stepper import POSITION
@@ -41,6 +41,7 @@ def test_coat_change_reaches_cell_part(win):
     assert win.part.coat_faces == {f}
 
 
+@pytest.mark.slow
 def test_layers_generate_and_export(win):
     from coldspray.gui.stepper import EXPORT, POSITION, SIMULATE, TOOLPATH
     win._set_part("test_block")
