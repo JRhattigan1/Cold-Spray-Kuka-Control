@@ -2,12 +2,13 @@
 
 import numpy as np
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QCheckBox, QSlider, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QSlider, QVBoxLayout, QWidget
 
 from coldspray.gui.checks import CheckList, export_checks, simulate_checks
 from coldspray.gui.stepper import EXPORT, SIMULATE
 from coldspray.gui.timeline import PlaybackControls, Timeline, sample_times
-from coldspray.gui.widgets import Section, primary_button, wrap_label
+from coldspray.gui import widgets
+from coldspray.gui.widgets import Chip, Section, primary_button, wrap_label
 
 CHECK_EVERY = 3        # collision-check every 3rd sampled point (~6 mm of travel)
 
@@ -25,7 +26,17 @@ class SimulateStep:
         self.check_box.setChecked(True)
         self.check_box.setToolTip("After Generate, check robot, gun and table against the cell and the part\n"
                                   "(runs in the background)")
-        checks.add(self.check_box)
+        # Advanced only, but kept in Simple (with a "changed" chip) once switched off
+        row = self.collision_row = QWidget()
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.addWidget(self.check_box)
+        self.collision_chip = Chip()
+        row_layout.addWidget(self.collision_chip)
+        row_layout.addStretch(1)
+        widgets.advanced(row, changed=lambda: not self.check_box.isChecked(), chip=self.collision_chip)
+        self.check_box.toggled.connect(widgets.refresh)
+        checks.add(row)
         self.sim_checks = CheckList()
         self.sim_checks.goTo.connect(self._goto)
         checks.add(self.sim_checks)
