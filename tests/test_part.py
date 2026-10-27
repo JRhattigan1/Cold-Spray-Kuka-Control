@@ -245,3 +245,16 @@ def test_patch_on_a_side_wall_builds_sideways(repair):
 
 def test_build_frame_without_start_face(block):
     assert np.allclose(build_frame(block), frame(z=TOP))
+
+
+def test_tube_cylinders():
+    tube = load_part("test_tube")
+    radii = sorted({round(c.radius, 3) for c in tube.cylinders.values()})
+    assert radii == [40.0, 60.0]
+    for c in tube.cylinders.values():
+        assert np.allclose(np.abs(c.axis), [0, 0, 1])
+        assert np.allclose(c.point[:2], 0) and c.area > 0
+    assert not set(tube.cylinders) & set(tube.planar)
+    assert set(tube.cylinders) <= set(tube.face_ids.tolist())
+    assert tube.without([]).cylinders == tube.cylinders
+    assert [round(c.radius, 3) for c in load_part("test_block").cylinders.values()] == [5.0]   # its hole

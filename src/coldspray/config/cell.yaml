@@ -59,3 +59,16 @@ home_deg: [0, -90, 90, 0, 0, 0]
 # The gun must not point far down (bad for the equipment): spray direction at
 # most this many degrees below horizontal. Steeper points are flagged.
 gun_max_down_deg: 45.0
+
+# Warm-up / powder purge point in free space (optional). The gun goes here,
+# switches the spray on and dwells, then travels to the part with the spray on;
+# it returns at the end (and every N layers) and switches off here.
+# purge:
+#   enabled: true
+#   point: [-884.56, 400.0, 2000.0]  # nozzle exit target, WORLD mm - CHECK clear of everything
+#   spray_dir: [0.0, -1.0, 0.0]      # WORLD, horizontal into the spray booth - CHECK on the cell
+#   dwell_s: 5.0                     # spray on at the point before moving off
+#   at_start: true
+#   at_end: true
+#   every_n_layers: 0                # 0: only at start / end
+#   approach_mm: 100.0               # lead-in, back from the point along spray_dir

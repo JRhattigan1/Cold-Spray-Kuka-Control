@@ -1,12 +1,13 @@
 """Step 3 Toolpath: strategy, process parameters, Generate."""
 
 import time
+from typing import Literal, get_args, get_origin
 
 import numpy as np
 from pydantic import ValidationError
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QDoubleSpinBox, QFormLayout, QMessageBox, QPushButton, QSpinBox, QVBoxLayout,
+    QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QLineEdit, QMessageBox, QPushButton, QSpinBox, QVBoxLayout,
     QWidget,
 )
 
@@ -15,13 +16,11 @@ from coldspray.cell import robroot
 from coldspray.gui.stepper import SIMULATE, TOOLPATH
 from coldspray.gui.widgets import Section, primary_button, wrap_label
 from coldspray.kinematics.robot import Robot
-from coldspray.models import ProcessConfig, load_process, save_process
+from coldspray.models import ProcessConfig, field_level, load_process, save_process
 from coldspray.pipeline import MODES, plan_part
 from coldspray.sim.scene import gantry_offset, make_gun
 
 UNITS = {"_mm_s": " mm/s", "_mm": " mm", "_deg": " °", "_s": " s"}
-# Always shown; the rest of ProcessConfig folds into "Advanced"
-BASIC = ("standoff_mm", "traverse_speed_mm_s", "step_over_mm", "layer_thickness_mm", "track_width_mm")
 
 
 def _label(field: str) -> tuple[str, str]:
@@ -29,6 +28,57 @@ def _label(field: str) -> tuple[str, str]:
         if field.endswith(suffix):
             return field[: -len(suffix)].replace("_", " ").capitalize(), unit
     return field.replace("_", " ").capitalize(), ""
+
+
+def make_process_box(name: str, info, value, on_change) -> QWidget:
+    """Editor widget for one ProcessConfig field: Literal -> combo, bool -> check box,
+    int / float -> spin box, str -> line edit (kept out of the form)."""
+    ann = info.annotation
+    if get_origin(ann) is Literal:
+        box = QComboBox()
+        for choice in get_args(ann):
+            box.addItem(str(choice).replace("_", " "), choice)
+        box.setCurrentIndex(box.findData(value))
+        box.currentIndexChanged.connect(on_change)
+    elif ann is bool:
+        box = QCheckBox()
+        box.setChecked(bool(value))
+        box.toggled.connect(on_change)
+    elif ann is str:
+        box = QLineEdit(str(value))
+        box.editingFinished.connect(on_change)
+    else:
+        _, unit = _label(name)
+        if ann is int:
+            box = QSpinBox()
+            box.setRange(0, 1000)
+        else:
+            box = QDoubleSpinBox()
+            box.setDecimals(2)
+            box.setRange(-360.0 if name.endswith("_deg") else 0.0, 100000.0)
+        box.setValue(value)
+        box.setSuffix(unit)
+        box.setKeyboardTracking(False)
+        box.valueChanged.connect(on_change)
+    box.setToolTip(info.description)
+    return box
+
+
+def box_value(box: QWidget):
+    if isinstance(box, QComboBox):
+        return box.currentData()
+    if isinstance(box, QCheckBox):
+        return box.isChecked()
+    if isinstance(box, QLineEdit):
+        return box.text()
+    return box.value()
+
+
+def box_differs(box: QWidget, default) -> bool:
+    value = box_value(box)
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return not np.isclose(value, default)
+    return value != default
 
 
 def estimate_time_s(path, proc: ProcessConfig) -> float:
@@ -70,21 +120,12 @@ class ToolpathStep:
         self.fields = {}
         self.process_defaults = proc = load_process()
         for name, info in ProcessConfig.model_fields.items():
-            text, unit = _label(name)
-            if info.annotation is int:
-                box = QSpinBox()
-                box.setRange(0, 1000)
-            else:
-                box = QDoubleSpinBox()
-                box.setDecimals(2)
-                box.setRange(-360.0 if name.endswith("_deg") else 0.0, 100000.0)
-            box.setValue(getattr(proc, name))
-            box.setSuffix(unit)
-            box.setToolTip(info.description)
-            box.setKeyboardTracking(False)
-            box.valueChanged.connect(self._process_changed)
-            (self.process_form if name in BASIC else advanced_form).addRow(text, box)
+            box = make_process_box(name, info, getattr(proc, name), self._process_changed)
             self.fields[name] = box
+            if isinstance(box, QLineEdit):
+                continue            # free text (e.g. a datum plane name): set elsewhere, not in the form
+            text, _ = _label(name)
+            (self.process_form if field_level(name) == "basic" else advanced_form).addRow(text, box)
         proc_box.add(self.process_form)
         self.advanced_section.add(advanced_form)
         layout.addWidget(proc_box)
@@ -118,13 +159,13 @@ class ToolpathStep:
     def _process_changed(self, *_):
         """Show how many advanced values differ from process.yaml; a toolpath is now out of date."""
         changed = [n for n, box in self.fields.items()
-                   if n not in BASIC and not np.isclose(box.value(), getattr(self.process_defaults, n))]
+                   if field_level(n) != "basic" and box_differs(box, getattr(self.process_defaults, n))]
         self.advanced_section.set_chip(f"{len(changed)} changed" if changed else "", "warn")
         if self.result is not None:
             self._invalidate(TOOLPATH)
 
     def read_process(self) -> ProcessConfig:
-        return ProcessConfig(**{name: box.value() for name, box in self.fields.items()})
+        return ProcessConfig(**{name: box_value(box) for name, box in self.fields.items()})
 
     def generate(self):
         if self.scene is None or self.part is None:

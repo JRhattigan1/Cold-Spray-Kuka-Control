@@ -78,9 +78,9 @@ def load_part(source=None, deflection=0.05) -> Part:
     source = source or "test_block"
     builtin = BUILT_IN.get(source)
     shape = builtin() if builtin else load_step(source)
-    v, f, ids, planar, body_ids = tessellate_bodies(shape, deflection=deflection)
+    v, f, ids, planar, body_ids, cylinders = tessellate_bodies(shape, deflection=deflection)
     part = Part(program_name(source if builtin else Path(source).stem), v, f, ids, planar,
-                body_ids=body_ids if body_ids.max() > 0 else None)
+                body_ids=body_ids if body_ids.max() > 0 else None, cylinders=cylinders)
     if part.n_bodies > 1:
         part.build_body = int(np.argmin([body_size(part, b) for b in range(part.n_bodies)]))
     part.placement = drop_on_plate(part, Substrate().top)

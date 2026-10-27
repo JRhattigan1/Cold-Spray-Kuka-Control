@@ -14,3 +14,11 @@ track_width_mm: 4.0         # width of a single spray track (nozzle footprint)
 raster_angle_step_deg: 90   # raster direction rotates by this each layer
 contour_passes: 1           # perimeter passes around each layer before infill
 jump_height_mm: 50.0        # long moves between areas lift the gun this much (spray stays on)
+infill_pattern: zigzag      # how the inside of each layer is filled after the contours
+contour_tilt_deg: 0.0       # tilt the gun outwards on contour passes (0 = off)
+turn_mode: inside           # where infill passes turn: on the part, overrun_mm past its edge, or past turn_plane
+turn_plane: ''              # datum plane the passes turn beyond (beyond_plane)
+
+# Surface coating (selected faces)
+surface_coats: 1            # Surface mode: coats over the selected faces
+surface_max_tilt_deg: 60.0  # Surface mode: most the gun may tilt to stay normal to the face
