@@ -18,6 +18,7 @@ from coldspray.cell import robroot
 from coldspray.gui.constraints_panel import ConstraintsPanel
 from coldspray.gui.stepper import TOOLPATH
 from coldspray.gui import plan_jobs, widgets
+from coldspray.gui.steps.part import capsule, glass_card
 from coldspray.gui.widgets import Chip, Section, primary_button, spin, wrap_label
 from coldspray.models import PurgeConfig
 from coldspray.pipeline import check_placement, plan_part
@@ -33,6 +34,7 @@ class PositionStep:
     def _build_position_panel(self) -> QWidget:
         inner = QWidget()
         layout = QVBoxLayout(inner)
+        layout.setSpacing(12)
 
         self.cell_part_label = wrap_label()
         layout.addWidget(self.cell_part_label)
@@ -48,7 +50,9 @@ class PositionStep:
         mount_row = QFormLayout()
         mount_row.addRow("Mounted", self.mount)
         place_box.add(mount_row)
-        grid = QFormLayout()
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(6)
         self.place = {}
         for key, lo, hi, unit, tip in (
                 ("X", -500, 500, " mm", "Along the faceplate X axis"),
@@ -62,8 +66,10 @@ class PositionStep:
             box.valueChanged.connect(self._placement_typed)
             self.place[key] = box
             if key in "XYA":
-                grid.addRow(key, box)
-        place_box.add(grid)
+                n = grid.count() // 2
+                grid.addWidget(QLabel(key), n // 2, (n % 2) * 2)
+                grid.addWidget(box, n // 2, (n % 2) * 2 + 1)
+        place_box.add(glass_card(grid))
         for key in "ZBC":                        # Advanced only, shown in Simple while non-zero
             place_box.add(self._adv_field(key, self.place[key], 0.0))
         self.keep_on_plate = QCheckBox("Keep on plate")
@@ -88,8 +94,9 @@ class PositionStep:
         reset_btn.clicked.connect(self._reset_placement)
         buttons = QGridLayout()
         buttons.setContentsMargins(0, 0, 0, 0)
+        buttons.setSpacing(8)
         for k, btn in enumerate((snap_btn, drop_btn, centre_btn, reset_btn)):
-            buttons.addWidget(btn, k // 2, k % 2)
+            buttons.addWidget(capsule(btn), k // 2, k % 2)
         place_box.add(widgets.advanced(self._holder(buttons)))
         self.face_label = wrap_label()
         place_box.add(self.face_label)
@@ -160,6 +167,7 @@ class PositionStep:
         self.auto_btn.setToolTip("Choose table tilt and gantry E1 so the gun is as level as allowed\n"
                                  "and the whole path is reachable (also done when a part is loaded)")
         self.auto_btn.clicked.connect(self._auto_position)
+        capsule(self.auto_btn)
         cell_box.add(self.auto_btn)
         layout.addWidget(cell_box)
         layout.addWidget(self._build_purge_section())
