@@ -62,9 +62,17 @@ class _Checker:
     check_path = CollisionChecker.check_path
 
     def __init__(self):
+        from coldspray.models import load_cell
         self.checked = []
+        self.cell = load_cell()
 
-    def check(self, q, axes):
+    def _precompute(self, joints):                 # check_path's batch FK: not needed by the fake check
+        return [None] * len(joints), None
+
+    def _table(self, axes):
+        return None
+
+    def check(self, q, axes, _pre=None, _table=None):
         self.checked.append(q)
         return {("A5", "cell")} if q[0] > 50 else set()
 
