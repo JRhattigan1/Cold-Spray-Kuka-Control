@@ -266,19 +266,28 @@ Partial WPs are resumed by a fresh agent in the next wave, using their `-resume.
 |---|---|---|---|---|
 | WP0 | done | 2 | wp/WP0, wp/WP0r | WP0-2.md |
 | A1 | done | 1 | wp/A1 | A1-1.md |
-| A2 | partial | 1 | wp/A2 | A2-1.md: no plane labels; fixed 600 mm size |
-| A3 | todo | 0 | wp/A3 | - (A1 + A2 are ready) |
+| A2 | in-progress | 1 (+A2b) | wp/A2, wp/A2b | A2-1.md: no plane labels; fixed 600 mm size. Session 2: A2b (labels/size) running |
+| A3 | in-progress | 1 | wp/A3 | session 2: constraints panel, new gui/constraints_panel.py |
 | B1 | done | 1 | wp/B1 | B1-1.md |
-| B2 | partial | 1 | wp/B2 | B2-1.md: per-pattern snapshot + reach/collision tests; contour seam rotation |
+| B2 | partial | 1 | wp/B2 | B2-1.md: per-pattern snapshot + reach/collision tests (T1 running); contour seam rotation |
 | C1 | done | 1 | wp/C1 | C1-1.md: optional per-move orientation limit |
 | D1 | done | 1 | wp/D1 | D1-1.md: GUI click check; invalidate Surface toolpath when coat faces change |
 | D2 | done | 1 | wp/D2 | D2-1.md: lift on turns / unbridged gaps |
-| D3 | partial | 1 | wp/D3 | D3-1.md: end-to-end Surface run on test_repair (deps now merged) |
-| E1 | partial | 1 | wp/E1 | E1-1.md: register advanced process-form rows with widgets.advanced() |
+| D3 | partial | 1 | wp/D3 | D3-1.md: end-to-end Surface run on test_repair (T1 running) |
+| E1 | in-progress | 1 (+E1b) | wp/E1, wp/E1b | E1-1.md: register advanced process-form rows. Session 2: E1b (Simple/Advanced process form) running |
 | E2 | todo | 0 | wp/E2 | - |
 | F1 | done | 1 | wp/F1 | F1-1.md: plan_part test with real PurgeConfig |
-| F2 | partial | 1 | wp/F2 | F2-1.md: drag marker, Move gun here, custom dir, save to cell.yaml |
-| G1 | todo | 0 | wp/G1 | - (patterns + datums ready) |
+| F2 | in-progress | 1 (+F2b) | wp/F2, wp/F2b | F2-1.md: drag marker, Move gun here, custom dir. Session 2: F2b (save purge to cell.yaml, new config_io.py) running |
+| G1 | in-progress | 1 | wp/G1 | session 2: turning points off the part, new planner/turns.py |
+| R1 | in-progress | 1 | wp/R1 | session 2 review: planning / KRL |
+| R2 | in-progress | 1 | wp/R2 | session 2 review: cad / config |
+| R3 | in-progress | 1 | wp/R3 | session 2 review: GUI end-to-end smoke + screenshots |
+| A2b | in-progress | 1 | wp/A2b | datum plane labels and size (A2 resume) |
+| E1b | in-progress | 1 | wp/E1b | process form split into Simple/Advanced (E1 resume) |
+| F2b | in-progress | 1 | wp/F2b | save purge to cell.yaml, new config_io.py (F2 resume) |
+| T1 | in-progress | 1 | wp/T1 | end-to-end tests for patterns (B2) and surface mode (D3) |
+| DOC1 | in-progress | 1 | wp/DOC1 | README |
+| DOC2 | in-progress | 1 | wp/DOC2 | this tracker, §8 run log, plans/ROADMAP.md |
 
 Status values: `todo | in-progress | partial | done | blocked`.
 
@@ -301,3 +310,37 @@ Status values: `todo | in-progress | partial | done | blocked`.
 - **Wrist flips:** contour tilt (C1) and surface normals (D2) introduce orientation changes; normal smoothing is required. Watch for KRL singularities in Simulate.
 - **Cell-view face picking (A3)** is new: hardware picking already works for drag handles (MSAA fix in `679db4d`). Reuse that approach.
 - **Commits and merging:** approving this plan authorises agents to commit on `wp/*` branches and the review agent to merge into local `main`. Nothing is pushed.
+
+---
+
+## 8. Run log
+
+### Session 1 (2026-10-27, morning)
+- **Timeboxes shrank as the run went on:** 45 min was planned (WP0), cut to 30 min from wave 1, then about 18/15 min, and 10 min by the end of the session. Actual time used per WP in the reports was 4-11 min.
+- **Parallel waves, not sequential:** WP0's config fields were held up (WP0-1 stopped by the coordinator; fields parked on `wp/WP0-wip`), so the wave-1 and wave-2 packages ran in parallel with the WP0 resume (`wp/WP0r`). Several WPs (B2, C1, D3, F1, F2, A1) were written before the config fields landed and read them with `getattr(..., default)` fallbacks.
+- **Merged into main:** WP0, A1, A2 (partial), B1, B2 (partial), C1, D1, D2, D3 (partial), E1 (partial), F1, F2 (partial). Nothing pushed.
+- **Merge conflicts, resolved by the coordinator** (`plans/reports/session-1-handoff.md`):
+  - `pipeline.py` (F1 + D3): `add_purge` applied to all three returns (revolve, surface, layers).
+  - `planner/layers.py` (B1 + C1): both imports kept (contour_tilt + patterns re-exports).
+  - `cad/part.py` (WP0r + D1): both `cylinders` and `coat_faces` fields kept.
+  - A stale OneDrive lock on `.git/worktrees/cs-WP0` gives a harmless "Permission denied" on commits; `git merge --quit` clears a stale MERGE_HEAD.
+- **Tests:** 267 → 416 passing on main. KRL regression hashes unchanged (default output byte-identical).
+- **Follow-up:** the `getattr` fallbacks can now be removed, since the fields are on main.
+
+### Session 2 (2026-10-27, running now; 10-min agents)
+| Agent | Kind | Scope | Status |
+|---|---|---|---|
+| R1 | review | planning / KRL | running |
+| R2 | review | cad / config | running |
+| R3 | review | GUI end-to-end smoke + screenshots | running |
+| A3 | worker | constraints panel (new `gui/constraints_panel.py`) | running |
+| G1 | worker | turning points off the part (new `planner/turns.py`) | running |
+| E1b | worker | process form into Simple/Advanced | running |
+| F2b | worker | save purge to cell.yaml (new `config_io.py`) | running |
+| A2b | worker | datum labels / size | running |
+| T1 | worker | end-to-end tests for patterns and surface | running |
+| DOC1 | docs | README | running |
+| DOC2 | docs | tracker, run log, `plans/ROADMAP.md` | running |
+| E2 | worker | final UI sweep, after all of the above merge | not started |
+
+Final statuses: to be filled in by the coordinator.
