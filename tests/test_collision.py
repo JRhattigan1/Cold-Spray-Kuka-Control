@@ -100,3 +100,16 @@ def test_workpiece_follows_turntable(axes):
     home = np.array(HOME_DEG, float)
     assert {("A5", "part"), ("A5", "substrate"), ("A5", "fixture")} <= checker.check(home, axes)
     assert checker.check(home, {}) == set()
+
+
+def test_batch_fk_matches_robot():
+    from coldspray.kinematics.robot import Robot
+    from coldspray.models import load_robot, load_tool
+    from coldspray.sim.collision import flange_batch, link_frames_batch
+
+    robot = Robot(load_robot(), load_tool())
+    q = np.random.default_rng(0).uniform(-120, 120, (7, 6))
+    lf, fl = link_frames_batch(robot, q), flange_batch(robot, q)
+    for i in range(len(q)):
+        assert np.allclose(lf[i], robot.link_frames(q[i]), atol=1e-9)
+        assert np.allclose(fl[i], robot.flange(q[i]), atol=1e-9)
