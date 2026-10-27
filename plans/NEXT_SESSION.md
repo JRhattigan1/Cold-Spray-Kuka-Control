@@ -38,6 +38,25 @@
   - **`wp/P8`:** Surface turn clearance. It is slow (6.5 → 31 s) and clashes with "turns lift by jump height, 0 = straight across". Rework it to raise only turns that are too close, or drop it and let the solver re-route.
 - **Obsolete branches:** `wp/WP0-wip`, `wp/M2-fix`, and every merged `wp/*`.
 
+## Liquid Glass UI overhaul: merged on `surface-patterns`, NEEDS FIXING FIRST
+- **What was done:**
+  - Code consolidation `91ecd77`, full suite 619 passed: one OPW forward/inverse implementation (batch), `Robot.link_frames_batch`, `cell.base_worlds`, no config getattr fallbacks, `Toolpath.zigzag_regions`.
+  - 13 UI agents merged, U1–U13 except U2 (step bar), which was still running at the end. Its branch is `wp/U2`.
+  - `tools/ui_screenshots.py OUTDIR [--theme dark]` renders every step to PNG. Use it to check the look.
+- **Seen in the light screenshot of the Toolpath step:**
+  - Spin boxes show no values: text colour or glass fill in the U1 QSS or the U11 card.
+  - The Generate / Next buttons are orange with no text (U3 `primary_button` paint).
+  - The sidebar contents are cut off on the right; the panel is too narrow for the new margins (U7 sidebar card).
+  - The strategy segments are clipped ("ayers (build up…"); they need short labels Layers / Revolve / Surface (U11).
+  - The sidebar has a yellowish tint (U7 alpha fill on the panel colour).
+  - Fixed: `StatTiles` lacked `clear()`, which crashed on loading a part (`cafed19`).
+- **Dark mode is wanted too (user).**
+  - The 3D gradient from U6 is hard-coded light; it should come from `style.view_background(mode)`.
+  - U4 toolbars and U13 markers read colours once and don't follow theme changes.
+  - Dark screenshots were taken but not reviewed.
+- **Not run since the UI merges:** the full suite. Run it, plus a by-hand check in the app, before anything else.
+- **Housekeeping:** about 60 worktrees and the merged `wp/*` branches, the UI ones included. A dry run of their removal was started but nothing was deleted.
+
 ## Check by hand in the app (`.\run`) before merging `surface-patterns`
 1. **Surface on the tube end:** each pattern. Concentric should give clean rings.
 2. **KRL base:** pick one on `test_block`, save the KRL, check the header and the `BAS(#BASE, 2)` line.
