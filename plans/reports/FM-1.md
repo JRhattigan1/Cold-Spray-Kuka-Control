@@ -31,7 +31,7 @@ App level (owned by U21, check after merge): PANEL_WIDTH 380 -> 420, sidebar scr
 ## Stopped 08:50 (user decision): F1-F3 NOT merged into wp/FM
 State: wp/FM = 3f62b53 (audit + U20/U21/U23). F branches kept for next session: wp/F3 7e8a80f (done, 68 passed incl. U20 test fix),
 wp/F2fit b08a4df (done: toolpath/simulate/export fit + export split_krl/preflight, 4 + krl_regression passed),
-wp/F1 (no commit yet at 08:50). Old wp/F2 and wp/F2b are unrelated; ignore them.
+wp/F1 a90bfd5 (committed at stop, not reviewed or tested by FM). Old wp/F2 and wp/F2b are unrelated; ignore them.
 Merge order: wp/F3 -> wp/F1 -> wp/F2fit (F3 first: fit_combo/TileGrid in widgets.py that F1/F2fit may use).
 Steps left:
 1. Merge the three in that order (F3 and F2fit merged cleanly onto 3f62b53 in a trial; reverted).
