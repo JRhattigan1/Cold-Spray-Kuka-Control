@@ -18,7 +18,7 @@ from coldspray.cell import robroot
 from coldspray.gui.constraints_panel import ConstraintsPanel
 from coldspray.gui.stepper import TOOLPATH
 from coldspray.gui import plan_jobs, widgets
-from coldspray.gui.steps.part import capsule, glass_card
+from coldspray.gui.steps.part import capsule, fit_combo, glass_card
 from coldspray.gui.widgets import Chip, Section, primary_button, spin, wrap_label
 from coldspray.models import PurgeConfig
 from coldspray.pipeline import check_placement, plan_part
@@ -50,7 +50,9 @@ class PositionStep:
                               "robot can reach. The table stays at 0 and is only an obstacle; no plate.\n"
                               "Placement is from the faceplate centre with the table at 0")
         self.mount.currentIndexChanged.connect(self._mount_changed)
+        fit_combo(self.mount, 10)
         mount_row = QFormLayout()
+        mount_row.setRowWrapPolicy(QFormLayout.WrapLongRows)
         mount_row.addRow("Mounted", self.mount)
         place_box.add(mount_row)
         grid = QGridLayout()
@@ -99,11 +101,11 @@ class PositionStep:
         buttons.setContentsMargins(0, 0, 0, 0)
         buttons.setSpacing(8)
         for k, btn in enumerate((snap_btn, drop_btn, centre_btn, reset_btn)):
-            buttons.addWidget(capsule(btn), k // 2, k % 2)
+            buttons.addWidget(capsule(btn), k, 0)          # one column: two labels never fit 388 px
         place_box.add(widgets.advanced(self._holder(buttons)))
         self.face_label = wrap_label()
         place_box.add(self.face_label)
-        self.sm_part = QCheckBox("SpaceMouse moves the part")
+        self.sm_part = QCheckBox("SpaceMouse moves part")
         self.sm_part.setToolTip("Off: the SpaceMouse flies the camera. On (setup only): it moves the part,\n"
                                 "kept standing on its base face while Keep on plate is ticked.\n"
                                 "Left SpaceMouse button toggles this; right button shows the part.")
@@ -154,6 +156,8 @@ class PositionStep:
         self.e1 = spin(0, 1, 0, " mm", tip="Gantry position for this program (+E1 moves towards the turntable)")
         self.roll = spin(-180, 180, 0, " °", tip="Gun turned about its spray axis from the usual set-up, wrist\n"
                                                  "above the gun (0°). Held for the whole job; the spray is unchanged")
+        cform.setRowWrapPolicy(QFormLayout.WrapLongRows)
+        fit_combo(self.nozzle, 12)
         cform.addRow("Nozzle", self.nozzle)
         for box in (self.e1, self.tilt, self.rotation, self.roll):
             box.setKeyboardTracking(False)
@@ -505,6 +509,7 @@ class PositionStep:
         box = self.purge_section = Section("Warm-up / purge point")
         form = QFormLayout()
         form.setContentsMargins(0, 0, 0, 0)
+        form.setRowWrapPolicy(QFormLayout.WrapLongRows)
         self.purge_on = QCheckBox("Go to the purge point")
         self.purge_on.setToolTip("Spray on at a point in free space before (and after) the part")
         box.add(self.purge_on)
@@ -512,6 +517,7 @@ class PositionStep:
         self.purge_dir = QComboBox()
         self.purge_dir.addItems([*DIRECTION_PRESETS, "Custom"])
         self.purge_dir.setToolTip("Spray direction at the purge point (WORLD)")
+        fit_combo(self.purge_dir, 10)
         self.purge_dwell = spin(0, 600, 5, " s", tip="Spray on at the point before moving off")
         self.purge_approach = spin(0, 500, 100, " mm", tip="Approach / retract distance along the spray axis")
         self.purge_start = QCheckBox("At start")
