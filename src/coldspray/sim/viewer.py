@@ -624,7 +624,7 @@ class Scene:
         if crashes:
             parts.append(f"{crashes} collision points")
         if self.steep.any():
-            parts.append(f"{int(self.steep.sum())} points gun too steep (down {self.gun_down.max():.0f}Â°)")
+            parts.append(f"{int(self.steep.sum())} points gun too steep (down {self.gun_down.max():.0f}°)")
         self.summary.SetText(3, "\n".join(parts) if parts else "all points reachable")
         self.summary.GetTextProperty().SetColor(pv.Color(BAD if parts else "green").float_rgb)
 
@@ -655,7 +655,7 @@ class Scene:
         crash = self.collisions.get(i)
         crash_text = ("\nCOLLISION: " + ", ".join(f"{a} / {b}" for a, b in sorted(crash))) if crash else ""
         self.status.SetText(2, f"{self.path_name}  point {i}/{self.n_points - 1}  "
-                               f"spray {'ON' if self.gun_on[i] else 'off'}   gun {round(self.gun_down[i])}Â° down"
+                               f"spray {'ON' if self.gun_on[i] else 'off'}   gun {round(self.gun_down[i])}° down"
                                f"{'  TOO STEEP' if self.steep[i] else ''}\nA1..A6: {j}   {table}{crash_text}")
         self._follow_tool(i)
 

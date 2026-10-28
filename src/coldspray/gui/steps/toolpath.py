@@ -7,7 +7,7 @@ import numpy as np
 from pydantic import ValidationError
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QFrame, QComboBox, QDoubleSpinBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
+    QApplication, QCheckBox, QFrame, QGridLayout, QSizePolicy, QComboBox, QDoubleSpinBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
     QSpinBox, QVBoxLayout, QWidget,
 )
 
@@ -175,46 +175,15 @@ def short_label(text: str) -> str:
     return text.split(" (", 1)[0].strip()
 
 
-class SegmentedCapsule(QFrame):
-    """Glass segmented capsule that mirrors a QComboBox (the combo stays the data API)."""
-
-    def __init__(self, combo: QComboBox):
-        super().__init__()
-        self.setObjectName("segcap")
-        self.combo, self.buttons = combo, []
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(3, 3, 3, 3)
-        lay.setSpacing(2)
-        for i in range(combo.count()):
-            text = combo.itemText(i)
-            b = QPushButton(short_label(text))     # "Layers (build up ...)" -> "Layers"; full text as tooltip
-            b.setToolTip(text)
-            b.setCheckable(True)
-            b.setCursor(Qt.PointingHandCursor)
-            b.clicked.connect(lambda _=False, i=i: combo.setCurrentIndex(i))
-            lay.addWidget(b, 1)
-            self.buttons.append(b)
-        combo.currentIndexChanged.connect(self._sync)
-        combo.hide()
-        self._sync()
-
-    def _sync(self, *_):
-        t = style.tokens(style.current_mode())
-        self.setStyleSheet(
-            f"QFrame#segcap {{ background: {t['soft']}; border: 1px solid {t['line']}; border-radius: 16px; }}"
-            f"QPushButton {{ background: transparent; border: none; border-radius: 13px; padding: 5px 10px; color: {t['muted']}; }}"
-            f"QPushButton:checked {{ background: {t['accent']}; color: #ffffff; font-weight: 600; }}")
-        for i, b in enumerate(self.buttons):
-            b.setChecked(i == self.combo.currentIndex())
-
-
 class StatTiles(QWidget):
     """Summary as glass stat tiles; keeps the QLabel.setText API used by generate."""
 
     def __init__(self):
         super().__init__()
-        self._lay = QHBoxLayout(self)
+        self._lay = QGridLayout(self)      # 2 per row: never wider than the panel
         self._lay.setContentsMargins(0, 0, 0, 0)
+        self._lay.setColumnStretch(0, 1)
+        self._lay.setColumnStretch(1, 1)
         self._tiles = {}
         self._text = ""
         for key, cap in (("moves", "Moves"), ("time", "Time"), ("layers", "Layers")):
@@ -228,7 +197,7 @@ class StatTiles(QWidget):
             lab.setStyleSheet(f"color: {style.tokens(style.current_mode())['muted']};")
             v.addWidget(val)
             v.addWidget(lab)
-            self._lay.addWidget(f)
+            self._lay.addWidget(f, len(self._tiles) // 2, len(self._tiles) % 2)
             self._tiles[key] = (f, val)
         self.setVisible(False)
 
@@ -269,8 +238,12 @@ class ToolpathStep:
         self.coats = QSpinBox()
         self.coats.setRange(1, 500)
         self.coats.setToolTip("Revolve: number of complete coats; each backs off by the layer thickness")
-        pform.addRow("Mode", SegmentedCapsule(self.mode))
-        pform.addRow(self.mode)
+        self.mode.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.mode.setMinimumContentsLength(14)
+        self.mode.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        for i in range(self.mode.count()):
+            self.mode.setItemData(i, self.mode.itemText(i), Qt.ToolTipRole)
+        pform.addRow("Mode", self.mode)     # dropdown: the long labels never fit a capsule in the sidebar
         pform.addRow("Coats", self.coats)
         plan_box.add(pform)
         layout.addWidget(plan_box)
@@ -297,6 +270,8 @@ class ToolpathStep:
                 self.process_form.addRow(text, box)
             else:
                 advanced_form.addRow(advanced_row(text, box, getattr(proc, name)))
+        for f in (self.process_form, advanced_form, pform):
+            f.setRowWrapPolicy(QFormLayout.WrapLongRows)
         proc_box.add(self.process_form)
         self.advanced_section.add(advanced_form)
         proc_box.setObjectName("procglass")

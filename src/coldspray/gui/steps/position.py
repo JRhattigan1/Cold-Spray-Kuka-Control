@@ -6,7 +6,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 from pydantic import ValidationError
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QFormLayout, QGridLayout, QMessageBox, QPushButton, QVBoxLayout,
+    QApplication, QCheckBox, QToolButton, QMenu, QComboBox, QFormLayout, QGridLayout, QMessageBox, QPushButton, QVBoxLayout,
     QHBoxLayout, QLabel, QWidget,
 )
 
@@ -19,7 +19,7 @@ from coldspray.gui.constraints_panel import ConstraintsPanel
 from coldspray.gui.stepper import TOOLPATH
 from coldspray.gui import plan_jobs, widgets
 from coldspray.gui.steps.part import capsule, glass_card
-from coldspray.gui.widgets import Chip, Section, primary_button, spin, wrap_label
+from coldspray.gui.widgets import Chip, Section, fit_combo, primary_button, spin, wrap_label
 from coldspray.models import PurgeConfig
 from coldspray.pipeline import check_placement, plan_part
 from coldspray.planner.gun import wrist_side
@@ -50,7 +50,9 @@ class PositionStep:
                               "robot can reach. The table stays at 0 and is only an obstacle; no plate.\n"
                               "Placement is from the faceplate centre with the table at 0")
         self.mount.currentIndexChanged.connect(self._mount_changed)
+        fit_combo(self.mount, 10)
         mount_row = QFormLayout()
+        mount_row.setRowWrapPolicy(QFormLayout.WrapLongRows)
         mount_row.addRow("Mounted", self.mount)
         place_box.add(mount_row)
         grid = QGridLayout()
@@ -70,8 +72,8 @@ class PositionStep:
             self.place[key] = box
             if key in "XYA":
                 n = grid.count() // 2
-                grid.addWidget(QLabel(key), n // 2, (n % 2) * 2)
-                grid.addWidget(box, n // 2, (n % 2) * 2 + 1)
+                grid.addWidget(QLabel(key), n, 0)          # one column: two spins never fit 388 px
+                grid.addWidget(box, n, 1)
         place_box.add(glass_card(grid))
         for key in "ZBC":                        # Advanced only, shown in Simple while non-zero
             place_box.add(self._adv_field(key, self.place[key], 0.0))
@@ -99,11 +101,11 @@ class PositionStep:
         buttons.setContentsMargins(0, 0, 0, 0)
         buttons.setSpacing(8)
         for k, btn in enumerate((snap_btn, drop_btn, centre_btn, reset_btn)):
-            buttons.addWidget(capsule(btn), k // 2, k % 2)
+            buttons.addWidget(capsule(btn), k, 0)          # one column: two labels never fit 388 px
         place_box.add(widgets.advanced(self._holder(buttons)))
         self.face_label = wrap_label()
         place_box.add(self.face_label)
-        self.sm_part = QCheckBox("SpaceMouse moves the part")
+        self.sm_part = QCheckBox("SpaceMouse moves part")
         self.sm_part.setToolTip("Off: the SpaceMouse flies the camera. On (setup only): it moves the part,\n"
                                 "kept standing on its base face while Keep on plate is ticked.\n"
                                 "Left SpaceMouse button toggles this; right button shows the part.")
@@ -154,6 +156,8 @@ class PositionStep:
         self.e1 = spin(0, 1, 0, " mm", tip="Gantry position for this program (+E1 moves towards the turntable)")
         self.roll = spin(-180, 180, 0, " °", tip="Gun turned about its spray axis from the usual set-up, wrist\n"
                                                  "above the gun (0°). Held for the whole job; the spray is unchanged")
+        cform.setRowWrapPolicy(QFormLayout.WrapLongRows)
+        fit_combo(self.nozzle, 12)
         cform.addRow("Nozzle", self.nozzle)
         for box in (self.e1, self.tilt, self.rotation, self.roll):
             box.setKeyboardTracking(False)
@@ -195,12 +199,17 @@ class PositionStep:
     def _adv_field(text, box, default) -> QWidget:
         """A label + box + "changed" chip row, Advanced-only unless the value differs from `default`."""
         row = QWidget()
-        h = QHBoxLayout(row)
-        h.setContentsMargins(0, 0, 0, 0)
+        v = QVBoxLayout(row)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(2)
         chip = Chip()
+        h = QHBoxLayout()                       # label + chip above the box: all three never fit 388 px
+        h.setContentsMargins(0, 0, 0, 0)
         h.addWidget(QLabel(text))
-        h.addWidget(box, 1)
+        h.addStretch(1)
         h.addWidget(chip)
+        v.addLayout(h)
+        v.addWidget(box)
         box.valueChanged.connect(widgets.refresh)
         return widgets.advanced(row, chip=chip, changed=lambda: not np.isclose(box.value(), default))
 
@@ -505,6 +514,7 @@ class PositionStep:
         box = self.purge_section = Section("Warm-up / purge point")
         form = QFormLayout()
         form.setContentsMargins(0, 0, 0, 0)
+        form.setRowWrapPolicy(QFormLayout.WrapLongRows)
         self.purge_on = QCheckBox("Go to the purge point")
         self.purge_on.setToolTip("Spray on at a point in free space before (and after) the part")
         box.add(self.purge_on)
@@ -512,6 +522,7 @@ class PositionStep:
         self.purge_dir = QComboBox()
         self.purge_dir.addItems([*DIRECTION_PRESETS, "Custom"])
         self.purge_dir.setToolTip("Spray direction at the purge point (WORLD)")
+        fit_combo(self.purge_dir, 10)
         self.purge_dwell = spin(0, 600, 5, " s", tip="Spray on at the point before moving off")
         self.purge_approach = spin(0, 500, 100, " mm", tip="Approach / retract distance along the spray axis")
         self.purge_start = QCheckBox("At start")
@@ -523,24 +534,28 @@ class PositionStep:
         self.purge_custom = [spin(-1, 1, 0, "", decimals=3, tip=f"Custom spray direction, WORLD {a}") for a in "XYZ"]
         for axis, box_ in zip("XYZ", self.purge_custom):
             form.addRow(f"  dir {axis}", box_)
-        self.purge_save_btn = QPushButton("Save to cell.yaml")
-        self.purge_save_btn.setToolTip("Write these settings into the purge: block of cell.yaml")
-        self.purge_save_btn.clicked.connect(self._purge_save)
         form.addRow("Dwell", self.purge_dwell)
         form.addRow("Approach", self.purge_approach)
         form.addRow(self.purge_start)
         form.addRow(self.purge_end)
         form.addRow("Every", self.purge_every)
-        form.addRow(self.purge_save_btn)
-        self.purge_goto_btn = QPushButton("Move gun here")
+        # The three purge actions live in one dropdown; each QAction keeps its old *_btn name.
+        self.purge_actions_btn = QToolButton()
+        self.purge_actions_btn.setText("Purge actions")
+        self.purge_actions_btn.setPopupMode(QToolButton.InstantPopup)
+        menu = QMenu(self.purge_actions_btn)
+        self.purge_save_btn = menu.addAction("Save to cell.yaml")
+        self.purge_save_btn.setToolTip("Write these settings into the purge: block of cell.yaml")
+        self.purge_save_btn.triggered.connect(lambda *_: self._purge_save())
+        self.purge_goto_btn = menu.addAction("Move gun here")
         self.purge_goto_btn.setToolTip("Preview: put the robot at the purge pose (gantry at the current E1)")
-        self.purge_goto_btn.clicked.connect(self._purge_goto)
-        form.addRow(self.purge_goto_btn)
-        self.purge_suggest_btn = QPushButton("Suggest purge point")
+        self.purge_goto_btn.triggered.connect(lambda *_: self._purge_goto())
+        self.purge_suggest_btn = menu.addAction("Suggest purge point")
         self.purge_suggest_btn.setToolTip("Point in front of the filtration unit, spraying into it; "
                                           "stepped back until the robot reaches it")
-        self.purge_suggest_btn.clicked.connect(self._purge_suggest)
-        form.addRow(self.purge_suggest_btn)
+        self.purge_suggest_btn.triggered.connect(lambda *_: self._purge_suggest())
+        self.purge_actions_btn.setMenu(menu)
+        form.addRow(self.purge_actions_btn)
         purge_chip = Chip()
         box.add(purge_chip)
         box.add(widgets.advanced(self._holder(form), chip=purge_chip, changed=self._purge_nondefault))

@@ -69,11 +69,7 @@ class _Capsule(QWidget):
     def __init__(self):
         super().__init__()
         self.setAttribute(Qt.WA_StyledBackground, False)
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(18)
-        shadow.setOffset(0, 3)
-        shadow.setColor(QColor(0, 0, 0, 60))
-        self.setGraphicsEffect(shadow)
+        # No QGraphicsEffect here: it would render every child pill into a blurred pixmap.
 
     def paintEvent(self, event):
         dark = resolve() == "dark"
@@ -81,6 +77,10 @@ class _Capsule(QWidget):
         p.setRenderHint(QPainter.Antialiasing)
         r = QRectF(self.rect()).adjusted(1, 1, -1, -1)
         radius = r.height() / 2
+        p.setPen(Qt.NoPen)                      # painted soft shadow (cheap, keeps text crisp)
+        for i, a in enumerate((10, 8, 6)):
+            p.setBrush(QColor(0, 0, 0, a))
+            p.drawRoundedRect(r.translated(0, 1 + i * 0.5).adjusted(-i * 0.3, 0, i * 0.3, 0), radius, radius)
         fill = QColor(255, 255, 255, 22) if dark else QColor(255, 255, 255, 170)
         p.setBrush(fill)
         p.setPen(QPen(QColor(255, 255, 255, 60 if dark else 220), 1))

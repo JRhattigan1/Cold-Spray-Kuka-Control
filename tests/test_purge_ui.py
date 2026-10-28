@@ -97,7 +97,7 @@ def test_save_button_writes_cell_yaml(host, tmp_path, monkeypatch):
     host._status = msgs.append
     host.purge_on.setChecked(True)
     host.purge_dwell.setValue(9)
-    host.purge_save_btn.click()
+    host.purge_save_btn.trigger()
     saved = load_cell(tmp_path / "cell.yaml").purge
     assert saved.enabled and saved.dwell_s == 9
     assert msgs and "saved" in msgs[0]
@@ -108,10 +108,10 @@ def test_move_gun_here(host, monkeypatch):
     host._status = msgs.append
     monkeypatch.setattr(host.scene, "set_robot_pose", poses.append)
     host.purge_cfg["point"] = (1e5, 0.0, 0.0)
-    host.purge_goto_btn.click()
+    host.purge_goto_btn.trigger()
     assert not poses and "out of reach" in msgs[-1]
     host.purge_cfg["point"] = PurgeConfig(point=(-884.56, 400.0, 2000.0)).point
-    host.purge_goto_btn.click()
+    host.purge_goto_btn.trigger()
     assert len(poses) == 1
 
 
@@ -158,7 +158,7 @@ def test_simple_mode_shows_only_the_essentials(panel):
     assert h.keep_on_plate.isVisible() and h.auto_btn.isVisible() and h.purge_on.isVisible()
     assert h.roll.isVisible()                       # the gun angle is always set by the user
     for w in (h.e1, h.tilt, h.nozzle, h.snap_btn, h.purge_dwell, h.purge_xyz[0],
-              h.purge_save_btn, h.sub_check, h.constraints, *h.group_checks.values()):
+              h.purge_actions_btn, h.sub_check, h.constraints, *h.group_checks.values()):
         assert not w.isVisible(), w
     widgets.set_mode(widgets.ADVANCED)
     for w in (h.place["Z"], h.e1, h.snap_btn, h.purge_dwell, h.sub_check, h.constraints):

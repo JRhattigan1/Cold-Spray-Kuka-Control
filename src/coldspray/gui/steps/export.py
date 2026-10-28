@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from PySide6.QtWidgets import QFileDialog, QFormLayout, QFrame, QMessageBox, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QFileDialog, QFormLayout, QFrame, QMessageBox, QVBoxLayout, QWidget
 
 from coldspray.gui.checks import CheckList, confirm_text, export_checks, open_items
 from coldspray.gui.stepper import EXPORT
@@ -10,7 +10,8 @@ from coldspray.gui import style, widgets
 from coldspray.gui.steps.simulate import capsule
 from coldspray.gui.widgets import Section, primary_button, wrap_label
 from coldspray.models import PROJECT_ROOT
-from coldspray.post.krl import KRLError, to_krl
+from coldspray.post.krl import KRLError, KRLOptions, to_krl
+from coldspray.post.krl_split import split_krl
 
 
 from coldspray.gui.progress import fit_panel
@@ -53,6 +54,9 @@ class ExportStep:
         layout.addWidget(self.save_krl_btn)
         self.export_status = wrap_label()
         layout.addWidget(self.export_status)
+        self.preflight_check = QCheckBox("Pre-flight check")
+        self.preflight_check.setToolTip("Check BASE/TOOL: HALT before motion if $ACT_TOOL/$ACT_BASE differ from the program's")
+        layout.addWidget(widgets.advanced(self.preflight_check))
         note = self.export_save_note = wrap_label("Saving with open items asks once, listing them all.")
         note.setProperty("note", True)
         layout.addWidget(widgets.advanced(note))

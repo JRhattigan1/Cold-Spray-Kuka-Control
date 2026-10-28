@@ -8,12 +8,13 @@ from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import QApplication, QPushButton, QSplitter
 
 from coldspray.gui import app as gui_app
-from coldspray.gui.steps.toolpath import SegmentedCapsule, short_label
+from coldspray.gui.steps.toolpath import short_label
 
 
 @pytest.fixture(scope="module")
 def win(tmp_path_factory):
-    QApplication.instance() or QApplication([])
+    from coldspray.gui import style
+    style.apply(QApplication.instance() or QApplication([]), "light")   # as the real app
 
     w = gui_app.MainWindow(QSettings(str(tmp_path_factory.mktemp("ui") / "ui.ini"), QSettings.IniFormat))
     w._refresh_steps = lambda: None
@@ -36,10 +37,10 @@ def test_fit_size():
     assert w <= 1280 and h <= 680
 
 
-def test_mode_capsule_short_labels(win):
-    cap = win.findChild(SegmentedCapsule)
-    assert [b.text() for b in cap.buttons] == ["Layers", "Revolve", "Surface"]
-    assert all("(" in b.toolTip() for b in cap.buttons)
+def test_mode_combo_labels(win):
+    combo = win.mode
+    assert [short_label(combo.itemText(i)) for i in range(combo.count())] == ["Layers", "Revolve", "Surface"]
+    assert all(combo.itemData(i, Qt.ToolTipRole) for i in range(combo.count()))
 
 
 def test_splitter_shares_space(win):
