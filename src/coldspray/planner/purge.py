@@ -89,7 +89,7 @@ def _add_vias(moves, box, speed):
     out = []
     for k, m in enumerate(moves):
         if k and (moves[k - 1].tag == "purge") != (m.tag == "purge"):
-            out += _vias(moves[k - 1].pose, m.pose, box, speed, gun_on=False)
+            out += _vias(moves[k - 1].pose, m.pose, box, speed, moves[k - 1].gun_on and m.gun_on)
         out.append(m)
     return out
 
@@ -152,6 +152,35 @@ def _spray_between_visits(out, span, at_start, at_end):
         out[k].gun_on = True
         if out[k].kind == "PTP":
             out[k].kind = "LIN"             # spray on: keep the gun on a straight line
+
+
+def move_purge(path: Toolpath, cell, point) -> Toolpath:
+    """`path` (from add_purge with `cell.purge`) with its purge poses moved to the WORLD
+    `point`: translated only, so the spray direction (and the gun's roll) is kept; the
+    clearance vias are redone for the new point. `cell` itself is not changed."""
+    purge = cell.purge
+    old = np.asarray(purge.point, float)
+    d = np.asarray(purge.spray_dir, float)
+    d /= np.linalg.norm(d)
+    marks = (old, old - purge.approach_mm * d)
+    delta = np.asarray(point, float) - old
+    bw = base_worlds(cell, path.axis_values())
+    moves = []
+    for i, m in enumerate(path.moves):
+        if m.tag != "purge":
+            moves.append(replace(m, axes=dict(m.axes)))
+            continue
+        w = (bw[i] @ np.append(m.pose[:3, 3], 1.0))[:3]
+        if min(np.linalg.norm(w - p) for p in marks) > 1.0:
+            continue                                    # a clearance via: redone below
+        pose = m.pose.copy()
+        pose[:3, 3] += np.linalg.inv(bw[i])[:3, :3] @ delta
+        moves.append(replace(m, pose=pose, axes=dict(m.axes)))
+    part = [m for m in moves if m.tag != "purge"]
+    sprayed = [m for m in part if m.gun_on and m.tag != "approach"] or part
+    speed = max(m.speed for m in path.moves)
+    return Toolpath(path.name, _add_vias(moves, _box([m.pose[:3, 3] for m in sprayed]), speed),
+                    path.skipped_points)
 
 
 BACK_DIR = (0.0, 1.0, 0.0)          # WORLD direction of the back of the cell (filtration unit)
