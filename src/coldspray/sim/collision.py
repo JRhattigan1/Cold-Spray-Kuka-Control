@@ -101,6 +101,10 @@ class CollisionChecker:
                  cad_pose=HOME_DEG, reach_mm=3600.0, substrate=None, fixture=None):
         self.robot, self.cell = robot, cell
         self.world_from_robot = robroot(cell)
+        # E1 this checker was built (and the cell cropped) at: a sample without E1 runs here, even if
+        # cell.gantry.position_mm is changed later (e.g. by the GUI while a check runs)
+        self.e1 = float(cell.gantry.position_mm) if cell.gantry is not None else None
+        self._root_e1 = self.e1          # E1 the robot root is at now (None: unknown)
         self.cad_frames = robot.link_frames(cad_pose)
         self.gun = gun
 
@@ -150,6 +154,7 @@ class CollisionChecker:
         self.allowed = {p for p in contacts if not NEVER_ALLOWED & set(p)
                         and not (set(TOOL) & set(p) and NEVER_ALLOWED_FOR_TOOL & set(p))}
         self.set_placement(working)
+        self._root_e1 = self.e1
 
     def allowed_text(self) -> str:
         """The CAD contacts that are ignored, e.g. "A3 / cell, A4 / cell" (for the log)."""
@@ -165,6 +170,7 @@ class CollisionChecker:
         """Robot root in WORLD. The cell was cropped around the gantry position the
         checker was built for - build a new checker for a different position."""
         self.world_from_robot = world_from_robot
+        self._root_e1 = None
         self.own.set_transform("robot base", world_from_robot)
         if "carriage" in self.env._objs:       # shift by gantry.direction * e1 from where the CAD draws it
             m = np.eye(4)
@@ -230,19 +236,20 @@ class CollisionChecker:
         """Robot root at gantry position `e1` (a move's axes["E1"]). The cell was cropped
         round the position the checker was built at, so it can only follow while the
         robot's reach stays inside that crop."""
-        root = robroot(self.cell, e1)
-        if np.allclose(root, self.world_from_robot):
+        if e1 == self._root_e1:          # the usual case: no robroot / allclose per sample
             return
+        root = robroot(self.cell, e1)
         if np.max(np.abs(root[:3, 3] - self.crop_centre)) > self.reach_mm - ROBOT_REACH_MM:
             raise ValueError(f"E1 {e1:.0f} mm is too far from where this collision check was set up "
                              f"(more than {self.reach_mm - ROBOT_REACH_MM:.0f} mm): build a new checker")
         self.set_placement(root)
+        self._root_e1 = e1
 
     def check(self, q, axes, _pre=None, _table=None, _follow=True) -> set[tuple[str, str]]:
         """Colliding (moving body, other body) pairs at joints `q` and table `axes`
         (and gantry, if `axes` sets it)."""
-        if _follow and self.cell.gantry is not None:       # no E1 given: the configured position, never a stale root
-            self._follow_e1(axes.get(self.cell.gantry.axis, self.cell.gantry.position_mm))
+        if _follow and self.e1 is not None:       # no E1 given: the position it was built at, never a stale root
+            self._follow_e1(float(axes.get(self.cell.gantry.axis, self.e1)))
         self._place(q, axes, _pre, _table)
         pairs = set()
         for mgr in (self.arm, self.tool):

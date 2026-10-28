@@ -170,3 +170,18 @@ def test_carriage_moves_with_e1():
 def test_carriage_never_allowed_for_tool():
     from coldspray.sim import collision
     assert {"gun", "nozzle"} <= set(collision.TOOL) and "carriage" in collision.NEVER_ALLOWED_FOR_TOOL
+
+
+def test_moved_cell_e1_does_not_move_or_break_a_built_checker():
+    """S7K/21: a sample without E1 runs at the E1 the checker was built at, not the live
+    cell.gantry.position_mm (moved in the GUI while a check runs: used to raise ValueError)."""
+    from coldspray.sim.collision import ROBOT_REACH_MM
+    robot, cell = Robot(load_robot()), load_cell().model_copy(deep=True)
+    if cell.gantry is None:
+        pytest.skip("no gantry")
+    checker = CollisionChecker(robot, cell, _bare_meshes(robot), reach_mm=ROBOT_REACH_MM + 10)
+    root = checker.world_from_robot.copy()
+    lo, hi = cell.gantry.limits_mm
+    cell.gantry.position_mm = lo if abs(lo - checker.e1) > abs(hi - checker.e1) else hi
+    checker.check(np.array(HOME_DEG, float), {})
+    assert np.allclose(checker.world_from_robot, root)

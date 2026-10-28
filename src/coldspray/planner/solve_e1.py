@@ -50,7 +50,8 @@ def fix_e1(path, issues, ctx: Context):
     lo, hi = g.limits_mm
     cands = np.arange(np.ceil(lo / STEP_MM) * STEP_MM, hi + 1e-9, STEP_MM)
     if ctx.checker is not None:            # it was cropped round the program's E1: stay near it
-        cands = cands[np.abs(cands - (g.position_mm or 0.0)) <= MAX_SHIFT_MM]
+        built = getattr(ctx.checker, "e1", None)
+        cands = cands[np.abs(cands - (g.position_mm if built is None else built)) <= MAX_SHIFT_MM]
     values = list(cur)
     changed = False
 
