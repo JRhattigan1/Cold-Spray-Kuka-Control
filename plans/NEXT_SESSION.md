@@ -16,7 +16,11 @@
   | `eae7c30` | U22 | dark 3D background, toolbars and markers follow the theme |
   | `4087bf2` | U21 | splitter, window sizing, pinned Next, saved sidebar width |
 - **Tests:** each merge ran its touched tests + `test_krl_regression.py` + `test_imports.py`, all passed. Final: 76 passed. **The full suite was not run this session.** KRL output is byte-identical (hashes hold).
-- **The main checkout has uncommitted edits** to `gui/style.py` and `gui/widgets.py` (button padding 14 → 10, `fit_combo`, `TileGrid`), made by an agent that wrote there by mistake. They block the U20 merge, and the INT tests ran with them in place. Compare them with `wp/F3`, then commit or discard them.
+- **Main checkout is clean.** An agent had written F3's `style.py`/`widgets.py` changes into it by mistake (the INT tests ran with them in place). They matched `wp/F3` line for line, so they were discarded; they live on `wp/F3`.
+- **Cleanup done** (`C:\Users\qrb21117\worktrees\run5\CLEANUP.md`):
+  - 77 worktrees and 79 merged branches removed;
+  - `assets\` checked intact (13 files);
+  - left: worktree `cs-U20` (untracked `shots_before/`) and about 78 stale `.git\worktrees\cs-*` folders that OneDrive locked; pause OneDrive and run `git worktree prune`.
 - **Nothing is pushed.**
 
 ## Kept branches
@@ -28,8 +32,8 @@
 | `wp/F1` | `a90bfd5` | WIP: Part/Position fit the 420 px sidebar (Part 346, Position 376 px). Purge-actions dropdown not done. | Merge second; switch its local `fit_combo` to F3's. |
 | `wp/F2fit` | `e990480` | Toolpath Mode as a combo, StatTiles 2 columns, Playback in 2 rows, Export split `.src` + preflight checkbox. | Merge third; expect a conflict in `steps/export.py`. |
 | `wp/FM` | `eda5589` | Sidebar-fit audit and merge plan (`FM-1.md`), base = U20/U21/U23. | Follow its steps; re-audit every panel ≤ 400 px; add `fit_combo(self.nozzle)` in `app.py` (~350). |
-| `wp/U20` | `437fae5` | Opaque field and sidebar fills, ink text. Not merged (blocked by the main-checkout edits). | Merge with or after F3. |
-| `wp/D0` | — | These docs. | Merge. |
+| `wp/U20` | `437fae5` | Opaque field and sidebar fills, ink text. Not merged: its tests never ran (pytest hung under load). | Merge with or after F3, then run its tests. |
+| `wp/K2`, `wp/OP2b` | — | Merged; only a later report commit is left. | Delete with `-D` once read. |
 
 ## Results of session 5
 - **Speed** (warm, all identical to the `tools/bench_plan.py` baseline):
@@ -46,7 +50,7 @@
 - **UI:** sidebar/3D splitter; sidebar 460 px (min 400), width saved; window min 1100x680, start 1440x900 capped to the screen; Next pinned below each panel; Mode shown as Layers / Revolve / Surface; panels shrink to the sidebar; dark mode for the 3D view, toolbars and markers.
 
 ## To do, in order
-1. **Merge the fit branches:** sort out the main-checkout edits, then F3 → F1 → F2fit (FM-1 steps), then U20.
+1. **Merge the fit branches:** F3 → F1 → F2fit (FM-1 steps), then U20.
 2. **Full suite** (not run this session).
 3. **By-hand check in the app (`.\run`):** resize, splitter, light and dark, 100 % and 150 %; Surface patterns on the tube end; KRL base; Fixed in the cell; gun hold; constraint picking; Suggest purge point; Cancel and the plan cache; WearPlate2.
 4. **K1 arcs:** see Kept branches.
@@ -78,7 +82,9 @@
 - Agents' clocks drift: use `date`, not their own sense of time.
 - A manager per team (KM, FM) worked: one plan, disjoint files, one merger.
 - A hook that crosses branches (e.g. K2's `krl.py` hook on K1's file) needs one named owner.
-- No agent may edit the main checkout. One did, and it blocked a merge.
+- No agent may edit the main checkout. One did, and it blocked a merge. Check `git status` on main before merging.
+- **Cleanup:** each worktree's `assets` is a junction to the real `assets\` (licensed CAD, not in git). Remove the junction with `cmd /c rmdir <wt>\assets` before `git worktree remove` (no `--force`). Never `Remove-Item -Recurse` or `rm -rf` a worktree folder.
+- Per-run files (brief, check-in log, INT and CLEANUP reports, screenshots) live in `C:\Users\qrb21117\worktrees\run5\`.
 
 ## Agent protocol (paste into every agent prompt)
 ```
@@ -93,7 +99,7 @@ Test first, minimal diff, edit only owned files. Commit on wp/<ID>, trailer "Co-
 Report plans/reports/<ID>-1.md: status, done, not done, test line. Return: sha + test line + 1 line.
 ```
 **Models:**
-- The `worker` agent type (`.claude/agents/worker.md`) wasn't loaded this session. Use `general-purpose` with `model: sonnet` for contained single-module tasks.
+- The `worker` agent type (`.claude/agents/worker.md`, Sonnet) loaded in session 5. Use it for contained single-module tasks; otherwise `general-purpose` with `model: sonnet`.
 - Use `model: opus` for work across threading, the interface and result flow, or tricky maths (IK, arcs).
 
 **Merging:**
