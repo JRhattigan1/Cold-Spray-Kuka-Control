@@ -61,7 +61,7 @@ def test_button_fills_fields(world):
         def _status(self, *_): pass
 
     h = Host()
-    h.purge_suggest_btn.click()
+    h.purge_suggest_btn.trigger()
     point, d = suggest_purge(cell, meshes, robot, 0.0)
     assert np.allclose([b.value() for b in h.purge_xyz], point, atol=1)
     assert np.allclose(h.purge_cfg["spray_dir"], d, atol=1e-3)
