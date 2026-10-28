@@ -38,3 +38,24 @@ def test_preflight_off_by_default():
     text = to_krl(path, robot, cell, proc, options=KRLOptions(preflight=True))
     lines = text.split("\n")
     assert lines[lines.index(f"BAS(#BASE, {cell.base_number})") + 1].startswith("IF ($ACT_TOOL<>")
+
+
+def test_nan_ptp_seeds_from_last_valid_joints_and_warns(monkeypatch, caplog):
+    """S7K/20: a PTP Simulate couldn't solve is seeded from the last joints it did solve (any
+    move, not the last PTP), and the fallback is logged."""
+    import coldspray.post.krl as krl
+    from dataclasses import replace
+    path, robot, cell, proc = _plan()
+    k = len(path.moves) // 2
+    path = replace(path, moves=[replace(m, kind="PTP", gun_on=False) if i == k else m
+                                for i, m in enumerate(path.moves)])
+    pj = program_joints(path, robot, cell)
+    pj[k] = np.nan
+    assert not np.isnan(pj[k - 1]).any()
+    monkeypatch.setattr(krl, "program_joints", lambda *a: pj)
+    seeds, ik = [], robot.ik
+    monkeypatch.setattr(robot, "ik", lambda pose, seed: seeds.append(np.array(seed)) or ik(pose, seed))
+    with caplog.at_level("WARNING", logger="coldspray.post.krl"):
+        to_krl(path, robot, cell, proc)
+    assert len(seeds) == 1 and np.allclose(seeds[0], pj[k - 1])
+    assert f"move {k}" in caplog.text

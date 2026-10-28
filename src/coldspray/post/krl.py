@@ -23,6 +23,7 @@ when the robot reaches the point rather than early. A move's `dwell_s` is a
 WAIT SEC after it (e.g. at a powder purge point).
 """
 
+import logging
 from dataclasses import dataclass
 
 import numpy as np
@@ -42,6 +43,9 @@ class KRLOptions:
     preflight: HALT before motion if $ACT_TOOL/$ACT_BASE differ or the data is untaught (post/krl_preflight.py)."""
     preflight: bool = False
     check_taught: bool = True
+
+
+log = logging.getLogger(__name__)
 
 
 class KRLError(Exception):
@@ -66,7 +70,7 @@ def to_krl(path: Toolpath, robot: Robot, cell: CellConfig, proc: ProcessConfig,
     """`part_base`: faceplate BASE <- KRL base on the part (Part.placement @ Part.krl_base),
     or None to write relative to the faceplate BASE.
     PTP joints are the ones Simulate solves and collision-checks (post/joints.program_joints);
-    where that has none (NaN) robot.ik seeded from the last PTP is used.
+    where that has none (NaN) robot.ik seeded from the last joints it has is used (logged as a warning).
     `options`: KRLOptions (preflight block); None = none."""
     pj = program_joints(path, robot, cell)
     name = path.name[:24]
@@ -152,16 +156,20 @@ def to_krl(path: Toolpath, robot: Robot, cell: CellConfig, proc: ProcessConfig,
                 lines.append(f"WAIT SEC {proc.spray_settle_s:.1f}  ;spray settle")
             gun_on = m.gun_on
 
+        if not np.isnan(pj[i]).any():
+            seed = np.asarray(pj[i], dtype=float)          # last joints Simulate solved, any move kind
         # A gantry move goes as PTP (joints + E1), never as a LIN that would leave E1 behind
         if m.kind == "PTP" or (i > 0 and e1s[i] != e1s[i - 1]):
             if not np.isnan(pj[i]).any():
-                seed = np.asarray(pj[i], dtype=float)
+                q = seed
             else:
                 sols = robot.ik(base_in_robot(cell, table[i], e1s[i].get(e1_axis)) @ m.pose, seed)
                 if not sols:
                     raise KRLError(f"move {i}: PTP target is unreachable")
-                seed = sols[0]
-            lines.append(f"PTP {_axis(seed, e1s[i] | table[i])}")
+                q = sols[0]                                # closest to the last solved joints
+                log.warning("KRL move %d: PTP joints not checked in Simulate (unreachable on the sampled "
+                            "path); using the IK solution nearest the previous joints: %s", i, _axis(q))
+            lines.append(f"PTP {_axis(q, e1s[i] | table[i])}")
             dwell(m)
             continue
 
