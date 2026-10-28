@@ -11,8 +11,9 @@ jumps in `plan_layers`, so e.g. `oneway` gets its lifted return for free.
 """
 
 import numpy as np
+import shapely
 from shapely import affinity
-from shapely.geometry import LineString, MultiPolygon, Polygon, box
+from shapely.geometry import GeometryCollection, LineString, MultiPolygon, Polygon, box
 
 SIMPLIFY_MM = 0.05  # max deviation when thinning dense contour points
 ISLAND_STEPS = 8    # islands: tile side = this x step-over
@@ -43,15 +44,18 @@ def raster_segments(region, step: float, angle_deg: float) -> list[np.ndarray]:
         return []
     rotated = affinity.rotate(region, -angle_deg, origin=(0, 0))
     xmin, ymin, xmax, ymax = rotated.bounds
-    segments = []
-    for y in np.arange(ymin + step / 2, ymax, step):
-        cut = rotated.intersection(LineString([(xmin - 1, y), (xmax + 1, y)]))
-        parts = getattr(cut, "geoms", [cut])
-        for seg in parts:
-            if seg.length > 1e-6:
-                back = affinity.rotate(seg, angle_deg, origin=(0, 0))
-                segments.append(np.asarray(back.coords)[[0, -1]])
-    return segments
+    ys = np.arange(ymin + step / 2, ymax, step)
+    if len(ys) == 0:
+        return []
+    lines = shapely.linestrings([[(xmin - 1, y), (xmax + 1, y)] for y in ys])
+    shapely.prepare(rotated)
+    kept = []                                   # all cuts in one GEOS call, then one rotate back
+    for cut in shapely.intersection(rotated, lines):
+        kept += [seg for seg in getattr(cut, "geoms", [cut]) if seg.length > 1e-6]
+    if not kept:
+        return []
+    back = affinity.rotate(GeometryCollection(kept), angle_deg, origin=(0, 0))
+    return [np.asarray(seg.coords)[[0, -1]] for seg in back.geoms]
 
 
 def _norms(d: np.ndarray) -> np.ndarray:

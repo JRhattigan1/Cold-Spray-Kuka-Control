@@ -29,7 +29,7 @@ from shapely.geometry import MultiPoint
 
 from coldspray.models import ProcessConfig
 from coldspray.planner.patterns import PATTERNS, contour_loops
-from coldspray.toolpath.model import Move, Toolpath, spray_frame
+from coldspray.toolpath.model import Move, Toolpath
 
 RESAMPLE_MM = 2.0
 WEAK_MEAN = 0.3      # |mean normal| below this: no single "view" direction
@@ -286,6 +286,25 @@ def _extend(p, n, length):
             np.vstack([n[:1], n, n[-1:]]))
 
 
+def _cross(a, b) -> np.ndarray:
+    """np.cross of two 3-vectors, same arithmetic (so bit-identical) without its overhead."""
+    a0, a1, a2 = (float(v) for v in a)
+    b0, b1, b2 = (float(v) for v in b)
+    return np.array([a1 * b2 - a2 * b1, a2 * b0 - a0 * b2, a0 * b1 - a1 * b0])
+
+
+def _spray_frame(point, spray_dir, travel_dir) -> np.ndarray:
+    """toolpath.model.spray_frame with the fast `_cross` (same result)."""
+    x = np.asarray(spray_dir, float)
+    x /= np.linalg.norm(x)
+    y = np.asarray(travel_dir, float) - np.dot(travel_dir, x) * x
+    y /= np.linalg.norm(y)
+    t = np.eye(4)
+    t[:3, 0], t[:3, 1], t[:3, 2] = x, y, _cross(x, y)
+    t[:3, 3] = point
+    return t
+
+
 def plan_surface(vertices, faces, coat_mask, proc: ProcessConfig, name="surface",
                  table_axes: dict | None = None, *, coats: int = 1, max_tilt_deg: float = 60.0,
                  blend_mm: float = 10.0) -> Toolpath:
@@ -329,9 +348,9 @@ def plan_surface(vertices, faces, coat_mask, proc: ProcessConfig, name="surface"
         return path
 
     def pose(p, n, travel):
-        if np.linalg.norm(np.cross(travel, n)) < 1e-9:
+        if np.linalg.norm(_cross(travel, n)) < 1e-9:
             travel = np.eye(3)[np.argmin(np.abs(n))]
-        return spray_frame(p + n * proc.standoff_mm, -n, travel)
+        return _spray_frame(p + n * proc.standoff_mm, -n, travel)
 
     for p, n, closed, region, tag, overrun, far_jumps in strokes:
         if closed:
