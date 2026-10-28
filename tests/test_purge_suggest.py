@@ -42,7 +42,12 @@ def test_reachable_and_hits_unit(world):
     with np.errstate(divide="ignore", invalid="ignore"):
         t1, t2 = (lo - p) / dd, (hi - p) / dd
     tin, tout = np.nanmax(np.minimum(t1, t2)), np.nanmin(np.maximum(t1, t2))
-    assert 0 < tin < tout
+    # default cell: robot root Y (1069) lies inside the unit's Y span (437..1540), so a +-Y
+    # ray from the robot side starts inside the bbox; tin < 0 there. Kept to tout > 0 for now.
+    assert 0 < tout and tin < tout
+    assert d[0] == 0 and abs(d[1]) == 1                # exactly +-Y
+    centre_y = (lo[1] + hi[1]) / 2
+    assert np.sign(centre_y - robroot(cell, 0.0)[1, 3]) == np.sign(d[1])  # robot -> unit
 
 
 def test_button_fills_fields(world):
