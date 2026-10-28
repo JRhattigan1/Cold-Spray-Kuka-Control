@@ -22,7 +22,7 @@ from typing import Callable, Literal
 
 import numpy as np
 
-from coldspray.cell import base_world, robroot
+from coldspray.cell import axis_defaults, base_world, robroot
 from coldspray.toolpath.model import Toolpath
 
 
@@ -85,12 +85,52 @@ def robot_targets(samples, cell) -> np.ndarray:
     return np.array(frames)[inverse.ravel()] @ samples.poses
 
 
+def ptp_moves(path: Toolpath, cell) -> np.ndarray:
+    """Per move: True if the KRL drives it as a PTP (post/krl.py): kind PTP, or E1 changes there."""
+    out = np.array([m.kind == "PTP" for m in path.moves], bool)
+    if cell.gantry is not None and len(out) > 1:
+        e1 = [a.get(cell.gantry.axis, cell.gantry.position_mm) for a in path.axis_values()]
+        out[1:] |= np.array(e1[1:]) != np.array(e1[:-1])
+    return out
+
+
+def ptp_in_joint_space(ptp, move_index, joints, before=None) -> np.ndarray:
+    """`joints` (n, 6) of samples (`move_index` per sample) with the samples of PTP moves
+    (`ptp` per move) put on a straight line in joint space - how the robot moves a PTP - from
+    the joints before the move to its end joints (the end joints, which the KRL commands, are
+    kept). `before`: joints before the first sample (else that segment is left as is).
+    A segment with an unknown (NaN) end is left as is."""
+    joints = np.array(joints, float)
+    idx = np.asarray(move_index)
+    for m in np.unique(idx[np.asarray(ptp)[idx]]):
+        sel = np.flatnonzero(idx == m)
+        q0 = joints[sel[0] - 1] if sel[0] > 0 else before
+        q1 = joints[sel[-1]]
+        if q0 is None or np.isnan(q0).any() or np.isnan(q1).any() or len(sel) < 2:
+            continue
+        t = (np.arange(1, len(sel) + 1) / len(sel))[:, None]
+        joints[sel] = (1 - t) * np.asarray(q0, float) + t * q1
+    return joints
+
+
+def joint_sweep(q0, q1, step_deg: float = 5.0) -> np.ndarray:
+    """Joints along a PTP from `q0` to `q1` (both ends excluded), at most `step_deg` apart:
+    e.g. the KRL's HOME -> first point and last point -> HOME."""
+    q0, q1 = np.asarray(q0, float), np.asarray(q1, float)
+    if np.isnan(q0).any() or np.isnan(q1).any():
+        return np.zeros((0, 6))
+    n = max(1, int(np.ceil(np.abs(q1 - q0).max() / step_deg)))
+    t = (np.arange(1, n) / n)[:, None]
+    return (1 - t) * q0 + t * q1
+
+
 def find_issues(path: Toolpath, ctx: Context):
     """(samples, joints, issues): joints NaN where unreachable; one Issue per bad sample."""
     o = ctx.opts
-    s = path.sample(o.sample_mm, o.angle_step_deg)
+    s = path.sample(o.sample_mm, o.angle_step_deg, axis_defaults(ctx.cell))
     seed = ctx.cell.home_deg if ctx.seed is None else ctx.seed
     joints = ctx.robot.ik_path(robot_targets(s, ctx.cell), seed_deg=seed, hint=path.hint_for(s.move_index))
+    joints = ptp_in_joint_space(ptp_moves(path, ctx.cell), s.move_index, joints)
     issues = [Issue(i, int(s.move_index[i]), "unreachable") for i in np.flatnonzero(np.isnan(joints[:, 0]))]
     if ctx.checker is not None:
         for i in np.flatnonzero(~np.isnan(joints[:, 0])):
@@ -109,7 +149,7 @@ def issues_in(path: Toolpath, ctx: Context, lo: int, hi: int) -> list[Issue]:
     move `lo`, so moves before `lo` must be unchanged since then (moves after
     `hi` may be added or removed). `solve` still re-checks the whole path."""
     o = ctx.opts
-    s = path.sample(o.sample_mm, o.angle_step_deg)
+    s = path.sample(o.sample_mm, o.angle_step_deg, axis_defaults(ctx.cell))
     sel = np.flatnonzero((s.move_index >= lo) & (s.move_index <= hi))
     if not len(sel):
         return []
@@ -122,6 +162,8 @@ def issues_in(path: Toolpath, ctx: Context, lo: int, hi: int) -> list[Issue]:
     targets = robot_targets(s, ctx.cell)[sel]
     hint = path.hint_for(s.move_index)
     joints = ctx.robot.ik_path(targets, seed_deg=seed, hint=None if hint is None else hint[sel])
+    joints = ptp_in_joint_space(ptp_moves(path, ctx.cell), s.move_index[sel], joints,
+                                before=seed if last is not None or lo == 0 else None)
     out = []
     for i, q in zip(sel, joints):
         if np.isnan(q[0]):

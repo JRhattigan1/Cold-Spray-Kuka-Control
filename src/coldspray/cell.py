@@ -90,3 +90,15 @@ def base_in_robot(cell: CellConfig, ext: dict | None = None, e1: float | None = 
 def table_axis_names(cell: CellConfig) -> list[str]:
     tt = cell.turntable
     return [tt.tilt.axis, tt.rotation.axis] if tt else []
+
+
+def axis_defaults(cell: CellConfig) -> dict[str, float]:
+    """External axis values before a path first sets them, as the KRL has them
+    (post/krl.py): the cell's gantry and turntable positions. For Toolpath.sample(initial=)."""
+    out = {}
+    if cell.gantry is not None:
+        out[cell.gantry.axis] = float(cell.gantry.position_mm)
+    if cell.turntable is not None:
+        tt = cell.turntable
+        out |= {tt.tilt.axis: float(tt.tilt.position_deg), tt.rotation.axis: float(tt.rotation.position_deg)}
+    return out

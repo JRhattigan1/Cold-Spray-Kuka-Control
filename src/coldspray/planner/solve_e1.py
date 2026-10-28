@@ -6,7 +6,8 @@ first; the first that clears the layer is kept (else the one with fewest problem
 if it helps). The value is written to `axes["E1"]` of the layer's first move with
 the gun off (the KRL makes an E1 change a PTP, and a PTP must never spray), and
 E1 is stated on every layer from then on so it never leaks into the next layer.
-A layer that sprays on every move gets no E1 of its own (it keeps the last one). A path with nothing to fix, or a cell without a gantry, comes back as is.
+A layer that sprays on every move gets no E1 of its own (it keeps the last one), so it is
+scored with the layer whose E1 it keeps; moves before a layer's carrier are not scored for it. A path with nothing to fix, or a cell without a gantry, comes back as is.
 """
 
 from dataclasses import replace
@@ -43,24 +44,29 @@ def fix_e1(path, issues, ctx: Context):
     if g is None or not issues:
         return path
     starts = layer_starts(path)
-    ends = starts[1:] + [len(path.moves)]
     carriers = e1_carriers(path, starts)
     axes = path.axis_values()
     cur = [e1_of(ctx.cell, axes[s if c is None else c]) for s, c in zip(starts, carriers)]
     lo, hi = g.limits_mm
     cands = np.arange(np.ceil(lo / STEP_MM) * STEP_MM, hi + 1e-9, STEP_MM)
     if ctx.checker is not None:            # it was cropped round the program's E1: stay near it
-        cands = cands[np.abs(cands - (g.position_mm or 0.0)) <= MAX_SHIFT_MM]
+        built = getattr(ctx.checker, "e1", None)
+        cands = cands[np.abs(cands - (g.position_mm if built is None else built)) <= MAX_SHIFT_MM]
     values = list(cur)
     changed = False
 
-    def bad_in(p, k):
-        return len(issues_in(p, ctx, starts[k], ends[k] - 1))     # fast: only layer k
+    # Layer k's E1 holds from its carrier until the next layer that has one (a layer that sprays
+    # throughout keeps it); moves before the carrier run on the previous E1, which k can't change.
+    span = {}
+    for k, c in enumerate(carriers):
+        if c is not None:
+            span[k] = (c, next((x for x in carriers[k + 1:] if x is not None), len(path.moves)) - 1)
 
-    bad_layers = sorted({k for x in issues for k in range(len(starts)) if starts[k] <= x.move < ends[k]})
+    def bad_in(p, k):
+        return len(issues_in(p, ctx, *span[k]))     # fast: only the moves layer k's E1 governs
+
+    bad_layers = sorted({k for x in issues for k, (a, b) in span.items() if a <= x.move <= b})
     for k in bad_layers:
-        if carriers[k] is None:                 # sprays throughout: no gun-off move to change E1 on
-            continue
         base = _with_e1(path, carriers, values, g.axis)
         find_issues(base, ctx)                  # joints up to this layer, with earlier layers' new E1
         best, best_n = values[k], bad_in(base, k)
