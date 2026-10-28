@@ -133,3 +133,11 @@ def test_surface_coats_get_no_every_n_purge(setup):
     _, path = plan_part(part, proc, mode="surface", cell=c)
     visits = [m for m in path.moves if m.tag == "purge" and m.kind == "LIN"]
     assert len(visits) == 2
+
+
+def test_gun_stays_on_between_purge_visits(setup):
+    _, cell, _ = setup
+    cell = _cell(cell, point=_world_point(cell), every_n_layers=1)
+    m = add_purge(_layers(4), cell).moves
+    visits = [i for i, x in enumerate(m) if x.tag == "purge" and x.gun_on]
+    assert len(visits) >= 4 and all(x.gun_on for x in m[visits[0]:visits[-1] + 1])
