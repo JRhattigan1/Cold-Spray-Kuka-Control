@@ -48,7 +48,7 @@ def test_auto_position_levels_the_gun_for_layers():
 def test_layer_tilts_for_a_sideways_build():
     cell = load_cell()
     assert layer_tilts(cell, gun_dir=(1.0, 0.0, 0.0))[0] == 0.0     # already level with the table flat
-    assert layer_tilts(cell, gun_dir=(0.0, 0.0, -1.0)) == [90, 75, 60, 45]
+    assert layer_tilts(cell, gun_dir=(0.0, 0.0, -1.0)) == [90, 75, 60, 45, 30]   # 70 deg limit allows 30 deg tilt
 
 
 def test_auto_position_names_an_unreachable_purge_point():

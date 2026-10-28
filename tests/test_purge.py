@@ -141,3 +141,20 @@ def test_gun_stays_on_between_purge_visits(setup):
     m = add_purge(_layers(4), cell).moves
     visits = [i for i, x in enumerate(m) if x.tag == "purge" and x.gun_on]
     assert len(visits) >= 4 and all(x.gun_on for x in m[visits[0]:visits[-1] + 1])
+
+
+def test_purge_to_start_rises_over_the_part(setup):
+    _, cell, _ = setup
+    at = lambda x, y, z: spray_frame((x, y, z), (0, 0, -1), (1, 0, 0))
+    # part spans x -50..50 at z 30; start is low on the far side of the part
+    path = Toolpath("p", [Move(at(60, 0, 40), 250, kind="PTP", axes={"E2": 0.0, "E5": 0.0}, tag="approach"),
+                          Move(at(60, 0, 30), 20, gun_on=True, tag="infill"),
+                          Move(at(-50, 0, 30), 20, gun_on=True, tag="infill"),
+                          Move(at(-50, 0, 140), 250, tag="approach")])
+    pt = base_world(cell)[:3, 3] + [-200.0, 0.0, 30.0]
+    c = _cell(cell, point=tuple(pt), at_end=False)
+    m = add_purge(path, c).moves
+    n = len(m) - len(path.moves)
+    assert n > 2                                   # purge back, visit, plus a via-point
+    top = max(x.pose[2, 3] for x in path.moves if x.gun_on)
+    assert any(x.tag == "purge" and x.pose[2, 3] > top + 20 for x in m[:n])
