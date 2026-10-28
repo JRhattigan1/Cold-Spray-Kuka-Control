@@ -18,7 +18,7 @@ import numpy as np
 import pyvista as pv
 from scipy.spatial.transform import Rotation
 
-from coldspray.cell import base_world, base_worlds, robroot, turntable_motion
+from coldspray.cell import axis_defaults, base_world, base_worlds, robroot, turntable_motion
 from coldspray.kinematics.robot import HOME_DEG, Robot
 from coldspray.models import CellConfig
 from coldspray.planner.position import gun_down_deg
@@ -535,7 +535,7 @@ class Scene:
         self.spray_actor.SetVisibility(True)
         self.cell_cfg = cell
 
-        s = path.sample(step, angle_step)
+        s = path.sample(step, angle_step, axis_defaults(cell))
         self.samples = s
         self.move_kind = [path.moves[i].kind for i in s.move_index]
         self.base_frames = base_worlds(cell, [s.axes_at(i) for i in range(len(s))])
@@ -622,7 +622,7 @@ class Scene:
         if crashes:
             parts.append(f"{crashes} collision points")
         if self.steep.any():
-            parts.append(f"{int(self.steep.sum())} points gun too steep (down {self.gun_down.max():.0f}Â°)")
+            parts.append(f"{int(self.steep.sum())} points gun too steep (down {self.gun_down.max():.0f}°)")
         self.summary.SetText(3, "\n".join(parts) if parts else "all points reachable")
         self.summary.GetTextProperty().SetColor(pv.Color(BAD if parts else "green").float_rgb)
 
@@ -653,7 +653,7 @@ class Scene:
         crash = self.collisions.get(i)
         crash_text = ("\nCOLLISION: " + ", ".join(f"{a} / {b}" for a, b in sorted(crash))) if crash else ""
         self.status.SetText(2, f"{self.path_name}  point {i}/{self.n_points - 1}  "
-                               f"spray {'ON' if self.gun_on[i] else 'off'}   gun {round(self.gun_down[i])}Â° down"
+                               f"spray {'ON' if self.gun_on[i] else 'off'}   gun {round(self.gun_down[i])}° down"
                                f"{'  TOO STEEP' if self.steep[i] else ''}\nA1..A6: {j}   {table}{crash_text}")
         self._follow_tool(i)
 

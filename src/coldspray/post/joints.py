@@ -9,6 +9,7 @@ of a fresh `robot.ik` seeded from the last PTP (which may pick another branch).
 
 import numpy as np
 
+from coldspray.cell import axis_defaults
 from coldspray.planner.solver import robot_targets
 
 STEP_MM = 2.0          # Simulate's sampling (gui/steps/simulate.py)
@@ -18,7 +19,7 @@ ANGLE_STEP_DEG = 5.0
 def program_joints(path, robot, cell) -> np.ndarray:
     """(n_moves, 6) joints at the end of every move, as Simulate solves them
     (NaN where unreachable)."""
-    s = path.sample(STEP_MM, ANGLE_STEP_DEG)
+    s = path.sample(STEP_MM, ANGLE_STEP_DEG, axis_defaults(cell))
     joints = robot.ik_path(robot_targets(s, cell), seed_deg=cell.home_deg, hint=path.hint_for(s.move_index))
     idx = np.asarray(s.move_index)
     moves = np.arange(len(path.moves))

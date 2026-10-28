@@ -76,16 +76,18 @@ class Toolpath:
         """Copy with the gun turned `deg` about its spray axis (tool X) at every pose."""
         return self._with_poses(self._poses() @ frame(c=deg))
 
-    def sample(self, step: float = 5.0, angle_step: float = 2.0) -> Samples:
+    def sample(self, step: float = 5.0, angle_step: float = 2.0, defaults: dict | None = None) -> Samples:
         """Points every ~`step` mm (and every ~`angle_step` degrees of external
         axis motion) along the path, for simulation and checks.
 
         PTP moves are interpolated in Cartesian space here, which is only an
-        approximation of the robot.
+        approximation of the robot. `defaults` (axis -> configured value) fills
+        an axis before the path first sets it; without it the last move's value is used.
         """
         axes_per_move = self.axis_values()
         names = sorted({k for a in axes_per_move for k in a})
-        first = {k: axes_per_move[-1].get(k, 0.0) for k in names}  # value before an axis is first set
+        defaults = defaults or {}
+        first = {k: defaults.get(k, axes_per_move[-1].get(k, 0.0)) for k in names}  # value before an axis is first set
         values = [{k: a.get(k, first[k]) for k in names} for a in axes_per_move]
 
         m = len(self.moves)
