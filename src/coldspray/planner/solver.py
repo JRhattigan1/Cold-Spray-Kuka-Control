@@ -134,6 +134,10 @@ def issues_in(path: Toolpath, ctx: Context, lo: int, hi: int) -> list[Issue]:
     return out
 
 
+LEVER_LABELS = {"arm": "arm / elbow choice", "angle": "gun angle band and lean",
+                "reroute": "rerouting approach and jump moves", "e1": "E1 position per layer"}
+
+
 def _levers():
     """(name, fn, enabled(opts)) in the order they are tried; modules are imported
     lazily so a lever that isn't written yet is simply skipped."""
@@ -160,6 +164,7 @@ def solve(path: Toolpath, ctx: Context) -> tuple[Toolpath, SolveReport]:
         if not issues or not enabled(ctx.opts):
             continue
         before = len(issues)
+        ctx.log(f"Solver: trying {LEVER_LABELS.get(name, name)}...")
         new = fn(path, issues, ctx)
         if new is path:
             continue
