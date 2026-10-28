@@ -19,7 +19,7 @@ from pyvistaqt import QtInteractor
 
 from coldspray.cad.part import Substrate
 from coldspray.cell import robroot, table_axis_names
-from coldspray.gui import icons, plan_jobs, style, theme, view_toolbar
+from coldspray.gui import icons, plan_jobs, style, theme, view_toolbar, widgets
 from coldspray.gui.progress import JobProgress
 from coldspray.gui.stepper import EXPORT, PART, POSITION, SIMULATE, TOOLPATH, StepBar
 from coldspray.gui.steps import ExportStep, PartStep, PositionStep, SimulateStep, ToolpathStep
@@ -34,7 +34,11 @@ PANEL_MIN = 400        # narrowest the splitter lets the sidebar go before its f
 VIEW_MIN = 480         # narrowest 3D view
 
 
-def fit_size(avail_w: int, avail_h: int, want=(1600, 950)) -> tuple[int, int]:
+WIN_MIN = (1100, 680)  # smallest window the sidebar + 3D view still work in
+SIDEBAR_KEY = "layout/sidebar_width"
+
+
+def fit_size(avail_w: int, avail_h: int, want=(1440, 900)) -> tuple[int, int]:
     """Start size: the wanted size, shrunk to 92 % of a smaller screen's available area."""
     return min(want[0], int(avail_w * 0.92)), min(want[1], int(avail_h * 0.92))
 
@@ -44,9 +48,12 @@ class MainWindow(QMainWindow, PartStep, PositionStep, ToolpathStep, SimulateStep
         """settings: QSettings for the saved UI mode (default: widgets.settings(); tests pass their own)."""
         super().__init__()
         self.setWindowTitle("Cold Spray KUKA Control")
+        self.ui_settings = settings if settings is not None else widgets.settings()
+        self.setMinimumSize(*WIN_MIN)
         screen = QApplication.primaryScreen()
         avail = screen.availableGeometry() if screen else None
-        self.resize(*fit_size(avail.width(), avail.height()) if avail else (1600, 950))
+        w, h = fit_size(avail.width(), avail.height()) if avail else (1440, 900)
+        self.resize(max(w, WIN_MIN[0]), max(h, WIN_MIN[1]))
         self.assets = None
         self.scene = None
         self.source = None      # the part as loaded, with the choices made in the Part step
@@ -116,9 +123,10 @@ class MainWindow(QMainWindow, PartStep, PositionStep, ToolpathStep, SimulateStep
         self.stepbar.setObjectName("glassHeader")
         for build in (self._build_part_panel, self._build_position_panel, self._build_toolpath_panel,
                       self._build_simulate_panel, self._build_export_panel):
-            self.panels.addWidget(self._scroll(build()))
+            self.panels.addWidget(self._page(build()))
         # The sidebar never gets narrower than its widest panel needs (plus scroll bar and card margins)
-        need = max(self.panels.widget(i).widget().minimumSizeHint().width() for i in range(self.panels.count()))
+        need = max(self.panels.widget(i).scroll.widget().minimumSizeHint().width()
+                   for i in range(self.panels.count()))
         bar = self.style().pixelMetric(self.style().PixelMetric.PM_ScrollBarExtent)
         self.sidebar.setMinimumWidth(max(PANEL_MIN, need + bar + 12))
 
@@ -149,6 +157,7 @@ class MainWindow(QMainWindow, PartStep, PositionStep, ToolpathStep, SimulateStep
         self.splitter.setStretchFactor(0, 0)
         self.splitter.setStretchFactor(1, 1)
         hbox.addWidget(self.splitter)
+        self.splitter.splitterMoved.connect(self._save_split)
         self._split_set = False       # start widths applied on first show, once the splitter has its size
         central = QWidget()
         vbox = QVBoxLayout(central)
@@ -174,10 +183,41 @@ class MainWindow(QMainWindow, PartStep, PositionStep, ToolpathStep, SimulateStep
         if not self._split_set:        # sidebar at PANEL_WIDTH (or its minimum), the 3D view gets the rest
             self._split_set = True
             total = max(self.splitter.width(), self.width() - 28)
-            side = max(PANEL_WIDTH, self.sidebar.minimumWidth())
+            try:
+                saved = int(self.ui_settings.value(SIDEBAR_KEY, 0) or 0)
+            except (TypeError, ValueError):
+                saved = 0
+            side = max(saved or PANEL_WIDTH, self.sidebar.minimumWidth())
+            side = min(side, max(self.sidebar.minimumWidth(), total - VIEW_MIN - self.splitter.handleWidth()))
             self.splitter.setSizes([side, max(VIEW_MIN, total - side - self.splitter.handleWidth())])
 
+    def _save_split(self, *_):
+        """Remember the sidebar width the user dragged to (QSettings)."""
+        self.ui_settings.setValue(SIDEBAR_KEY, self.splitter.sizes()[0])
+
     # --- layout ---------------------------------------------------------------
+    def _page(self, inner) -> QWidget:
+        """One sidebar page: the step's form scrolling, with its "Next: ..." button pinned below."""
+        page = QWidget()
+        box = QVBoxLayout(page)
+        box.setContentsMargins(0, 0, 0, 0)
+        box.setSpacing(6)
+        page.scroll = self._scroll(inner)
+        box.addWidget(page.scroll, 1)
+        lay = inner.layout()
+        for i in range(lay.count() if lay else 0):
+            w = lay.itemAt(i).widget()
+            if isinstance(w, QPushButton) and w.text().startswith("Next:"):
+                lay.takeAt(i)
+                footer = QWidget()
+                row = QVBoxLayout(footer)
+                row.setContentsMargins(10, 0, 10, 4)     # matches the form's side margins
+                row.addWidget(w)
+                box.addWidget(footer)
+                page.footer = footer
+                break
+        return page
+
     @staticmethod
     def _scroll(inner) -> QScrollArea:
         scroll = QScrollArea()
