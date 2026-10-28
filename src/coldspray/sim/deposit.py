@@ -17,13 +17,14 @@ A 2 pi sigma^2 / (V s). Setting that to layer_thickness_mm at the process
 traverse_speed_mm_s and step_over_mm gives A. Slower moves, closer passes and
 dwells therefore build thicker, exactly in proportion.
 
-On a surface tilted to the spray the thickness is scaled by cos(angle between
-the spray and the surface normal) (the same mass spread over a larger
-footprint); faces turned away get nothing. Not modelled: shadowing by other
-geometry, standoff changes (beyond the search radius), deposition efficiency
+On a surface tilted to the spray the footprint stretches by 1/cos(angle
+between the spray and the surface normal) while the rate per area falls by
+cos, so a steady layer keeps its thickness (mass is conserved) and a single
+track gets wider and lower; faces turned away get nothing. Not modelled:
+shadowing by other geometry, standoff changes (beyond the search radius), deposition efficiency
 versus angle, and build-up changing the surface.
 
-The part is refined so no triangle edge is longer than sigma and thickness is
+The part is refined so no triangle edge is longer than 1.5 sigma and thickness is
 computed per triangle (at its centroid), so area-weighted statistics are exact
 sums over the triangles.
 """
@@ -37,7 +38,7 @@ from coldspray.toolpath.model import move_length
 
 FWHM_TO_SIGMA = 1.0 / (2.0 * np.sqrt(2.0 * np.log(2.0)))
 CHUNK = 2000                # samples per neighbour query (bounds memory)
-MAX_TRIANGLES = 400_000     # refinement cap
+MAX_TRIANGLES = 150_000     # refinement cap
 
 
 def sigma_mm(proc) -> float:
@@ -84,11 +85,11 @@ def refine(vertices, faces, max_edge: float, max_triangles: int = MAX_TRIANGLES)
 def spray_samples(path, proc, step: float | None = None):
     """(positions (n,3), spray dirs (n,3), seconds (n,)) of the gun while spraying.
 
-    The path is sampled every ~sigma/2; each sample carries the time spent
+    The path is sampled every ~sigma (ripple < 1%); each sample carries the time spent
     reaching it (distance / move speed), plus spray_settle_s where the spray
     switches on (the gun waits at the previous point) and dwell_s of moves that
     end with the spray on."""
-    step = step or 0.5 * sigma_mm(proc)
+    step = step or sigma_mm(proc)
     s = path.sample(step, angle_step=2.0)
     pts = s.poses[:, :3, 3]
     dirs = s.poses[:, :3, 0]
@@ -141,7 +142,7 @@ def thickness(vertices, faces, path, proc, refine_to: float | None = None, cosin
     """Predicted coating thickness (mm) on the mesh (BASE coordinates, the same
     frame as the toolpath poses) after running `path`. See the module notes."""
     sig = sigma_mm(proc)
-    v, f = refine(vertices, faces, refine_to or sig)
+    v, f = refine(vertices, faces, refine_to or 1.5 * sig)
     p = v[f]
     cen = p.mean(axis=1)
     n = np.cross(p[:, 1] - p[:, 0], p[:, 2] - p[:, 0])
@@ -152,17 +153,15 @@ def thickness(vertices, faces, path, proc, refine_to: float | None = None, cosin
     if len(dt) and len(f):
         dirs = dirs / np.linalg.norm(dirs, axis=1)[:, None]
         aim = pos + dirs * proc.standoff_mm
-        radius = 3.0 * sig + 0.25 * proc.standoff_mm             # standoff may differ a little
+        radius = 3.0 * sig + 0.15 * proc.standoff_mm             # standoff may differ a little
         tree = cKDTree(cen)
         amp = peak_rate(proc)
         for c0 in range(0, len(dt), CHUNK):
             sl = slice(c0, c0 + CHUNK)
-            hits = tree.query_ball_point(aim[sl], radius)
-            counts = np.fromiter((len(h) for h in hits), int, len(hits))
-            if not counts.sum():
+            pairs = cKDTree(aim[sl]).sparse_distance_matrix(tree, radius, output_type="ndarray")
+            if not len(pairs):
                 continue
-            j = np.concatenate([np.asarray(h, int) for h in hits if h])
-            i = np.repeat(np.arange(len(hits)), counts) + c0
+            i, j = pairs["i"].astype(int) + c0, pairs["j"].astype(int)
             rel = cen[j] - pos[i]
             ax = np.einsum("ij,ij->i", rel, dirs[i])
             r2 = np.einsum("ij,ij->i", rel, rel) - ax * ax

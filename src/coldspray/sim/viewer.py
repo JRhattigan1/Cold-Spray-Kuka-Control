@@ -615,6 +615,39 @@ class Scene:
         if self.markers[kind] is not None:
             self.markers[kind].SetVisibility(on)
 
+    # --- predicted coating thickness (sim/deposit.py) ------------------------------------
+    THICKNESS_BAR = "Thickness (mm)"
+
+    def set_thickness(self, deposit=None):
+        """Colour the part by predicted coating thickness (a sim.deposit.Deposit, per
+        triangle) with a colour bar; None removes it. Drawn as its own actor just off
+        the (translucent) part, riding with the faceplate like the path."""
+        old = getattr(self, "thickness_actor", None)
+        if old is not None:
+            self.pl.remove_actor(old)
+            if old in self.path_actors:
+                self.path_actors.remove(old)
+        self.thickness_actor = None
+        if self.THICKNESS_BAR in getattr(self.pl, "scalar_bars", {}):
+            self.pl.remove_scalar_bar(self.THICKNESS_BAR)
+        if deposit is None or self.mode != "preview":
+            return None
+        mesh = _polydata(deposit.vertices, deposit.faces)
+        mesh.cell_data["thickness"] = deposit.thickness
+        normals = mesh.compute_normals(cell_normals=False, point_normals=True, split_vertices=False,
+                                       consistent_normals=False, auto_orient_normals=False)
+        mesh.points = mesh.points + 0.2 * normals.point_data["Normals"]     # just above the part
+        hi = float(deposit.thickness.max()) or 1.0
+        actor = self.thickness_actor = self.pl.add_mesh(
+            mesh, scalars="thickness", cmap="viridis", clim=(0.0, hi), show_scalar_bar=True,
+            scalar_bar_args={"title": self.THICKNESS_BAR, "vertical": True, "fmt": "%.2f",
+                             "position_x": 0.86, "position_y": 0.25, "height": 0.5, "width": 0.06})
+        actor.SetPickable(False)
+        if hasattr(self, "current") and len(getattr(self, "base_frames", ())):
+            actor.user_matrix = self.base_frames[min(self.current, len(self.base_frames) - 1)]
+        self.path_actors.append(actor)
+        return actor
+
     def _update_summary(self):
         bad = int((~self.reachable).sum())
         crashes = len(self.collisions)

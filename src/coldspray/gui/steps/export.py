@@ -12,6 +12,7 @@ from coldspray.gui.widgets import Section, primary_button, wrap_label
 from coldspray.models import PROJECT_ROOT
 from coldspray.post.krl import KRLError, KRLOptions, to_krl
 from coldspray.post.krl_split import split_krl
+from coldspray.sim.deposit import estimate
 
 
 from coldspray.gui.progress import fit_panel
@@ -48,6 +49,9 @@ class ExportStep:
         robot.add(self.export_list)
         layout.addWidget(robot)
 
+        self.export_estimate = wrap_label("")     # cycle time and powder, before saving
+        self.export_estimate.setProperty("note", True)
+        layout.addWidget(self.export_estimate)
         self.save_krl_btn = primary_button("Save KRL program...", self._save_krl)
         capsule(self.save_krl_btn)
         self.save_krl_btn.setEnabled(False)
@@ -72,7 +76,8 @@ class ExportStep:
         """Program details for the current toolpath."""
         if self.result is None:
             return
-        path, _, cell, _ = self.result
+        path, proc, cell, _ = self.result
+        self.export_estimate.setText(estimate(path, proc).text())
         f = self.program_fields
         f["name"].setText(path.name)
         on_part = self._part_base() is not None
