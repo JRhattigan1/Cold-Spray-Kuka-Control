@@ -54,15 +54,26 @@ def raster_segments(region, step: float, angle_deg: float) -> list[np.ndarray]:
     return segments
 
 
+def _norms(d: np.ndarray) -> np.ndarray:
+    """Row lengths of (n, 2) `d`, bit-identical to np.linalg.norm per row (both use dot)."""
+    return np.sqrt((d[:, None, :] @ d[:, :, None]).ravel())
+
+
 def _order(segments: list[np.ndarray], start) -> list[np.ndarray]:
     """Greedy nearest-neighbour ordering, flipping segments as needed."""
-    remaining = list(segments)
+    n = len(segments)
+    if n == 0:
+        return []
+    firsts = np.array([s[0] for s in segments], float)
+    lasts = np.array([s[-1] for s in segments], float)
+    taken = np.zeros(n, bool)
     out, here = [], np.asarray(start, float)
-    while remaining:
-        d = [min(np.linalg.norm(s[0] - here), np.linalg.norm(s[-1] - here)) for s in remaining]
-        s = remaining.pop(int(np.argmin(d)))
-        if np.linalg.norm(s[-1] - here) < np.linalg.norm(s[0] - here):
-            s = s[::-1]
+    for _ in range(n):
+        d0, d1 = _norms(firsts - here), _norms(lasts - here)
+        d = np.where(taken, np.inf, np.minimum(d0, d1))
+        j = int(np.argmin(d))
+        taken[j] = True
+        s = segments[j][::-1] if d1[j] < d0[j] else segments[j]
         out.append(s)
         here = s[-1]
     return out

@@ -33,6 +33,12 @@ DOWN = (0.0, 0.0, -1.0)
 ALONG_X = (1.0, 0.0, 0.0)
 
 
+def _close(a, b) -> bool:
+    """np.allclose(a, b) for finite 2D points (rtol 1e-5, atol 1e-8), without its overhead."""
+    return (abs(float(a[0]) - float(b[0])) <= 1e-8 + 1e-5 * abs(float(b[0]))
+            and abs(float(a[1]) - float(b[1])) <= 1e-8 + 1e-5 * abs(float(b[1])))
+
+
 def plan_layers(layers: list[Layer], proc: ProcessConfig, name="part", table_axes: dict | None = None,
                 to_base: np.ndarray | None = None) -> Toolpath:
     """`table_axes` fixes the turntable for the whole program, e.g. {"E2": 30, "E5": 0};
@@ -44,8 +50,12 @@ def plan_layers(layers: list[Layer], proc: ProcessConfig, name="part", table_axe
         r, t = np.asarray(to_base, float)[:3, :3], np.asarray(to_base, float)[:3, 3]
         plane = (r.T @ (np.asarray(plane[0], float) - t), r.T @ np.asarray(plane[1], float))
 
+    down = spray_frame((0.0, 0.0, 0.0), DOWN, ALONG_X)        # same orientation everywhere
+
     def at(xy, z):
-        return spray_frame((xy[0], xy[1], z), DOWN, ALONG_X)
+        t = down.copy()
+        t[:3, 3] = (xy[0], xy[1], z)
+        return t
 
     for layer in layers:
         z = layer.z_bottom + proc.standoff_mm
@@ -90,7 +100,7 @@ def plan_layers(layers: list[Layer], proc: ProcessConfig, name="part", table_axe
                 here, last_ki = stroke[0], (k, 0)
             tag = "contour" if k < n_contour else "infill"
             for i, p in enumerate(stroke):
-                if np.allclose(here, p):
+                if _close(here, p):
                     continue                                    # the join to a stroke's start is a turn
                 path.moves.append(Move(pose(k, i, z), proc.traverse_speed_mm_s, gun_on=True,
                                        tag="turn" if i == 0 or (extended and k >= n_contour
