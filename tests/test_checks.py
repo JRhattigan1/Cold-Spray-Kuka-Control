@@ -137,3 +137,19 @@ def test_checklist_widget(app, cell, tool):
     w.set_checks(checks[:2])                         # rebuilding replaces the rows
     assert len(w.rows) == 2 and w.open_count() == 1
     assert not w.grab().isNull()
+
+
+def test_flip_row(cell):
+    sc = fake_scene(6)
+    j = np.zeros((6, 6))
+    j[3:, 0] = 90.0                                   # jump between samples 2 and 3
+    sc.joints = j
+    sc.samples = SimpleNamespace(move_index=np.array([0, 0, 0, 0, 0, 1]))
+    sc.move_kind = ["LIN"] * 5 + ["LIN"]
+    c = by_key(simulate_checks(sc, cell, "off"))["flip"]
+    assert (c.state, c.sample, c.count) == ("bad", 3, 1)
+    sc.move_kind = ["PTP"] * 6
+    assert by_key(simulate_checks(sc, cell, "off"))["flip"].state == "ok"
+    sc.move_kind = ["LIN"] * 6
+    sc.samples = SimpleNamespace(move_index=np.array([0, 0, 0, 1, 1, 1]))
+    assert by_key(simulate_checks(sc, cell, "off"))["flip"].state == "ok"
