@@ -96,7 +96,7 @@ Branches are unmerged unless stated; none is pushed. Per-run files are in `C:\Us
    - **Suggest purge point along ±Y** (user: spray along Y towards the filtration unit at the back of the cell).
      `wp/S6P` `b2d072c` makes the spray exactly (0, ±1, 0); 11 tests pass. **Not merged.**
    - The problem: the whole "Filtration unit" mesh is huge (X −1308..1301, Y 437..1540, Z to 2830), and the robot root at Y 1069 sits inside its Y span. S6P picks −Y and puts the point inside the unit's box.
-   - **User decision (2026-10-28): the back of the cell is +Y.** `wp/S6P2`, branched from `wp/S6P`, was started on the end-of-session-6 deadline. It fixes the spray to (0, +1, 0) as a config setting, aims at the unit's mesh rather than its bbox, and restores the strict test. Check whether it committed (`git log wp/S6P2`; report in `plans/reports/S6P-1.md`), then finish and merge it.
+   - **User decision (2026-10-28): the back of the cell is +Y.** Done on `wp/S6P2` `b6a11fd`, 20 tests pass, not merged. Spray (0, 1, 0) comes from a new `CellConfig.back_dir`. On the default cell the point is (1251.5, 470, 2780) and the ray hits the unit mesh 250 mm ahead. Check the point in Simulate, then merge.
 6. **Wrapping Surface regions:** split them per CAD face?
 
 ## Lessons for running agents
