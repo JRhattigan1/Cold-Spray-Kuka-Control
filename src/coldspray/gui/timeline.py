@@ -14,6 +14,7 @@ from coldspray.gui import style
 from PySide6.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QSizePolicy, QToolButton, QWidget
 
 KINDS = ("unreachable", "collision", "steep")        # problem kinds
+SHORT_LABELS = {"collision": "collision", "unreachable": "unreach.", "steep": "steep"}
 LABELS = {"collision": "collision", "unreachable": "unreachable", "steep": "gun too steep"}
 KIND_COLOUR = {"unreachable": "bad", "collision": "crash", "steep": "steep"}
 DEFAULT_COLOURS = {
@@ -249,6 +250,10 @@ class Timeline(QWidget):
         y = r.bottom() + 2
         h = fm.height()
         x = r.left()
+        labels = LABELS
+        need = sum(9 + 4 + fm.horizontalAdvance(t) + 12 for t in LABELS.values())
+        if need + fm.horizontalAdvance(self.time_text()) + 8 > r.width():
+            labels = SHORT_LABELS      # narrow panel: keep the legend clear of the time
         for kind in ("collision", "unreachable", "steep"):
             p.setPen(Qt.NoPen)
             p.setBrush(c[KIND_COLOUR[kind]])
@@ -256,9 +261,9 @@ class Timeline(QWidget):
             p.drawRoundedRect(QRectF(x, y + (h - sw) / 2, sw, sw), 2, 2)
             x += sw + 4
             p.setPen(c["text"])
-            p.drawText(QRectF(x, y, fm.horizontalAdvance(LABELS[kind]) + 2, h),
-                       Qt.AlignVCenter | Qt.AlignLeft, LABELS[kind])
-            x += fm.horizontalAdvance(LABELS[kind]) + 12
+            p.drawText(QRectF(x, y, fm.horizontalAdvance(labels[kind]) + 2, h),
+                       Qt.AlignVCenter | Qt.AlignLeft, labels[kind])
+            x += fm.horizontalAdvance(labels[kind]) + 12
         p.setPen(c["text"])
         p.drawText(QRectF(r.left(), y, r.width(), h), Qt.AlignVCenter | Qt.AlignRight, self.time_text())
         p.end()
