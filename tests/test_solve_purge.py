@@ -69,7 +69,7 @@ def test_fix_purge_moves_the_point_until_purge_moves_are_clear(setup, monkeypatc
                if m.tag == "purge" and m.dwell_s > 0 and _world(cell, p, i)[0, 3] < x_ok]
         return None, None, bad
 
-    monkeypatch.setattr(sp, "find_issues", fake)
+    monkeypatch.setattr(sp, "count_issues", lambda p, ctx, limit=None: fake(p, ctx)[2])
     issues = fake(path, None)[2]
     ctx = Context(robot, cell, log=lambda _: None)
     new = sp.fix_purge(path, issues, ctx)
