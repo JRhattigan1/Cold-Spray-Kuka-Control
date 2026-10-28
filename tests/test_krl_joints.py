@@ -59,3 +59,14 @@ def test_nan_ptp_seeds_from_last_valid_joints_and_warns(monkeypatch, caplog):
         to_krl(path, robot, cell, proc)
     assert len(seeds) == 1 and np.allclose(seeds[0], pj[k - 1])
     assert f"move {k}" in caplog.text
+
+
+def test_manual_spray_comments_the_outputs_only():
+    """spray_output=False (spray switched by hand): every $OUT line becomes a comment and
+    nothing else changes, so stops and settle waits keep the program's timing."""
+    path, robot, cell, proc = _plan()
+    auto = to_krl(path, robot, cell, proc, options=KRLOptions())
+    manual = to_krl(path, robot, cell, proc, options=KRLOptions(spray_output=False))
+    out = f"$OUT[{cell.gun_output}]"
+    assert out in auto and not any(l.startswith(out) for l in manual.split("\n"))
+    assert manual == auto.replace(f"\n{out}", f"\n;{out}")

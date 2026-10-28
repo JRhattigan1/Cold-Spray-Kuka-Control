@@ -44,7 +44,7 @@ def test_coat_change_reaches_cell_part(win):
 
 
 @pytest.mark.slow
-def test_layers_generate_and_export(win, monkeypatch):
+def test_layers_generate_and_export(win, monkeypatch, tmp_path):
     from coldspray.gui.stepper import EXPORT, POSITION, SIMULATE, TOOLPATH
     win._set_part("test_block")
     win.go_to(POSITION)
@@ -75,6 +75,16 @@ def test_layers_generate_and_export(win, monkeypatch):
     win.go_to(SIMULATE)
     win.go_to(EXPORT)
     assert not [d for d in win.dialogs if d[0] != "question"], win.dialogs
+    # the Export options reach the program: pre-flight, spray by hand, split
+    win.preflight_check.setChecked(True)
+    win.spray_output_check.setChecked(False)
+    win.split_check.setChecked(True)
+    path, proc, cell, robot = win.result
+    files = win.write_program(tmp_path / "job.src", path, robot, cell, proc, win._part_base())
+    text = "\n".join(f.read_text() for f in files)
+    assert files[0].name == "job.src" and all(f.exists() for f in files)
+    assert "HALT" in text and f";$OUT[{cell.gun_output}]" in text
+    assert not any(l.startswith("$OUT[") for l in text.splitlines())
 
 
 @pytest.mark.slow

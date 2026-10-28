@@ -62,3 +62,12 @@ def test_circ_is_a_motion_line():
         assert "C_DIS" not in motion[-1] or n == list(parts)[-1]
         seq += motion
     assert seq == [l for l in L if l.startswith(("LIN", "CIRC"))]
+
+
+def test_commented_spray_lines_still_block_cuts():
+    """Manual spray writes ';$OUT[..] = ...': the split still knows the gun is on there."""
+    spray = {i: (i // 10) % 2 == 0 for i in range(0, 100, 10)}
+    auto = split_krl(_prog(100, spray), 20)
+    manual = split_krl(_prog(100, spray).replace("\n$OUT", "\n;$OUT"), 20)
+    assert list(manual) == list(auto)
+    assert [p.replace("\n;$OUT", "\n$OUT") for p in manual.values()] == list(auto.values())

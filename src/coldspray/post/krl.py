@@ -40,9 +40,12 @@ from coldspray.transforms import xyzabc
 @dataclass(frozen=True)
 class KRLOptions:
     """Optional program additions; the defaults leave the output unchanged.
-    preflight: HALT before motion if $ACT_TOOL/$ACT_BASE differ or the data is untaught (post/krl_preflight.py)."""
+    preflight: HALT before motion if $ACT_TOOL/$ACT_BASE differ or the data is untaught (post/krl_preflight.py).
+    spray_output: False = spray switched by hand; the $OUT lines are written as comments
+    (the stops and settle waits stay, so timing is the same)."""
     preflight: bool = False
     check_taught: bool = True
+    spray_output: bool = True
 
 
 log = logging.getLogger(__name__)
@@ -75,6 +78,8 @@ def to_krl(path: Toolpath, robot: Robot, cell: CellConfig, proc: ProcessConfig,
     pj = program_joints(path, robot, cell)
     name = path.name[:24]
     gun = f"$OUT[{cell.gun_output}]"
+    if options is not None and not options.spray_output:
+        gun = ";" + gun   # manual spray: the switch is left in as a comment
     home = cell.home_deg
     tt = cell.turntable
     table_names = table_axis_names(cell)

@@ -11,7 +11,7 @@ from coldspray.gui.steps.simulate import capsule
 from coldspray.gui.widgets import Section, primary_button, wrap_label
 from coldspray.models import PROJECT_ROOT
 from coldspray.post.krl import KRLError, KRLOptions, to_krl
-from coldspray.post.krl_split import split_krl
+from coldspray.post.krl_split import KRLSplitError, split_krl
 
 
 from coldspray.gui.progress import fit_panel
@@ -57,6 +57,15 @@ class ExportStep:
         self.preflight_check = QCheckBox("Pre-flight check")
         self.preflight_check.setToolTip("Check BASE/TOOL: HALT before motion if $ACT_TOOL/$ACT_BASE differ from the program's")
         layout.addWidget(widgets.advanced(self.preflight_check))
+        self.spray_output_check = QCheckBox("Program switches the spray")
+        self.spray_output_check.setChecked(True)
+        self.spray_output_check.setToolTip("On: $OUT switches the spray at each spray move.\n"
+                                           "Off: spray switched by hand; the $OUT lines are left as comments")
+        self.spray_output_check.toggled.connect(lambda _: self._show_program())
+        layout.addWidget(widgets.advanced(self.spray_output_check))
+        self.split_check = QCheckBox("Split into parts (long programs)")
+        self.split_check.setToolTip("Main program CALLs <name>_P01, _P02, ... cut only where the gun is off")
+        layout.addWidget(widgets.advanced(self.split_check))
         note = self.export_save_note = wrap_label("Saving with open items asks once, listing them all.")
         note.setProperty("note", True)
         layout.addWidget(widgets.advanced(note))
@@ -78,7 +87,8 @@ class ExportStep:
         on_part = self._part_base() is not None
         f["frames"].setText(f"{cell.part_base_number if on_part else cell.base_number} · {cell.tool_number}"
                             + ("  (KRL base on the part)" if on_part else ""))
-        f["output"].setText(f"$OUT[{cell.gun_output}]")
+        f["output"].setText(f"$OUT[{cell.gun_output}]" if self.spray_output_check.isChecked()
+                            else "by hand ($OUT lines commented)")
         tt = cell.turntable
         f["table"].setText("none" if tt is None else
                            "coupled to BASE" if tt.coupled else "fixed base, axes on every point")
@@ -105,10 +115,27 @@ class ExportStep:
         if not fn:
             return
         try:
-            Path(fn).write_text(to_krl(path, robot, cell, proc, part_base), newline="\r\n")
-        except (KRLError, ValueError) as e:
+            files = self.write_program(Path(fn), path, robot, cell, proc, part_base)
+        except (KRLError, KRLSplitError, ValueError) as e:
             QMessageBox.warning(self, "Could not write program", str(e))
             return
-        self.export_status.setText(f"Saved {fn}")
+        saved = fn if len(files) == 1 else f"{fn} + {len(files) - 1} parts"
+        self.export_status.setText(f"Saved {saved}")
         self._mark_done(EXPORT)
-        self._status(f"Saved {fn}")
+        self._status(f"Saved {saved}")
+
+    def krl_options(self) -> KRLOptions:
+        return KRLOptions(preflight=self.preflight_check.isChecked(),
+                          spray_output=self.spray_output_check.isChecked())
+
+    def write_program(self, fn: Path, path, robot, cell, proc, part_base) -> list[Path]:
+        """Write the program to `fn` and, when split, its parts beside it as <part name>.src
+        (the names the main program CALLs); returns the files written."""
+        text = to_krl(path, robot, cell, proc, part_base, options=self.krl_options())
+        programs = split_krl(text) if self.split_check.isChecked() else {"": text}
+        files = []
+        for k, src in enumerate(programs.values()):
+            out = fn if k == 0 else fn.with_name(f"{list(programs)[k]}.src")
+            out.write_text(src, newline="\r\n")
+            files.append(out)
+        return files
