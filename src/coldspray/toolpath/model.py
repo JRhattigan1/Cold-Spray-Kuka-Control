@@ -6,7 +6,7 @@ follows the travel direction. A move may also set external axes (turntable
 tilt and rotation, degrees); axes it doesn't mention keep their previous value.
 """
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import Literal
 
 import numpy as np
@@ -61,16 +61,20 @@ class Toolpath:
             out.append(dict(state))
         return out
 
+    def _with_poses(self, poses: np.ndarray) -> "Toolpath":
+        moves = [Move(p, m.speed, m.gun_on, m.kind, dict(m.axes), m.tag, m.dwell_s) for m, p in zip(self.moves, poses)]
+        return Toolpath(self.name, moves, self.skipped_points, self.joint_hint, self.zigzag_regions)
+
+    def _poses(self) -> np.ndarray:
+        return np.array([m.pose for m in self.moves]).reshape(len(self.moves), 4, 4)
+
     def transformed(self, t: np.ndarray) -> "Toolpath":
         """Copy with every pose replaced by `t @ pose` (everything else kept)."""
-        return Toolpath(self.name, [replace(m, pose=t @ m.pose, axes=dict(m.axes)) for m in self.moves],
-                        self.skipped_points, self.joint_hint)
+        return self._with_poses(t @ self._poses())
 
     def rolled(self, deg: float) -> "Toolpath":
         """Copy with the gun turned `deg` about its spray axis (tool X) at every pose."""
-        r = frame(c=deg)
-        return Toolpath(self.name, [replace(m, pose=m.pose @ r, axes=dict(m.axes)) for m in self.moves],
-                        self.skipped_points, self.joint_hint)
+        return self._with_poses(self._poses() @ frame(c=deg))
 
     def sample(self, step: float = 5.0, angle_step: float = 2.0) -> Samples:
         """Points every ~`step` mm (and every ~`angle_step` degrees of external
