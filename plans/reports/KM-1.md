@@ -73,3 +73,26 @@ Full suite after each merge; benchmark test_tube / test_block / test_repair (mov
 Nothing merged. Next: wait for K1 sprint 1 sha, merge K1 into wp/KM, run full suite, review KRL diff.
 
 Test line: none (design sprint).
+
+## Sprint 2-3 final state (08:41) - wp/KM = main + K4 + K2 + K3 + KM hook. K1 HELD (D1 decision b)
+- Merged: wp/K4 18309a8 (krl_split, krl_preflight, krl_status), wp/K2 e6ba4cf (post/joints.py, solve_e1 carriers,
+  PlanKey), wp/K3 48c6402 (flip row, collision root fix, allowed_text).
+- KM on main's krl.py: `pj = program_joints(path, robot, cell)`; a PTP uses `pj[i]` when not NaN, else the old
+  `robot.ik` seeded from the last PTP, KRLError if that is unreachable too (D1 a). `options: KRLOptions | None`
+  (preflight=False default; `preflight_lines` after `BAS(#BASE, n)`). viewer.py: `self.move_kind` line (K3 ask; INT
+  resolves with U22).
+- **KRL diff:** test_block / test_repair / test_tube programs are byte-identical before/after the hook (the seeded ik
+  already chose Simulate's branch on these parts), so the regression hashes are unchanged; no re-baseline.
+- New tests/test_krl_joints.py: KRL PTP joints == program_joints rows (test_block); preflight off by default and
+  placed right after BAS(#BASE).
+- K1 variant kept on **wp/KM-K1** (wp/KM-before-reset + K1 e24f730 + hook on K1's `joints=` dict). Not for main
+  until K1's hashes are re-baselined against a reviewed diff and its suite is green; #PATH/C_DIS needs T1.
+  Test (c) (K2's E1 carriers never trigger K1's CIRC-with-E1 KRLError) is pending, since K1 is held.
+- krl_split note: `_MOTION` matches PTP|LIN only, so with K1 a CIRC is never a cut point (safe, conservative);
+  extend it to CIRC when K1 lands.
+- Ask (GUI export owner, gui/steps/export.py): write `split_krl(text)` items as separate .src files when >1, and
+  expose a "preflight" checkbox -> `to_krl(..., options=KRLOptions(preflight=True))`. I did not edit export.py.
+- Not done: T1 verification of krl_status S bits 0/1 (unverified); the full suite (INT runs it).
+
+Test line: test_krl_joints, test_krl, test_krl_regression, test_checks, test_collision*, test_imports, test_krl_split,
+test_krl_preflight_status: 113 passed, 3 xfailed (76 s).

@@ -508,6 +508,7 @@ class Scene:
 
         s = path.sample(step, angle_step)
         self.samples = s
+        self.move_kind = [path.moves[i].kind for i in s.move_index]
         self.base_frames = base_worlds(cell, [s.axes_at(i) for i in range(len(s))])
         # E1 per sample when the path sets it (solver / KRL); else the placement as given
         self.e1 = s.axes.get(cell.gantry.axis) if cell.gantry is not None else None
