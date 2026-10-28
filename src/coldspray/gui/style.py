@@ -335,7 +335,7 @@ QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
 
 _QSS += """
 /* ---- Liquid Glass layer: translucent surfaces, hairline highlights, capsules, orange accents ---- */
-QScrollArea, QScrollArea > QWidget > QWidget { background: @glass; }
+QScrollArea, QScrollArea > QWidget > QWidget { background: @panel; }
 QGroupBox { background: @glass; border: 1px solid @glass_edge; border-radius: @r_m; margin-top: 16px; padding: 10px; }
 QFrame#sectionHeader { background: @glass_strong; border: 1px solid @glass_edge;
     border-top-left-radius: @r_m; border-top-right-radius: @r_m; }
@@ -368,10 +368,10 @@ QToolButton:checked { background: @accent_soft; border-color: @accent; }
 QWidget#viewToolbar QToolButton { background: @glass_strong; border: 1px solid @glass_edge; border-radius: @r_s; }
 QWidget#viewToolbar QToolButton:hover { background: @glass_hover; }
 QWidget#viewToolbar QToolButton:checked { border-color: @accent; background: @accent_soft; }
-QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox { background: @glass_strong; border: 1px solid @glass_line;
-    border-radius: 13px; padding: 0px 10px; }
+QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox { background: @field_bg; color: @ink; border: 1px solid @glass_line;
+    selection-background-color: @accent; selection-color: #ffffff; border-radius: 13px; padding: 0px 10px; }
 QSpinBox, QDoubleSpinBox { padding-right: 20px; }
-QLineEdit:hover, QSpinBox:hover, QDoubleSpinBox:hover, QComboBox:hover { border-color: @accent_a; background: @glass_hover; }
+QLineEdit:hover, QSpinBox:hover, QDoubleSpinBox:hover, QComboBox:hover { border-color: @accent_a; background: @field_bg; }
 QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus { border: 1px solid @accent; }
 QLineEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, QComboBox:disabled { background: @soft; color: @muted; }
 QSpinBox::up-button, QDoubleSpinBox::up-button { border-top-right-radius: 13px; border-left: none; }
