@@ -11,7 +11,7 @@ import numpy as np
 from PySide6.QtCore import QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPainterPath, QRadialGradient
 from coldspray.gui import style
-from PySide6.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QSizePolicy, QToolButton, QWidget
+from PySide6.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QSizePolicy, QToolButton, QVBoxLayout, QWidget
 
 KINDS = ("unreachable", "collision", "steep")        # problem kinds
 SHORT_LABELS = {"collision": "collision", "unreachable": "unreach.", "steep": "steep"}
@@ -295,8 +295,13 @@ class PlaybackControls(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        row = QHBoxLayout(self)
+        outer = QVBoxLayout(self)          # two rows: transport + speed, then Follow
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(4)
+        row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
+        row2 = QHBoxLayout()
+        row2.setContentsMargins(0, 0, 0, 0)
         self.prev_btn = QToolButton(text="⏮")
         self.prev_btn.setToolTip("Previous problem")
         self.prev_btn.clicked.connect(lambda: self.stepProblem.emit(-1))
@@ -318,8 +323,11 @@ class PlaybackControls(QWidget):
         self.follow.toggled.connect(self.followToggled)
         for w in (self.prev_btn, self.play_btn, self.next_btn, self.speed):
             row.addWidget(w)
-        row.addWidget(self.follow)
         row.addStretch(1)
+        row2.addWidget(self.follow)
+        row2.addStretch(1)
+        outer.addLayout(row)
+        outer.addLayout(row2)
         self.apply_glass()
         self._label(False)
 
