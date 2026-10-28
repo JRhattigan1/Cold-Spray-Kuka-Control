@@ -198,6 +198,7 @@ class PartStep:
         finally:
             QApplication.restoreOverrideCursor()
         self.source, self.part, self.cell_key = part, None, None
+        self.part_source = source          # what was loaded (STEP path or built-in name), for job files
         self.roles = ["build" if b == part.build_body else "fixture" for b in range(part.n_bodies)]
         self.scene.set_part(None)
         self._enter_setup()

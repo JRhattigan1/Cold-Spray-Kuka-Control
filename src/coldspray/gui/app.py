@@ -19,7 +19,7 @@ from pyvistaqt import QtInteractor
 
 from coldspray.cad.part import Substrate
 from coldspray.cell import robroot, table_axis_names
-from coldspray.gui import icons, plan_jobs, style, theme, view_toolbar, widgets
+from coldspray.gui import icons, job_menu, plan_jobs, style, theme, view_toolbar, widgets
 from coldspray.gui.progress import JobProgress
 from coldspray.gui.stepper import EXPORT, PART, POSITION, SIMULATE, TOOLPATH, StepBar
 from coldspray.gui.steps import ExportStep, PartStep, PositionStep, SimulateStep, ToolpathStep
@@ -175,6 +175,7 @@ class MainWindow(QMainWindow, PartStep, PositionStep, ToolpathStep, SimulateStep
         self.shortcuts = [QShortcut(QKeySequence(f"Ctrl+{n + 1}"), self, lambda n=n: self.go_to(n))
                           for n in (PART, POSITION, TOOLPATH, SIMULATE, EXPORT)]
         self.shortcuts.append(QShortcut(QKeySequence("Ctrl+G"), self, self.generate))
+        job_menu.install(self)            # Job menu (save / open / recent), Ctrl+S / Ctrl+O
         self.statusBar().showMessage("Starting...")
         QTimer.singleShot(50, self._startup)
 
