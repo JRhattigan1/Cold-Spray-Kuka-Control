@@ -23,3 +23,6 @@ turn_plane: ''              # datum plane the passes turn beyond (beyond_plane)
 # Surface coating (selected faces)
 surface_coats: 1            # Surface mode: coats over the selected faces
 surface_max_tilt_deg: 60.0  # Surface mode: most the gun may tilt to stay normal to the face
+
+# Moves
+arcs: false                 # merge straight spray runs into one LIN and write curved ones as CIRC arcs (check on the robot in T1 first)

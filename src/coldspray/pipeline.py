@@ -14,6 +14,7 @@ from coldspray.cad.part import Part, Substrate, build_frame, build_mesh, drop_on
 from coldspray.cad.slicer import slice_mesh
 from coldspray.models import CellConfig, ProcessConfig
 from coldspray.planner.gun import level_gun
+from coldspray.toolpath.simplify import simplify
 from coldspray.planner.layers import plan_layers
 from coldspray.planner.purge import add_purge
 from coldspray.planner.revolve import plan_revolve
@@ -234,7 +235,7 @@ def plan_part(part: Part, proc: ProcessConfig, mode="layers", tilt_deg=0.0, rota
                             tilt_axis=tilt_axis, rotation_axis=rot_axis).transformed(up)
         passes = sum(1 for a, b in zip(path.moves, path.moves[1:]) if b.gun_on and a.gun_on
                      and abs(b.pose[2, 3] - a.pose[2, 3]) > 1e-9)
-        return f"{coats} coat(s), {passes + coats} passes", _hold_gun(add_purge(path, cell), cell, roll_deg, wrist)
+        return f"{coats} coat(s), {passes + coats} passes", _hold_gun(add_purge(path, cell), cell, roll_deg, wrist, proc.arcs)
     if mode == "surface":                       # the picked faces, on any body
         coat = part.coat_faces
         if not coat:
@@ -249,7 +250,7 @@ def plan_part(part: Part, proc: ProcessConfig, mode="layers", tilt_deg=0.0, rota
         n = proc.surface_coats
         note = (f"; {path.zigzag_regions} region(s) wrap round, zigzagged instead"
                 if path.zigzag_regions else "")
-        return f"{len(coat)} face(s), {n} coat(s){note}", _hold_gun(add_purge(path, cell), cell, roll_deg, wrist)
+        return f"{len(coat)} face(s), {n} coat(s){note}", _hold_gun(add_purge(path, cell), cell, roll_deg, wrist, proc.arcs)
     # Layers grow away from the start face, or up from the bottom of the build
     # body (on the plate, or on the component a repair patch sits on)
     to_base = build_frame(part)
@@ -257,12 +258,16 @@ def plan_part(part: Part, proc: ProcessConfig, mode="layers", tilt_deg=0.0, rota
     table = {tilt_axis: tilt_deg, rot_axis: rotation_deg} if tt else {}
     path = plan_layers(layers, proc, part.name, table_axes=table, to_base=to_base).transformed(to_base)
     start = f" from start face {part.start_face}" if part.start_face is not None else ""
-    return f"{len(layers)} layers{start}", _hold_gun(add_purge(path, cell), cell, roll_deg, wrist)
+    return f"{len(layers)} layers{start}", _hold_gun(add_purge(path, cell), cell, roll_deg, wrist, proc.arcs)
 
 
-def _hold_gun(path, cell, roll_deg, wrist):
+def _hold_gun(path, cell, roll_deg, wrist, arcs=False):
     """The gun's turn about its spray axis: levelled (wrist up) plus `roll_deg`
-    when the tool's wrist side is known, else the planner's roll plus `roll_deg`."""
+    when the tool's wrist side is known, else the planner's roll plus `roll_deg`.
+    With `arcs` (ProcessConfig.arcs), straight spray runs then merge into one LIN and curved
+    ones into CIRCs (toolpath/simplify.py)."""
     if wrist is not None and cell is not None:
-        return level_gun(path, cell, wrist, roll_deg)
-    return path.rolled(roll_deg)
+        path = level_gun(path, cell, wrist, roll_deg)
+    else:
+        path = path.rolled(roll_deg)
+    return simplify(path) if arcs else path

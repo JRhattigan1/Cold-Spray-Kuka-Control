@@ -8,7 +8,7 @@ CALL, so nothing is re-emitted.
 """
 import re
 
-_MOTION = re.compile(r"^(PTP|LIN)\b")
+_MOTION = re.compile(r"^(PTP|LIN|CIRC)\b")
 _GUN = re.compile(r"^\$OUT\[\d+\]\s*=\s*(TRUE|FALSE)\b")
 
 
