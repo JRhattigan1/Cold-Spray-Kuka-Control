@@ -93,6 +93,10 @@ Branches are unmerged unless stated; none is pushed. Per-run files are in `C:\Us
 3. **Crosshatch:** with the default 90° step it repeats a direction (0, 90, 90, 0). Change it?
 4. **Position Simple mode:** compare E1 with `gantry.position_mm` for "changed"?
 5. **Purge:** spray on from the first purge visit to the last? `spray_dir` is still CHECK.
+   - **Suggest purge point along ±Y** (user: spray along Y towards the filtration unit at the back of the cell).
+     `wp/S6P` `b2d072c` makes the spray exactly (0, ±1, 0); 11 tests pass. **Not merged.**
+   - The problem: the whole "Filtration unit" mesh is huge (X −1308..1301, Y 437..1540, Z to 2830), and the robot root at Y 1069 sits inside its Y span. S6P picks −Y and puts the point inside the unit's box.
+   - **Needed from the user:** which side is the back of the cell (+Y or −Y), or the CAD name of the filter-inlet part to aim at. Then fix the sign and the placement and restore the strict "ray enters the unit" test.
 6. **Wrapping Surface regions:** split them per CAD face?
 
 ## Lessons for running agents
