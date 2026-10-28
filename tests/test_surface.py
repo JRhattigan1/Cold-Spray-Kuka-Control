@@ -303,3 +303,44 @@ def test_oneway_overrun_measured_from_the_face_edge():
     assert len(pts)
     assert np.isclose(pts[:, 0].min(), -20 - proc.overrun_mm, atol=0.01)
     assert np.isclose(pts[:, 0].max(), 20 + proc.overrun_mm, atol=0.01)
+
+
+def _flat_plus_fillet(r=20.0, flat=40.0, sweep_deg=60.0, length=120.0):
+    """Flat strip (y in [0, flat], z = 0) running into a fillet of radius r turning down
+    by `sweep_deg`; returns (vertices, faces, surface distance across of a point)."""
+    th = np.radians(np.linspace(0, sweep_deg, 31))
+    prof = np.vstack([np.column_stack([np.linspace(0, flat, 21)[:-1], np.zeros(20)]),
+                      np.column_stack([flat + r * np.sin(th), -r * (1 - np.cos(th))])])
+    xs = np.linspace(0, length, 13)
+    v = np.array([[x, y, z] for x in xs for y, z in prof])
+    k = len(prof)
+    f = []
+    for i in range(len(xs) - 1):
+        for j in range(k - 1):
+            a, b = i * k + j, (i + 1) * k + j
+            f += [[a, b, a + 1], [a + 1, b, b + 1]]
+
+    def across(p):
+        y, z = p[..., 1], p[..., 2]
+        return np.where(y <= flat + 1e-9, y, flat + r * np.arctan2(y - flat, r + z))
+    return v, np.array(f), across
+
+
+@pytest.mark.parametrize("pattern", ["zigzag", "oneway"])
+def test_step_over_measured_along_the_surface_over_a_fillet(pattern):
+    """Passes stay step_over apart along the surface where a flat face runs into a curve
+    (they used to be spaced in the plane-cut / flattened frame and bunch on the curve)."""
+    proc = load_process()
+    proc.infill_pattern = pattern
+    proc.contour_passes = 0
+    v, f, across = _flat_plus_fillet()
+    path = plan_surface(v, f, np.ones(len(f), bool), proc)
+    pts = np.array([m.pose[:3, 3] + m.pose[:3, 0] * proc.standoff_mm for m in path.moves
+                    if m.gun_on and m.tag == "infill"])
+    inside = (pts[:, 0] > 1) & (pts[:, 0] < 119)              # not the overrun past the ends
+    s = np.unique(np.round(across(pts[inside]), 1))
+    s = s[np.concatenate([[True], np.diff(s) > proc.step_over_mm / 2])]   # one value per pass
+    gaps = np.diff(s)
+    total = across(np.array([0, 40 + 20 * np.sin(np.radians(60)), -20 * (1 - np.cos(np.radians(60)))]))
+    assert len(s) == pytest.approx(total / proc.step_over_mm, abs=1.5)
+    assert np.allclose(gaps, proc.step_over_mm, rtol=0.05), gaps

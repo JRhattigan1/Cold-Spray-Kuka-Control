@@ -7,7 +7,11 @@ Normals are face normals blended along each stroke (Gaussian over `blend_mm`
 of arc length), so a stroke over an edge turns the gun smoothly instead of
 snapping. Strokes zig-zag; open strokes are extended tangentially by
 `overrun_mm` so the turnarounds sit off the coated area. Closed cuts (rings
-round a cylinder) are sprayed as loops.
+round a cylinder) are sprayed as loops. Where the faces curve away from the cut
+frame (a flat face running into a fillet) the cut offsets are re-spaced by
+distance along the surface (arc_map), so passes stay `step_over_mm` apart on the
+surface, not in the plane; the pattern fill stretches its flat frame the same way.
+Turns and face-to-face jumps hold the gun rolled for the next stroke.
 
 Raster direction: strokes run along the longest extent of the selection as
 seen along its mean normal. If the normals cancel out (a full cylinder) the
@@ -55,6 +59,51 @@ class Stroke(NamedTuple):
     tag: str = "infill"
     overrun: bool = True     # extended by overrun_mm at both ends (open strokes)
     far_jumps: bool = False  # starts with a lifted jump when > 1.5 x step-over from the last stroke
+
+
+STRETCH_SLICES = 7   # cuts across the region used to measure surface distance against flat distance
+STRETCH_GRID_MM = 0.25
+
+
+def arc_map(mesh, across, along, origin=None):
+    """Surface distance across the region against flat distance along `across`:
+    (flat coordinates, surface distance at each), or None where the two agree (a flat
+    region; callers then keep the plain spacing). Measured on `STRETCH_SLICES` cuts by
+    planes normal to `along`; each cut's length per unit of `across` is averaged."""
+    import trimesh  # lazy: keeps app start-up fast
+    origin = np.zeros(3) if origin is None else origin
+    v = (mesh.vertices - origin) @ across
+    lo, hi = v.min(), v.max()
+    if hi - lo < 1e-9:
+        return None
+    m = int(min(4000, max(8, np.ceil((hi - lo) / STRETCH_GRID_MM))))
+    grid = np.linspace(lo, hi, m + 1)
+    w = (mesh.vertices - origin) @ along
+    total, count = np.zeros(m), np.zeros(m)
+    for t in np.quantile(w, (np.arange(STRETCH_SLICES) + 0.5) / STRETCH_SLICES):
+        seg = trimesh.intersections.mesh_plane(mesh, along, origin + along * t)
+        if len(seg) == 0:
+            continue
+        a, b = (seg[:, 0] - origin) @ across, (seg[:, 1] - origin) @ across
+        length = np.linalg.norm(seg[:, 1] - seg[:, 0], axis=1)
+        dv = np.abs(b - a)
+        keep = dv > 1e-9
+        i0 = np.searchsorted(grid, np.minimum(a, b)[keep])
+        i1 = np.searchsorted(grid, np.maximum(a, b)[keep])
+        k = length[keep] / dv[keep]
+        dens, cov = np.zeros(m + 1), np.zeros(m + 1)
+        np.add.at(dens, i0, k)
+        np.add.at(dens, i1, -k)
+        np.add.at(cov, i0, 1)
+        np.add.at(cov, i1, -1)
+        dens, cov = np.cumsum(dens)[:m], np.cumsum(cov)[:m]
+        hit = cov > 0.5
+        total[hit] += dens[hit] / cov[hit]
+        count[hit] += 1
+    stretch = np.where(count > 0, total / np.maximum(count, 1), 1.0)
+    if np.abs(stretch - 1.0).max() < 1e-6:
+        return None
+    return grid, np.concatenate([[0.0], np.cumsum(stretch * np.diff(grid))])
 
 
 def raster_axes(points, normals, areas) -> tuple[np.ndarray, np.ndarray, bool]:
@@ -165,8 +214,13 @@ def surface_strokes(vertices, faces, coat_mask, step_over, blend_mm=10.0, max_ti
     mean = (mesh.face_normals * mesh.area_faces[:, None]).sum(0)
     mean /= np.linalg.norm(mean) if strong else 1.0
     offs = mesh.vertices @ c
+    cuts = np.arange(offs.min() + step_over / 2, offs.max(), step_over)
+    warp = arc_map(mesh, c, d) if strong else None
+    if warp is not None:                 # space the cuts by distance along the surface, not across the plane
+        grid, arc = warp
+        cuts = np.interp(np.arange(step_over / 2, arc[-1], step_over), arc, grid)
     lines, face_idx = [], []
-    for o in np.arange(offs.min() + step_over / 2, offs.max(), step_over):
+    for o in cuts:
         seg, fi = trimesh.intersections.mesh_plane(mesh, c, c * o, return_faces=True)
         lines.append((seg, mesh.face_normals[fi]))
     strokes, skipped, flip = [], 0, False
@@ -222,6 +276,19 @@ def pattern_strokes(vertices, faces, coat_mask, proc, index=0, blend_mm=10.0, ma
     uv = (mesh.vertices - o) @ np.column_stack([d, c])
     region = shapely.union_all(shapely.polygons(uv[mesh.faces]))
     region = region.buffer(1e-4, join_style="mitre").buffer(-1e-4, join_style="mitre")   # seal seams
+    # fill in surface distance (flat coordinates stretched where the faces curve away), so the
+    # passes are step_over apart along the surface; strokes are mapped back before projection
+    maps = [arc_map(mesh, d, c, o), arc_map(mesh, c, d, o)]
+    if any(w is not None for w in maps):
+        def stretch(xy, inverse=False):
+            xy = np.array(xy, float)
+            for k, w in enumerate(maps):
+                if w is not None:
+                    xy[:, k] = np.interp(xy[:, k], w[1], w[0]) if inverse else np.interp(xy[:, k], w[0], w[1])
+            return xy
+        region = shapely.transform(shapely.segmentize(region, RESAMPLE_MM / 4), stretch)
+    else:
+        stretch = None
     flat = [(s, "contour") for s in contour_loops(region, proc)]
     start = flat[0][0][0] if flat else None
     fill = region.buffer(-proc.contour_passes * proc.step_over_mm - EDGE_MM)
@@ -243,6 +310,8 @@ def pattern_strokes(vertices, faces, coat_mask, proc, index=0, blend_mm=10.0, ma
         q, _, _ = resample(np.column_stack([s, np.zeros(len(s))]), np.tile([0.0, 0.0, 1.0], (len(s), 1)))
         if closed:
             q = q[:-1]
+        if stretch is not None:
+            q = stretch(q[:, :2], inverse=True)
         origins = o + q[:, :1] * d + q[:, 1:2] * c + n * above
         loc, ray, tri = rays.intersects_location(origins, np.tile(-n, (len(q), 1)), multiple_hits=False)
         p, fn, ok = np.zeros((len(q), 3)), np.tile(n, (len(q), 1)), np.zeros(len(q), bool)
@@ -446,8 +515,10 @@ def plan_surface(vertices, faces, coat_mask, proc: ProcessConfig, name="surface"
                                    axes=dict(table_axes or {}), tag="approach"))
             path.moves.append(Move(pose(p[0], n[0], tang[0]), proc.rapid_speed_mm_s, tag="approach"))
         elif region != prev_region and group[region] == group[prev_region]:
-            # next CAD face of a region that wraps round: gun off, lifted off one face and onto the next
-            h, travel = proc.approach_height_mm, p[0] - prev_p
+            # next CAD face of a region that wraps round: gun off, lifted off one face and onto the next.
+            # The gun keeps the next stroke's roll (travel along it): rolling it to the jump
+            # direction turned it 90 deg on a side face, out of reach (S9S)
+            h, travel = proc.approach_height_mm, tang[0]
             for q, nn in ((prev_p + prev_n * h, prev_n), (p[0] + n[0] * h, n[0]), (p[0], n[0])):
                 path.moves.append(Move(pose(q, nn, travel), proc.rapid_speed_mm_s, gun_on=False, tag="jump"))
         elif region != prev_region or (far_jumps and np.linalg.norm(p[0] - prev_p) > 1.5 * proc.step_over_mm):
@@ -457,8 +528,9 @@ def plan_surface(vertices, faces, coat_mask, proc: ProcessConfig, name="surface"
                 path.moves.append(Move(pose(q, nn, travel), proc.rapid_speed_mm_s, gun_on=True, tag="jump"))
         elif not (far_jumps and np.allclose(p[0], prev_p)):
             # turn to the next stroke, lifted mid-turn by jump_height_mm along the mean
-            # normal (0: straight across at spray height; the solver lifts any that collide)
-            travel = p[0] - prev_p
+            # normal (0: straight across at spray height; the solver lifts any that collide).
+            # The gun is rolled for the next stroke (travel along it), not for the step across
+            travel = tang[0]
             if proc.jump_height_mm > 0:
                 nm = prev_n + n[0]
                 nm = nm / np.linalg.norm(nm) if np.linalg.norm(nm) > 1e-9 else n[0]
