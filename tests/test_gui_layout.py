@@ -13,7 +13,8 @@ from coldspray.gui.steps.toolpath import short_label
 
 @pytest.fixture(scope="module")
 def win(tmp_path_factory):
-    QApplication.instance() or QApplication([])
+    from coldspray.gui import style
+    style.apply(QApplication.instance() or QApplication([]), "light")   # as the real app
 
     w = gui_app.MainWindow(QSettings(str(tmp_path_factory.mktemp("ui") / "ui.ini"), QSettings.IniFormat))
     w._refresh_steps = lambda: None

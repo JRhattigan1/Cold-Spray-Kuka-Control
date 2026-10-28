@@ -72,8 +72,8 @@ class PositionStep:
             self.place[key] = box
             if key in "XYA":
                 n = grid.count() // 2
-                grid.addWidget(QLabel(key), n // 2, (n % 2) * 2)
-                grid.addWidget(box, n // 2, (n % 2) * 2 + 1)
+                grid.addWidget(QLabel(key), n, 0)          # one column: two spins never fit 388 px
+                grid.addWidget(box, n, 1)
         place_box.add(glass_card(grid))
         for key in "ZBC":                        # Advanced only, shown in Simple while non-zero
             place_box.add(self._adv_field(key, self.place[key], 0.0))
@@ -199,12 +199,17 @@ class PositionStep:
     def _adv_field(text, box, default) -> QWidget:
         """A label + box + "changed" chip row, Advanced-only unless the value differs from `default`."""
         row = QWidget()
-        h = QHBoxLayout(row)
-        h.setContentsMargins(0, 0, 0, 0)
+        v = QVBoxLayout(row)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(2)
         chip = Chip()
+        h = QHBoxLayout()                       # label + chip above the box: all three never fit 388 px
+        h.setContentsMargins(0, 0, 0, 0)
         h.addWidget(QLabel(text))
-        h.addWidget(box, 1)
+        h.addStretch(1)
         h.addWidget(chip)
+        v.addLayout(h)
+        v.addWidget(box)
         box.valueChanged.connect(widgets.refresh)
         return widgets.advanced(row, chip=chip, changed=lambda: not np.isclose(box.value(), default))
 

@@ -7,9 +7,11 @@ import pytest
 from PySide6.QtWidgets import QApplication, QComboBox
 
 
-@pytest.fixture
-def win():
+@pytest.fixture(params=["light", "dark"])
+def win(request):
+    from coldspray.gui import style
     app = QApplication.instance() or QApplication([])
+    style.apply(app, request.param)             # the real app always has the stylesheet
     from coldspray.gui.app import MainWindow
     w = MainWindow()
     w._refresh_steps = lambda: None
