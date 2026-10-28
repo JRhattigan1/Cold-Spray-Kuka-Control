@@ -26,3 +26,6 @@ surface_max_tilt_deg: 60.0  # Surface mode: most the gun may tilt to stay normal
 
 # Moves
 arcs: false                 # merge straight spray runs into one LIN and write curved ones as CIRC arcs (check on the robot in T1 first)
+
+# Estimates
+powder_feed_g_min: 30.0     # powder feed rate while spraying (for the powder use estimate)

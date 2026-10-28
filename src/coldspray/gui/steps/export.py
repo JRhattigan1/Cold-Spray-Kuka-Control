@@ -12,6 +12,7 @@ from coldspray.gui.widgets import Section, primary_button, wrap_label
 from coldspray.models import PROJECT_ROOT
 from coldspray.post.krl import KRLError, KRLOptions, to_krl
 from coldspray.post.krl_split import KRLSplitError, split_krl
+from coldspray.sim.deposit import estimate
 
 
 from coldspray.gui.progress import fit_panel
@@ -48,6 +49,9 @@ class ExportStep:
         robot.add(self.export_list)
         layout.addWidget(robot)
 
+        self.export_estimate = wrap_label("")     # cycle time and powder, before saving
+        self.export_estimate.setProperty("note", True)
+        layout.addWidget(self.export_estimate)
         self.save_krl_btn = primary_button("Save KRL program...", self._save_krl)
         capsule(self.save_krl_btn)
         self.save_krl_btn.setEnabled(False)
@@ -57,13 +61,13 @@ class ExportStep:
         self.preflight_check = QCheckBox("Pre-flight check")
         self.preflight_check.setToolTip("Check BASE/TOOL: HALT before motion if $ACT_TOOL/$ACT_BASE differ from the program's")
         layout.addWidget(widgets.advanced(self.preflight_check))
-        self.spray_output_check = QCheckBox("Program switches the spray")
+        self.spray_output_check = QCheckBox("Program switches spray")
         self.spray_output_check.setChecked(True)
         self.spray_output_check.setToolTip("On: $OUT switches the spray at each spray move.\n"
                                            "Off: spray switched by hand; the $OUT lines are left as comments")
         self.spray_output_check.toggled.connect(lambda _: self._show_program())
         layout.addWidget(widgets.advanced(self.spray_output_check))
-        self.split_check = QCheckBox("Split into parts (long programs)")
+        self.split_check = QCheckBox("Split long programs")
         self.split_check.setToolTip("Main program CALLs <name>_P01, _P02, ... cut only where the gun is off")
         layout.addWidget(widgets.advanced(self.split_check))
         note = self.export_save_note = wrap_label("Saving with open items asks once, listing them all.")
@@ -81,7 +85,8 @@ class ExportStep:
         """Program details for the current toolpath."""
         if self.result is None:
             return
-        path, _, cell, _ = self.result
+        path, proc, cell, _ = self.result
+        self.export_estimate.setText(estimate(path, proc).text())
         f = self.program_fields
         f["name"].setText(path.name)
         on_part = self._part_base() is not None

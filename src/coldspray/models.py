@@ -173,6 +173,9 @@ class ProcessConfig(BaseModel):
                                          description="Surface mode: most the gun may tilt to stay normal to the face")
     arcs: bool = _field(False, level="advanced",
                         description="merge straight spray runs into one LIN and write curved ones as CIRC arcs (check on the robot in T1 first)")
+    # Typical cold spray feeds are ~10-60 g/min; 30 is a middling placeholder - set it for your powder / feeder.
+    powder_feed_g_min: float = _field(30.0, ge=0, level="advanced",
+                                      description="powder feed rate while spraying (for the powder use estimate)")
 
 
 def field_level(name: str) -> str:

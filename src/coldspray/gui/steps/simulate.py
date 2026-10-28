@@ -2,13 +2,14 @@
 
 import numpy as np
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QCheckBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QSlider, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QCheckBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QSlider, QVBoxLayout, QWidget
 
 from coldspray.gui.checks import CheckList, export_checks, simulate_checks
 from coldspray.gui.stepper import EXPORT, SIMULATE
 from coldspray.gui.timeline import PlaybackControls, Timeline, sample_times
 from coldspray.gui import widgets
-from coldspray.cad.part import build_mesh, other_mesh
+from coldspray.cad.part import build_mesh, other_mesh, placed_vertices
+from coldspray.sim.deposit import estimate, thickness
 from coldspray.sim.scene import make_gun
 from coldspray.gui import style
 from coldspray.gui.progress import fit_panel
@@ -52,7 +53,13 @@ def capsule(btn):
     return btn
 
 
+THICKNESS_TIP = ("Colour the part by predicted coating thickness: Gaussian track (track width = FWHM),\n"
+                 "scaled so one layer of passes at the step-over and traverse speed gives the layer\n"
+                 "thickness. No shadowing. Not for Layers mode (the part is what is built).")
+
+
 class SimulateStep:
+    deposit = None           # (toolpath, sim.deposit.Deposit) shown by the Thickness toggle
     solve_future = None      # background "Solve problems" run
     solve_report = None      # its SolveReport (None until run; cleared by Generate)
     solve_lines = ()         # solver log lines (appended by the worker)
@@ -108,6 +115,13 @@ class SimulateStep:
         checks.add(tiles)
         self.info = wrap_label("")      # toolpath summary
         checks.add(self.info)
+        self.thickness_box = QCheckBox("Thickness")
+        self.thickness_box.setToolTip(THICKNESS_TIP)
+        self.thickness_box.toggled.connect(self._show_thickness)
+        checks.add(self.thickness_box)
+        self.thickness_info = wrap_label("")
+        self.thickness_info.setProperty("note", True)
+        checks.add(self.thickness_info)
         layout.addWidget(checks)
 
         playback = self.playback_section = Section("Playback")
@@ -168,7 +182,8 @@ class SimulateStep:
                                                   part_base=self._part_base() is not None))
         n_open = self.export_list.open_count()
         self.robot_section.set_chip(f"{n_open} open" if n_open else "", "warn")
-        self.info.setText(self.summary_head)
+        self.info.setText(self.summary_head + estimate(path, proc).text())
+        self._thickness_path_check()
         n = scene.n_points
         sv = self.stat_values
         sv["points"].setText(str(n))
@@ -183,6 +198,42 @@ class SimulateStep:
         unfixed = bool(report is not None and report.unfixed)
         self.save_krl_btn.setEnabled(getattr(self, "unreachable", 0) == 0 and not unfixed)
         self._show_time()
+
+    # --- predicted thickness ------------------------------------------------------------
+    def _thickness_path_check(self):
+        """Drop the thickness view once the toolpath changes; Layers mode has none."""
+        path = self.result[0] if self.result is not None else None
+        layers = getattr(self, "result_mode", None) == "layers"
+        self.thickness_box.setEnabled(path is not None and not layers)
+        if self.deposit is not None and self.deposit[0] is not path:
+            self.deposit = None
+            self.thickness_box.blockSignals(True)
+            self.thickness_box.setChecked(False)
+            self.thickness_box.blockSignals(False)
+            self.scene.set_thickness(None)
+            self.thickness_info.setText("")
+
+    def _show_thickness(self, on):
+        if self.result is None or not on:
+            self.scene.set_thickness(None)
+            self.thickness_info.setText("")
+            self.plotter.render()
+            return
+        path, proc, _, _ = self.result
+        if self.deposit is None or self.deposit[0] is not path:
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            try:
+                dep = thickness(placed_vertices(self.part), self.part.faces, path, proc)
+            finally:
+                QApplication.restoreOverrideCursor()
+            self.deposit = (path, dep)
+        dep = self.deposit[1]
+        self.scene.set_thickness(dep)
+        st = dep.stats()
+        self.thickness_info.setText(
+            f"Predicted thickness: min {st['min']:.2f} · mean {st['mean']:.2f} · max {st['max']:.2f} mm<br>"
+            f"{st['below80_pct']:.0f}% of the sprayed area is below 80% of the mean")
+        self.plotter.render()
 
     # --- collision checking (background) -------------------------------------------
     def _home_first_leg(self, robot, cell, joints):
