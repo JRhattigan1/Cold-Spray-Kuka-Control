@@ -72,8 +72,12 @@ def load_cell_meshes(cache: str) -> CellMeshes:
     static, carriage, tilting, rotating = [], [], [], []
     optional = {label: [] for label in OPTIONAL}
     robot: list[list] = [[] for _ in ROBOT_PARTS]
+    raw: dict = {}  # NpzFile re-decompresses on every access; instances share meshes
     for inst in index["instances"]:
-        v, f = data[f"v{inst['mesh']}"].astype(float), data[f"f{inst['mesh']}"]
+        k = inst["mesh"]
+        if k not in raw:
+            raw[k] = data[f"v{k}"].astype(float), data[f"f{k}"]
+        v, f = raw[k]
         m = np.array(inst["matrix"])
         names = inst["path"]
         link = next((ROBOT_PARTS[n] for n in names if n in ROBOT_PARTS), None)

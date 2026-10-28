@@ -25,14 +25,22 @@ def load_assets(log=print) -> Assets:
 
     cell, tool = load_cell(), load_tool()
     assets = Assets(cell, tool, Robot(load_robot(), tool))
-    if cell.cad_cache and (PROJECT_ROOT / cell.cad_cache).with_suffix(".json").exists():
+    has_cell = bool(cell.cad_cache) and (PROJECT_ROOT / cell.cad_cache).with_suffix(".json").exists()
+    has_gun = tool.gun is not None and (PROJECT_ROOT / tool.gun.step_file).exists()
+    gun_job = None
+    if has_gun:  # the gun npz decompresses on a worker while the cell meshes load here
+        from concurrent.futures import ThreadPoolExecutor
+        pool = ThreadPoolExecutor(1)
+        gun_job = pool.submit(cached_mesh, tool.gun.step_file, 0.5)
+        pool.shutdown(wait=False)
+    if has_cell:
         log("Loading cell CAD...")
         assets.meshes = load_cell_meshes(cell.cad_cache)
     else:
         log("No cell CAD cache found - drawing a simple robot. Make one with coldspray.cad.step_cache.")
-    if tool.gun is not None and (PROJECT_ROOT / tool.gun.step_file).exists():
+    if gun_job is not None:
         log("Loading spray gun CAD...")
-        assets.gun_mesh = cached_mesh(tool.gun.step_file, deflection=0.5)
+        assets.gun_mesh = gun_job.result()
     return assets
 
 
