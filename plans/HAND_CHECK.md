@@ -44,6 +44,16 @@ Do this at 100 % and at 150 % Windows scaling (Settings → Display → Scale; r
 - [ ] Save a KRL program, once with the split option and once with the pre-flight checkbox. Open the `.src`: the header shows BASE/TOOL, E1 changes come only on gun-off PTPs, and there are no NaN or odd joint values.
 - [ ] Re-export the same path: the file is identical (diff it).
 
+## 6. Session 9 additions (10 min)
+- [ ] **Job**: set up a part fully (placement, constraints, KRL base, Surface faces, settings, E1, purge), Job → Save job…; close the app, Job → Open job (or Recent): every step comes back; Generate gives the same KRL.
+- [ ] **Undo** in Position: move the part, add a constraint, Ctrl+Z twice, Ctrl+Shift+Z: placement and rows follow. ↶ ↷ in the step bar too.
+- [ ] **Surface over a fillet** (flat face running into a blend): passes evenly spaced on the curve, not bunched.
+- [ ] **Thickness** toggle in Simulate (Revolve / Surface): coloured map with a colour bar; min/mean/max and % thin look sensible. Note how long it takes on WearPlate2.
+- [ ] **Estimates**: cycle time and powder line in Simulate and above Save in Export.
+- [ ] **HOME legs**: problems on HOME → first / last → HOME show in Simulate and Solve; with move 0 a LIN, the leg is a straight line.
+- [ ] **A4/A6 wind-up** warning appears on a path that winds the wrist.
+- [ ] **Export** (Advanced): untick "Program switches spray": the `$OUT` lines are comments. Tick "Split long programs" on a long path: main + `_Pnn` files next to it.
+
 ## After this, on the controller (to-do 14, 17)
 - Copy the split program over and check that all parts load.
 - Check that the pre-flight HALT triggers with the wrong TOOL/BASE.
