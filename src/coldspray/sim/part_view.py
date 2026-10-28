@@ -35,7 +35,8 @@ class PartView:
         self.pick_point = None           # part-CAD point of the last pick click
         self.section_plane = None        # vtkPlane while the section is on
         self.section_axis = "x"
-        pl.set_background("#eef1f4", top="#d3dbe2")
+        from coldspray.sim.viewer import apply_view_background
+        apply_view_background(pl)
         pl.enable_anti_aliasing("msaa")
         pl.add_axes()
         self.hint = pl.add_text("", position="upper_left", font_size=10, color="black")

@@ -11,6 +11,7 @@ import pyvista as pv
 from coldspray.toolpath.model import spray_frame
 
 GHOST = "#7e57c2"
+GHOST_DARK = "#b39ddb"   # lighter purple that reads on the dark view background
 ACCENT = "#ff8a1f"   # orange accent (never blue)
 
 # spray direction presets for the purge point, WORLD; "down-angled" is 30° below horizontal into -Y
@@ -58,6 +59,19 @@ class GunMarker:
         self.actors.append(pl.add_mesh(arrow, color=ACCENT, opacity=0.8, smooth_shading=True,
                                        specular=0.9, specular_power=40))
         self.pose = np.eye(4)
+        self.color = color
+
+    def apply_theme(self, mode: str, tint=None):
+        """Follow a theme change: the default ghost colour and the rim / arrow accent per mode."""
+        from coldspray.gui import style
+        mode = style.resolve(mode)
+        if tint is None and self.color in (GHOST, GHOST_DARK):
+            tint = GHOST_DARK if mode == "dark" else GHOST
+        if tint is not None:
+            self.set_color(tint)
+        accent = style.meaning_colours(mode)["accent"]
+        for a in self.actors[2:]:
+            a.prop.color = accent
 
     def set_pose(self, pose):
         self.pose = np.asarray(pose, float)
@@ -74,5 +88,6 @@ class GunMarker:
 
     def set_color(self, color):
         """Tint the gun (e.g. red when the robot can't reach the pose)."""
+        self.color = color
         for a in self.actors[:2]:   # glass bodies only; the orange rim stays
             a.prop.color = color

@@ -77,6 +77,19 @@ def plate_box(plate_size) -> tuple[np.ndarray, np.ndarray]:
     return np.asarray(box.points), box.faces.reshape(-1, 4)[:, 1:]
 
 
+
+def _current_mode() -> str:
+    from coldspray.gui import style
+    return style.resolve(style.current_mode())
+
+
+def apply_view_background(pl, mode: str | None = None):
+    """Vertical gradient around style.view_background(mode): lighter at the top in both themes."""
+    from coldspray.gui import style
+    bottom = style.view_background(mode or _current_mode())
+    top = style._mix("#ffffff", bottom, 0.25) if style.resolve(mode or _current_mode()) == "light"         else style._mix("#ffffff", bottom, 0.08)
+    pl.set_background(bottom, top=top)
+
 class Scene:
     def __init__(self, pl: pv.Plotter, robot: Robot, world_from_robot=None,
                  cell: CellMeshes | None = None, gantry_offset=(0.0, 0.0, 0.0),
@@ -115,7 +128,7 @@ class Scene:
         self.part_mesh = None            # the part's PolyData ("build" cell scalars; 2 = constraint face)
         self._face_pick = None           # (callback, on_cancel, observer ids) while picking part faces
 
-        pl.set_background("#eef1f4", top="#d3dbe2")
+        self.set_theme()
         pl.enable_anti_aliasing("msaa")   # not ssaa: its render pass breaks the hardware picker the drag handles use
         self.link_actors, self.stick, self.carriage = [], None, None
         self.group_actors = {}
@@ -193,14 +206,30 @@ class Scene:
             for a in self.gun_actors:
                 a.SetPickable(False)
 
+    def set_theme(self, mode: str | None = None):
+        """3D background gradient from the style's view colour (current theme if `mode` is None)."""
+        apply_view_background(self.pl, mode)
+        from coldspray.gui import style
+        mc = style.meaning_colours(mode or _current_mode())
+        self._marker_colours = {"collision": mc["crash"], "unreachable": mc["bad"], "steep": mc["steep"]}
+        for kind, actor in getattr(self, "markers", {}).items():
+            if actor is not None:
+                actor.prop.color = self._marker_colours[kind]
+        marker = getattr(self, "purge_marker", None)
+        if marker is not None:
+            marker.apply_theme(_current_mode())
+
     def set_purge_marker(self, pose, visible=True, reachable=True):
         """Ghost gun at the purge point (WORLD pose); made on first use."""
-        from coldspray.sim.markers import GHOST, GunMarker
+        from coldspray.sim.markers import GHOST, GHOST_DARK, GunMarker
         if getattr(self, "purge_marker", None) is None:
             self.purge_marker = GunMarker(self.pl)
         self.purge_marker.set_pose(pose)
         self.purge_marker.set_visible(visible)
-        self.purge_marker.set_color(GHOST if reachable else BAD)
+        if reachable:
+            self.purge_marker.apply_theme(_current_mode(), tint=GHOST_DARK if _current_mode() == "dark" else GHOST)
+        else:
+            self.purge_marker.set_color(BAD)
         if not getattr(self, "_purge_dragging", False):
             self._make_purge_widget(visible)
 
@@ -571,6 +600,7 @@ class Scene:
             self.markers[kind] = None
         if len(pts):
             color, size = MARKERS[kind]
+            color = getattr(self, "_marker_colours", {}).get(kind, color)
             a = self.markers[kind] = self.pl.add_points(pts, color=color, point_size=size,
                                                         render_points_as_spheres=True)
             a.SetPickable(False)
