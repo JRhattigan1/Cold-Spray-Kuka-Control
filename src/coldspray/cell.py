@@ -90,3 +90,15 @@ def base_in_robot(cell: CellConfig, ext: dict | None = None, e1: float | None = 
 def table_axis_names(cell: CellConfig) -> list[str]:
     tt = cell.turntable
     return [tt.tilt.axis, tt.rotation.axis] if tt else []
+
+
+def axis_defaults(cell: CellConfig) -> dict[str, float]:
+    """Configured value of each external axis, used before a path first sets it."""
+    out = {}
+    if cell.gantry is not None:
+        out[cell.gantry.axis] = cell.gantry.position_mm
+    if cell.turntable:
+        tt = cell.turntable
+        out[tt.tilt.axis] = tt.tilt.position_deg
+        out[tt.rotation.axis] = tt.rotation.position_deg
+    return out

@@ -17,6 +17,7 @@ from dataclasses import replace
 
 import numpy as np
 
+from coldspray.cell import axis_defaults
 from coldspray.planner.solver import robot_targets
 
 JUMP_DEG = 20.0          # per sample step, while spraying
@@ -62,7 +63,7 @@ def fix_arm(path, issues, ctx):
     if not issues:
         return path
     o = ctx.opts
-    s = path.sample(o.sample_mm, o.angle_step_deg)
+    s = path.sample(o.sample_mm, o.angle_step_deg, axis_defaults(ctx.cell))
     sols = []
     for t in robot_targets(s, ctx.cell):
         v = ctx.robot.ik_all(t)

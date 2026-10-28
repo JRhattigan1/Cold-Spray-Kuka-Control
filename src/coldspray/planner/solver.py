@@ -22,7 +22,7 @@ from typing import Callable, Literal
 
 import numpy as np
 
-from coldspray.cell import base_world, robroot
+from coldspray.cell import axis_defaults, base_world, robroot
 from coldspray.toolpath.model import Toolpath
 
 
@@ -88,7 +88,7 @@ def robot_targets(samples, cell) -> np.ndarray:
 def find_issues(path: Toolpath, ctx: Context):
     """(samples, joints, issues): joints NaN where unreachable; one Issue per bad sample."""
     o = ctx.opts
-    s = path.sample(o.sample_mm, o.angle_step_deg)
+    s = path.sample(o.sample_mm, o.angle_step_deg, axis_defaults(ctx.cell))
     seed = ctx.cell.home_deg if ctx.seed is None else ctx.seed
     joints = ctx.robot.ik_path(robot_targets(s, ctx.cell), seed_deg=seed, hint=path.hint_for(s.move_index))
     issues = [Issue(i, int(s.move_index[i]), "unreachable") for i in np.flatnonzero(np.isnan(joints[:, 0]))]
@@ -109,7 +109,7 @@ def issues_in(path: Toolpath, ctx: Context, lo: int, hi: int) -> list[Issue]:
     move `lo`, so moves before `lo` must be unchanged since then (moves after
     `hi` may be added or removed). `solve` still re-checks the whole path."""
     o = ctx.opts
-    s = path.sample(o.sample_mm, o.angle_step_deg)
+    s = path.sample(o.sample_mm, o.angle_step_deg, axis_defaults(ctx.cell))
     sel = np.flatnonzero((s.move_index >= lo) & (s.move_index <= hi))
     if not len(sel):
         return []
