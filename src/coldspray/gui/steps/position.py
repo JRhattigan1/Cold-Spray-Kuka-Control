@@ -258,6 +258,7 @@ class PositionStep:
         self.scene.focus_on_part()           # Auto position only runs from its button
         self.plotter.render()
         self._status(f"{src.name} in the cell: place it, or use Auto position, then Next: Toolpath")
+        self._undo_touch(reset=True)                     # undo history starts here for this part
 
     def _start_placement(self, part):
         """Standing on the base face if one is set, else as in the CAD; centred on the table."""
@@ -345,6 +346,7 @@ class PositionStep:
                 box.blockSignals(False)
         widgets.refresh()                    # signals were blocked: update the "changed" chips
         self._enter_setup()
+        self._undo_touch()
         msg = (f"Auto position: tilt {pos.tilt_deg:.0f}°"
                + (f", E1 {pos.e1_mm:.0f} mm" if pos.e1_mm is not None else ""))
         if pos.reach < 1.0:
@@ -414,6 +416,13 @@ class PositionStep:
             self.scene.set_part_placement()
         self._show_placement()
         self._enter_setup()
+        self._undo_touch()
+
+    def _undo_touch(self, reset=False):
+        """Tell the undo history (gui/undo.py) about an edit, or a new part (`reset`)."""
+        u = getattr(self, "undo", None)
+        if u is not None:
+            u.reset() if reset else u.touch()
 
     def _show_placement(self, placement=None):
         """Fill the X..C boxes and the base-face label."""
@@ -505,6 +514,7 @@ class PositionStep:
         self.scene.set_part_placement()
         self._show_placement()
         self.sm_moved_part = True
+        self._undo_touch()
 
     # --- warm-up / powder purge point (F2) ----------------------------------------
     # `self.purge_cfg` mirrors `cell.purge` (PurgeConfig) as a dict; every edit writes it back.
