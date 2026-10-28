@@ -6,7 +6,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 from pydantic import ValidationError
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QFormLayout, QGridLayout, QMessageBox, QPushButton, QVBoxLayout,
+    QApplication, QCheckBox, QToolButton, QMenu, QComboBox, QFormLayout, QGridLayout, QMessageBox, QPushButton, QVBoxLayout,
     QHBoxLayout, QLabel, QWidget,
 )
 
@@ -529,24 +529,28 @@ class PositionStep:
         self.purge_custom = [spin(-1, 1, 0, "", decimals=3, tip=f"Custom spray direction, WORLD {a}") for a in "XYZ"]
         for axis, box_ in zip("XYZ", self.purge_custom):
             form.addRow(f"  dir {axis}", box_)
-        self.purge_save_btn = QPushButton("Save to cell.yaml")
-        self.purge_save_btn.setToolTip("Write these settings into the purge: block of cell.yaml")
-        self.purge_save_btn.clicked.connect(self._purge_save)
         form.addRow("Dwell", self.purge_dwell)
         form.addRow("Approach", self.purge_approach)
         form.addRow(self.purge_start)
         form.addRow(self.purge_end)
         form.addRow("Every", self.purge_every)
-        form.addRow(self.purge_save_btn)
-        self.purge_goto_btn = QPushButton("Move gun here")
+        # The three purge actions live in one dropdown; each QAction keeps its old *_btn name.
+        self.purge_actions_btn = QToolButton()
+        self.purge_actions_btn.setText("Purge actions")
+        self.purge_actions_btn.setPopupMode(QToolButton.InstantPopup)
+        menu = QMenu(self.purge_actions_btn)
+        self.purge_save_btn = menu.addAction("Save to cell.yaml")
+        self.purge_save_btn.setToolTip("Write these settings into the purge: block of cell.yaml")
+        self.purge_save_btn.triggered.connect(lambda *_: self._purge_save())
+        self.purge_goto_btn = menu.addAction("Move gun here")
         self.purge_goto_btn.setToolTip("Preview: put the robot at the purge pose (gantry at the current E1)")
-        self.purge_goto_btn.clicked.connect(self._purge_goto)
-        form.addRow(self.purge_goto_btn)
-        self.purge_suggest_btn = QPushButton("Suggest purge point")
+        self.purge_goto_btn.triggered.connect(lambda *_: self._purge_goto())
+        self.purge_suggest_btn = menu.addAction("Suggest purge point")
         self.purge_suggest_btn.setToolTip("Point in front of the filtration unit, spraying into it; "
                                           "stepped back until the robot reaches it")
-        self.purge_suggest_btn.clicked.connect(self._purge_suggest)
-        form.addRow(self.purge_suggest_btn)
+        self.purge_suggest_btn.triggered.connect(lambda *_: self._purge_suggest())
+        self.purge_actions_btn.setMenu(menu)
+        form.addRow(self.purge_actions_btn)
         purge_chip = Chip()
         box.add(purge_chip)
         box.add(widgets.advanced(self._holder(form), chip=purge_chip, changed=self._purge_nondefault))
