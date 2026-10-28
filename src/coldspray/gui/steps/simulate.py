@@ -2,7 +2,7 @@
 
 import numpy as np
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QCheckBox, QFrame, QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QSlider, QVBoxLayout, QWidget
 
 from coldspray.gui.checks import CheckList, export_checks, simulate_checks
 from coldspray.gui.stepper import EXPORT, SIMULATE
@@ -11,6 +11,7 @@ from coldspray.gui import widgets
 from coldspray.cad.part import build_mesh, other_mesh
 from coldspray.sim.scene import make_gun
 from coldspray.gui import style
+from coldspray.gui.progress import fit_panel
 from coldspray.gui.widgets import Chip, Section, primary_button, wrap_label
 
 CHECK_EVERY = 3        # collision-check every 3rd sampled point (~6 mm of travel)
@@ -36,6 +37,8 @@ def _tile(caption: str):
     cap.setStyleSheet(f"font-size: 11px; color: {t['muted']};")
     lay.addWidget(value)
     lay.addWidget(cap)
+    frame.setMinimumWidth(0)
+    frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
     return frame, value
 
 
@@ -88,13 +91,15 @@ class SimulateStep:
         self.sim_checks.goTo.connect(self._goto)
         checks.add(self.sim_checks)
         tiles = QWidget()
-        tiles_lay = QHBoxLayout(tiles)
+        tiles_lay = QGridLayout(tiles)     # 2 x 2: never wider than the panel
         tiles_lay.setContentsMargins(0, 0, 0, 0)
         tiles_lay.setSpacing(style.SPACE[1])
         self.stat_values = {}
-        for key, cap in (("points", "points"), ("reach", "reachable"), ("collisions", "collisions"), ("time", "time")):
+        for n, (key, cap) in enumerate((("points", "points"), ("reach", "reachable"), ("collisions", "collisions"), ("time", "time"))):
             frame, self.stat_values[key] = _tile(cap)
-            tiles_lay.addWidget(frame)
+            tiles_lay.addWidget(frame, n // 2, n % 2)
+        tiles_lay.setColumnStretch(0, 1)
+        tiles_lay.setColumnStretch(1, 1)
         checks.add(tiles)
         self.info = wrap_label("")      # toolpath summary
         checks.add(self.info)
@@ -120,6 +125,7 @@ class SimulateStep:
 
         layout.addWidget(primary_button("Next: Export  →", lambda: self.go_to(EXPORT)))
         layout.addStretch(1)
+        fit_panel(inner)
         return inner
 
     def _report(self):
@@ -189,6 +195,9 @@ class SimulateStep:
                 self.checker = CollisionChecker(robot, cell, a.meshes, gun, part, cell.robot_cad_pose_deg,
                                                 substrate=substrate, fixture=fixture)
                 self.checker_e1 = e1
+                allowed = getattr(self.checker, "allowed_text", None)   # K3; absent before its merge
+                if allowed:
+                    print(allowed())
             else:
                 self.checker.set_gun(robot, gun)
                 self.checker.set_workpiece(part, substrate, fixture)

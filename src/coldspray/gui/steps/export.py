@@ -13,6 +13,9 @@ from coldspray.models import PROJECT_ROOT
 from coldspray.post.krl import KRLError, to_krl
 
 
+from coldspray.gui.progress import fit_panel
+
+
 class ExportStep:
     def _build_export_panel(self) -> QWidget:
         inner = QWidget()
@@ -54,6 +57,7 @@ class ExportStep:
         note.setProperty("note", True)
         layout.addWidget(widgets.advanced(note))
         layout.addStretch(1)
+        fit_panel(inner)
         return inner
 
     def go_to_simulate(self):
