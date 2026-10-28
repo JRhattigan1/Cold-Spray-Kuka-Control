@@ -185,6 +185,18 @@ class SimulateStep:
         self._show_time()
 
     # --- collision checking (background) -------------------------------------------
+    def _home_first_leg(self, robot, cell, joints):
+        """Joints along HOME -> first point as the KRL moves it (a LIN when move 0 is a LIN),
+        or None (the PTP joint sweep) when move 0 is a PTP or the scene has no path."""
+        sc = self.scene
+        kinds = getattr(sc, "move_kind", None)
+        if not kinds or kinds[0] == "PTP" or not len(joints) or getattr(sc, "root_frames", None) is None:
+            return None
+        import numpy as np
+        from coldspray.planner.solver import home_first_leg
+        target0 = np.linalg.inv(sc.root_frames[0]) @ sc.base_frames[0] @ sc.samples.poses[0]
+        return home_first_leg(robot, cell.home_deg, target0, joints[0], False)
+
     def _start_collision_check(self, robot, gun, cell, part, substrate, fixture, joints):
         from coldspray.sim.collision import CollisionChecker, part_for_mode
 
@@ -211,6 +223,7 @@ class SimulateStep:
                 self.checker.set_workpiece(part, substrate, fixture)
                 self.checker.cell = cell
             return job, self.checker.check_path(joints, axes_at, every=CHECK_EVERY, home=cell.home_deg,
+                                                first_leg=first_leg,
                                                 progress=self.job.set_fraction, cancel=self.job.is_cancelled)
 
         self.job.start("Collision check...")

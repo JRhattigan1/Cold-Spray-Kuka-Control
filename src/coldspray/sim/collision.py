@@ -349,7 +349,7 @@ class CollisionChecker:
         return hits
 
     def _home_sweeps(self, joints, axes_per_sample, home, first_leg=None) -> list[tuple[int, set]]:
-        """(sample, pairs) hit on the PTP HOME -> sample 0 and sample n-1 -> HOME."""
+        """(sample, pairs) hit on HOME -> sample 0 (PTP, or `first_leg`) and the PTP sample n-1 -> HOME."""
         from coldspray.planner.solver import joint_sweep
         out = []
         first = joint_sweep(home, joints[0]) if first_leg is None else np.asarray(first_leg, float).reshape(-1, 6)

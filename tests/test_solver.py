@@ -61,7 +61,9 @@ def test_collisions_come_from_the_checker(setup):
             return {("A3", "Wall")} if q[0] > -1000 else set()      # every sample
 
     _, _, issues = find_issues(path, Context(robot, cell, checker=Checker(), log=lambda _: None))
-    assert issues and all(i.kind == "collision" and i.detail == "A3/Wall" for i in issues)
+    assert issues and all(i.kind == "collision" and i.detail.endswith("A3/Wall") for i in issues)
+    legs = [i.detail for i in issues if i.detail != "A3/Wall"]       # S9H: the HOME legs too
+    assert len(legs) == 2 and legs[0].startswith("HOME -> first") and legs[1] == "last -> HOME: A3/Wall"
 
 
 def test_solve_keeps_a_lever_only_if_it_helps(setup, monkeypatch):

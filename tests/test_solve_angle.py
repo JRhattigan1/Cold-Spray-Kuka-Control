@@ -46,7 +46,8 @@ def test_angle_offset_fixes_stretch_and_keeps_positions(setup):
             return set()
 
     ctx = _ctx(setup, Checker(), lean_max_deg=0.0)
-    _, _, issues = find_issues(path, ctx)
+    ctx.seed = np.asarray(cell.home_deg, float)   # same IK start, no HOME legs (S9H): the synthetic
+    _, _, issues = find_issues(path, ctx)         # checker would also hit the HOME -> first sweep
     assert issues, "test needs a real problem"
     out = fix_angle(path, issues, ctx)
     assert out is not path
