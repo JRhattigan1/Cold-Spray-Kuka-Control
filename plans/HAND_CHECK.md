@@ -49,6 +49,7 @@ Do this at 100 % and at 150 % Windows scaling (Settings → Display → Scale; r
 - [ ] **Undo** in Position: move the part, add a constraint, Ctrl+Z twice, Ctrl+Shift+Z: placement and rows follow. ↶ ↷ in the step bar too.
 - [ ] **Surface over a fillet** (flat face running into a blend): passes evenly spaced on the curve, not bunched.
 - [ ] **Thickness** toggle in Simulate (Revolve / Surface): coloured map with a colour bar; min/mean/max and % thin look sensible. Note how long it takes on WearPlate2.
+- [ ] **Build-up** toggle in Simulate: Layers: during playback finished layers are solid (copper) and the layer being sprayed appears track by track (two alternating shades); path lines hide; scrub back too. Revolve / Surface: the thickness map fills in as the gun passes (grey = uncoated). Playback stays smooth.
 - [ ] **Estimates**: cycle time and powder line in Simulate and above Save in Export.
 - [ ] **HOME legs**: problems on HOME → first / last → HOME show in Simulate and Solve; with move 0 a LIN, the leg is a straight line.
 - [ ] **A4/A6 wind-up** warning appears on a path that winds the wrist.

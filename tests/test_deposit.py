@@ -102,6 +102,83 @@ def test_estimate_matches_hand_count():
     assert np.isclose(e.cycle_s, estimate_time_s(path, proc))
 
 
+def test_thickness_at_replays_the_coating():
+    """keep_steps: thickness_at(t) grows with program time to the final map, forwards and back,
+    and the spray samples' times agree with the playback clock (gui.timeline.sample_times)."""
+    from coldspray.gui.timeline import sample_times
+    from coldspray.sim.deposit import spray_samples
+
+    proc = _proc(spray_settle_s=1.5)
+    v, f = _plate(60, 60)
+    path = plate_raster(proc, 60, 60)
+    dep = thickness(v, f, path, proc, keep_steps=True)
+    end = sample_times(path, path.sample(2.0), proc)[-1]
+    assert np.allclose(dep.thickness_at(end + 1), dep.thickness)
+    half = dep.thickness_at(end / 2).copy()
+    assert 0 < half.sum() < dep.thickness.sum()
+    assert dep.thickness_at(0).sum() == 0
+    assert np.allclose(dep.thickness_at(end / 2), half)          # forwards again from 0
+    dep.thickness_at(end + 1)
+    assert np.allclose(dep.thickness_at(end / 2), half)          # back from the end
+    assert thickness(v, f, path, proc).steps is None
+    *_, at = spray_samples(path, proc, times=True)
+    assert at.min() >= 0 and abs(at.max() - end) < 0.5
+
+
+def test_build_up_view():
+    """Scene.set_build_up: finished layers solid, the layer being sprayed track by track;
+    the thickness map follows playback."""
+    import pyvista as pv
+
+    from coldspray.cad.part import build_frame, build_mesh
+    from coldspray.kinematics.robot import Robot
+    from coldspray.cell import robroot
+    from coldspray.models import load_cell, load_robot, load_tool
+    from coldspray.pipeline import load_part, plan_part
+    from coldspray.sim.viewer import Scene
+
+    part, proc, cell = load_part("test_block"), load_process(), load_cell()
+    _, path = plan_part(part, proc, "layers", cell=cell)
+    pl = pv.Plotter(off_screen=True)
+    scene = Scene(pl, Robot(load_robot(), load_tool()), robroot(cell))
+    scene.set_path(path, cell, part=build_mesh(part), step=5.0)
+    scene.set_build_up(build_frame(part), proc.standoff_mm, proc.layer_thickness_mm, proc.step_over_mm)
+    assert not any(a.GetVisibility() for a in scene.line_actors)        # path lines hidden
+    h = scene.build_heights
+    assert np.isinf(h[0]) and np.all(np.diff(h[np.isfinite(h)]) >= 0)
+    top = np.ptp(build_mesh(part)[0][:, 2])
+    assert abs(h[-1] - (top - proc.layer_thickness_mm)) < 1e-6      # bottom of the last layer
+    # part way through the second layer: the first is solid, some tracks of the second are down
+    second = np.flatnonzero(h == proc.layer_thickness_mm)
+    j = scene._layer_tracks(proc.layer_thickness_mm)[0]
+    mid = int(j[len(j) // 2])
+    assert second[0] <= mid
+    scene.show_point(mid)
+    lo, hi = scene._built_mesh.bounds.z_min, scene._built_mesh.bounds.z_max
+    assert scene.build_actor.GetVisibility() and abs((hi - lo) - proc.layer_thickness_mm) < 1e-3
+    n_mid = sum(m.n_cells for m in scene._track_meshes)
+    assert n_mid == 3 * (len(j) // 2 + 1)
+    assert all(a.GetVisibility() for a in scene.track_actors)        # both shades in use
+    scene.show_point(int(j[-1]))
+    assert sum(m.n_cells for m in scene._track_meshes) == 3 * len(j)
+    scene.show_point(0)
+    assert not scene.build_actor.GetVisibility() and not any(a.GetVisibility() for a in scene.track_actors)
+    scene.set_build_up(None)
+    assert scene.build_actor is None and all(a.GetVisibility() for a in scene.line_actors)
+    # coating: the map follows the shown point
+    v, f = build_mesh(part)
+    dep = thickness(v, f, path, proc, keep_steps=True)
+    from coldspray.gui.timeline import sample_times
+    times = sample_times(path, scene.samples, proc)
+    scene.set_thickness(dep, times=times)
+    scene.show_point(scene.n_points - 1)
+    last = np.array(scene._thickness_mesh.cell_data["thickness"])
+    assert np.allclose(last, dep.thickness)
+    scene.show_point(mid)
+    assert np.array(scene._thickness_mesh.cell_data["thickness"]).sum() < last.sum()
+    pl.close()
+
+
 def test_tube_is_fast():
     import time
 
@@ -149,6 +226,12 @@ def test_simulate_thickness_toggle_and_estimates(tmp_path, monkeypatch):
         assert w.scene.THICKNESS_BAR in w.plotter.scalar_bars
         w.thickness_box.setChecked(False)
         assert w.scene.thickness_actor is None and w.scene.THICKNESS_BAR not in w.plotter.scalar_bars
+        w.build_box.setChecked(True)                   # coating builds up with playback
+        assert w.scene.thickness_follow is not None and w.deposit[1].steps is not None
+        w._goto(0)
+        w._goto(w.scene.n_points - 1)
+        w.build_box.setChecked(False)
+        assert w.scene.thickness_actor is None
     finally:
         w.pool.shutdown(wait=False)
         w.close()

@@ -2,6 +2,11 @@
 
 **Start here.** Where each feature stands is in [ROADMAP.md](ROADMAP.md), and what the app does is in [README.md](../README.md). Each agent's detail is in `plans/reports/<ID>-1.md` on its branch (`git show wp/<ID>:plans/reports/<ID>-1.md`; the session 5 worktrees are removed). Older hand-offs are in git history.
 
+## Session 10 (2026-10-28): Build-up toggle (on main, not committed)
+- Simulate **Build-up** checkbox (under Thickness). Layers: finished layers solid (copper, part cut at the layer being sprayed), that layer's contour/infill tracks appear as the gun passes (step-over wide, one layer high, two alternating shades); path lines hidden, target part faded. Other modes: thickness map follows playback (final scale). Thickness map: uncoated now grey.
+- Files: `sim/deposit.py` (`thickness(keep_steps=)`, `Deposit.thickness_at`, `spray_samples(times=)`), `sim/viewer.py` (`set_build_up`, `_layer_tracks`, `set_thickness(times=)`; `BUILT`/`TRACKS`/`UNCOATED`), `gui/steps/simulate.py`, `tests/test_deposit.py` (2 new tests + GUI toggle), HAND_CHECK.
+- Limits: strips are flat; turns not drawn as strips; overrun lost once a layer is finished (solid = part shape); deposit steps kept in memory (grows with path length); thickness/build-up still on the GUI thread.
+
 ## Session 9 (2026-10-28): all merged
 User asked: fix known bugs, add day-to-day features, housekeeping (robot T1 not possible yet). Everything is merged to main; see ROADMAP.md (rewritten).
 | merge / commit | what |
@@ -28,7 +33,7 @@ User asked: fix known bugs, add day-to-day features, housekeeping (robot T1 not 
 **Cleanup left for the user (blocked by the permission check):** `git branch -D wp/KM-K1`; `git worktree remove --force` on `C:/Users/qrb21117/worktrees/cs-S8B` and `cs-U20` (throwaway untracked files only), then `git branch -d wp/S8B wp/U20`; delete merged `wp/S9*` branches and worktrees (remove each `assets` junction with `cmd /c rmdir` first); pause OneDrive and `git worktree prune`. Remote `surface-patterns` still exists (merged).
 
 ## To do, in order
-1. **By-hand check:** [HAND_CHECK.md](HAND_CHECK.md) (add: Job save/open, undo, thickness toggle, estimates, Export spray-by-hand and split).
+1. **By-hand check:** [HAND_CHECK.md](HAND_CHECK.md) (add: Job save/open, undo, thickness toggle, estimates, Export spray-by-hand and split; **Build-up** toggle, session 10).
 2. **Decide (user):** S9F findings above (HOME at E1 2730, E1 5500 wall, purge example, elbow-up IK weighting).
 3. **Arcs in T1** (test_block, arcs on): orientation along CIRC with `#PATH`, C_DIS blending, `$VEL.CP`, `$CIRC_TYPE` inside split `_Pnn`. CIRC on a turning table is a 2-LIN chord (short arcs only).
 4. **Calibrate:** thickness model and `powder_feed_g_min` against a sprayed coupon; `cable_windup_deg` from the cable dressing.

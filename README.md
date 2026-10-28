@@ -127,6 +127,11 @@ stays at the bottom of its panel while the panel scrolls.
    approach / jump / purge moves, and E1 per layer (±1000 mm; a change of E1 is
    written as a PTP). What it can't fix is listed and Save stays disabled. The
    **Before the robot** list collects what still has to be checked on the cell.
+   **Thickness** colours the part by predicted coating thickness (grey = none).
+   **Build-up** shows material going down during playback: in Layers, finished
+   layers solid (copper) and the layer being sprayed track by track in two
+   alternating shades (path lines hidden);
+   in other modes the thickness map fills in as the gun passes.
 5. **Export** - shows the BASE / TOOL numbers (the part's KRL base when one is
    picked), spray output and turntable mode, then saves the KRL `.src`. Open
    items from the Before the robot list are confirmed once before saving.

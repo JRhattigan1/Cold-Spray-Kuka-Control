@@ -40,6 +40,9 @@ BUILD_FACE = "#2bb673"
 CONSTRAINT_FACE = "#8e24aa"  # part faces of the selected constraint row
 OUT_OF_DATE = "#e37400"
 STEEP = "#f2b600"          # gun pointing further down than allowed
+BUILT = "#b87a4b"          # Build-up: finished layers (copper)
+TRACKS = ("#f28c28", "#ffd27a")   # ... tracks of the layer being sprayed, alternating stroke by stroke
+UNCOATED = "#d5dbe0"       # thickness map: no coating yet
 # Point markers on the toolpath, each can be hidden: kind -> (colour, point size)
 MARKERS = {"collision": (CRASH, 12), "unreachable": (BAD, 10), "steep": (STEEP, 7)}
 
@@ -116,6 +119,13 @@ class Scene:
         self.section_axis = "x"
         self.follow = False
         self.static_actor = None
+        self.part_build = None           # build body (vertices, faces) in BASE, from set_path
+        self.build_actor = None          # Layers build-up: the part cut at the height built so far
+        self.track_actors = None         # ... and the tracks of the layer being sprayed (one per shade)
+        self.part_ghost = None           # the translucent part drawn with the path
+        self.build_heights = None        # ... per sample (build frame mm, -inf before the first layer)
+        self.thickness_actor = None
+        self.thickness_follow = None     # (Deposit, program time per sample): the map follows playback
 
         # setup mode: part (drawn in part-CAD coordinates), build face, substrate, drag handles
         self.part = None
@@ -514,6 +524,8 @@ class Scene:
         self.n_layers = 0
         self.layer_of = np.zeros(0, int)
         self.collisions = {}
+        self.build_actor = self.build_heights = self.track_actors = self.part_ghost = None
+        self.thickness_actor = self.thickness_follow = None
 
     def set_path(self, path: Toolpath, cell: CellConfig, part=None, plate_size=None, step=5.0, home=None,
                  angle_step=2.0, substrate=None, gun_limit_deg=None, fixture=None,
@@ -565,8 +577,10 @@ class Scene:
             substrate = plate_box(plate_size)
         if substrate is not None:
             add(self.pl.add_mesh(_polydata(*substrate), color=SUBSTRATE))
+        self.part_build = part
         if part is not None:
-            add(self.pl.add_mesh(_polydata(*part), color=PART, opacity=0.4))
+            self.part_ghost = self.pl.add_mesh(_polydata(*part), color=PART, opacity=0.4)
+            add(self.part_ghost)
         if fixture is not None:
             add(self.pl.add_mesh(_polydata(*fixture), color=FIXTURE))
         self.build_dir = np.array([0.0, 0.0, 1.0]) if build_dir is None else np.asarray(build_dir, float)
@@ -618,16 +632,18 @@ class Scene:
     # --- predicted coating thickness (sim/deposit.py) ------------------------------------
     THICKNESS_BAR = "Thickness (mm)"
 
-    def set_thickness(self, deposit=None):
+    def set_thickness(self, deposit=None, times=None):
         """Colour the part by predicted coating thickness (a sim.deposit.Deposit, per
         triangle) with a colour bar; None removes it. Drawn as its own actor just off
-        the (translucent) part, riding with the faceplate like the path."""
+        the (translucent) part, riding with the faceplate like the path. With `times`
+        (program time s per sample; the deposit made with keep_steps) the colours show
+        the coating laid down by the shown point, on the final scale."""
         old = getattr(self, "thickness_actor", None)
         if old is not None:
             self.pl.remove_actor(old)
             if old in self.path_actors:
                 self.path_actors.remove(old)
-        self.thickness_actor = None
+        self.thickness_actor = self.thickness_follow = None
         if self.THICKNESS_BAR in getattr(self.pl, "scalar_bars", {}):
             self.pl.remove_scalar_bar(self.THICKNESS_BAR)
         if deposit is None or self.mode != "preview":
@@ -639,14 +655,133 @@ class Scene:
         mesh.points = mesh.points + 0.2 * normals.point_data["Normals"]     # just above the part
         hi = float(deposit.thickness.max()) or 1.0
         actor = self.thickness_actor = self.pl.add_mesh(
-            mesh, scalars="thickness", cmap="viridis", clim=(0.0, hi), show_scalar_bar=True,
+            mesh, scalars="thickness", cmap="viridis", clim=(0.01 * hi, hi), below_color=UNCOATED,
+            show_scalar_bar=True,
             scalar_bar_args={"title": self.THICKNESS_BAR, "vertical": True, "fmt": "%.2f",
                              "position_x": 0.86, "position_y": 0.25, "height": 0.5, "width": 0.06})
         actor.SetPickable(False)
         if hasattr(self, "current") and len(getattr(self, "base_frames", ())):
             actor.user_matrix = self.base_frames[min(self.current, len(self.base_frames) - 1)]
         self.path_actors.append(actor)
+        self._thickness_mesh = mesh
+        if times is not None and deposit.steps is not None and len(times) == self.n_points:
+            self.thickness_follow = (deposit, np.asarray(times, float))
+            self._show_build_up(getattr(self, "current", 0))
+        self._apply_section()
         return actor
+
+    # --- build-up during playback -------------------------------------------------------
+    def set_build_up(self, build_frame=None, standoff_mm=0.0, layer_mm=0.0, track_mm=0.0):
+        """Layers mode: draw the material laid down so far, track by track in playback.
+        Finished layers are the part cut at the bottom of the layer being sprayed (solid);
+        that layer's contour and infill tracks appear as the gun passes, as strips
+        `track_mm` wide and one layer high, alternating two shades so neighbours read
+        apart. `build_frame`: BASE <- build frame (layers stack along its +Z from z = 0,
+        the nozzle standoff_mm above the layer's bottom); None removes it."""
+        for a in (self.build_actor, *(self.track_actors or ())):
+            if a is not None:
+                self.pl.remove_actor(a)
+                if a in self.path_actors:
+                    self.path_actors.remove(a)
+        self.build_actor = self.track_actors = self.build_heights = None
+        self._fade_path(False)
+        if build_frame is None or self.part_build is None or self.mode != "preview" or not self.n_points:
+            return None
+        frame = np.asarray(build_frame, float)
+        d, o = frame[:3, 2], frame[:3, 3]
+        pts = self.samples.poses[:, :3, 3]
+        bottom = (pts - o) @ d - standoff_mm                 # bottom of the layer sprayed at each sample
+        if layer_mm > 0:
+            bottom = np.round(bottom / layer_mm) * layer_mm  # tilted contours sit a little off
+        on = np.asarray(self.gun_on, bool)
+        spraying = on & np.isin(self.tags, ("contour", "infill", "turn"))
+        self.build_heights = np.maximum.accumulate(np.where(spraying, bottom, -np.inf))  # finished up to here
+        # track segments (previous sample -> this one) on one layer, and the stroke each belongs to
+        track = on & np.isin(self.tags, ("contour", "infill"))
+        seg = np.zeros(len(pts), bool)
+        seg[1:] = track[1:] & spraying[:-1] & (np.abs(bottom[1:] - bottom[:-1]) < 1e-6)
+        new = np.r_[True, ~seg[1:] | (self.tags[1:] != self.tags[:-1])]
+        self._tracks = dict(d=d, o=o, bottom=bottom, seg=seg, stroke=np.cumsum(new & seg), pts=pts,
+                            layer=float(layer_mm), width=float(track_mm or layer_mm or 1.0), cache=None)
+        self._build_plane = (d, o)
+        self._part_poly = _polydata(*self.part_build).clean()
+        self._built_mesh, self._built_h = self._part_poly.copy(), None
+        self._track_meshes, self._track_k = [self._part_poly.copy() for _ in TRACKS], None
+        m = self.base_frames[min(getattr(self, "current", 0), self.n_points - 1)]
+        self.build_actor = self.pl.add_mesh(self._built_mesh, color=BUILT)
+        self.track_actors = [self.pl.add_mesh(mesh, color=c) for mesh, c in zip(self._track_meshes, TRACKS)]
+        for a in (self.build_actor, *self.track_actors):
+            a.SetPickable(False)
+            a.user_matrix = m
+            self.path_actors.append(a)
+        self._fade_path(True)
+        self._apply_section()
+        self._show_build_up(getattr(self, "current", 0))
+        return self.build_actor
+
+    def _fade_path(self, on: bool):
+        """While building up, the path lines hide and the target part fades back so the material reads."""
+        for a in self.line_actors:
+            a.SetVisibility(not on)
+        if self.part_ghost is not None:
+            self.part_ghost.GetProperty().SetOpacity(0.15 if on else 0.4)
+
+    def _layer_tracks(self, h: float):
+        """(segment sample indices, points, quad faces, shade per segment) of the tracks on
+        the layer with bottom `h`: per segment the top and both sides of a strip."""
+        t = self._tracks
+        if t["cache"] is not None and t["cache"][0] == h:
+            return t["cache"][1]
+        j = np.flatnonzero(t["seg"] & (np.abs(t["bottom"] - h) < 1e-6))
+        d, o, p = t["d"], t["o"], t["pts"]
+        a = p[j - 1] - np.outer((p[j - 1] - o) @ d - h, d)   # on the layer's bottom plane
+        b = p[j] - np.outer((p[j] - o) @ d - h, d)
+        side = np.cross(d, b - a)
+        n = np.linalg.norm(side, axis=1)
+        side = side / np.where(n > 1e-9, n, 1.0)[:, None] * (t["width"] / 2)
+        up = d * t["layer"]
+        corners = [a - side, a + side, a - side + up, a + side + up,
+                   b - side, b + side, b - side + up, b + side + up]
+        points = np.stack(corners, 1).reshape(-1, 3)
+        quads = np.array([[2, 3, 7, 6], [0, 2, 6, 4], [1, 5, 7, 3]])          # top, left, right
+        idx = 8 * np.arange(len(j))[:, None, None] + quads[None]
+        faces = np.concatenate([np.full((len(j), 3, 1), 4), idx], axis=2).reshape(len(j), -1)
+        out = (j, points, faces, t["stroke"][j] % len(TRACKS))
+        t["cache"] = (h, out)
+        return out
+
+    def _show_build_up(self, i: int):
+        """Build-up at sample i: the Layers material and / or the thickness map so far."""
+        if self.thickness_follow is not None and self.thickness_actor is not None:
+            dep, times = self.thickness_follow
+            arr = self._thickness_mesh.cell_data["thickness"]
+            arr[:] = dep.thickness_at(times[i])
+            self._thickness_mesh.Modified()
+        if self.build_actor is None:
+            return
+        h = float(self.build_heights[i])
+        if h != self._built_h:
+            self._built_h = h
+            d, o = self._build_plane
+            cut = pv.PolyData()
+            if np.isfinite(h):
+                try:                     # capped; needs a closed mesh
+                    cut = self._part_poly.clip_closed_surface(normal=tuple(-d), origin=tuple(o + d * h))
+                except ValueError:
+                    cut = self._part_poly.clip(normal=tuple(d), origin=tuple(o + d * h), invert=True)
+            self._built_mesh.copy_from(cut)
+            self.build_actor.SetVisibility(cut.n_cells > 0)
+        k = 0
+        if np.isfinite(h):
+            j, points, faces, shade = self._layer_tracks(h)
+            k = int(np.searchsorted(j, i, side="right"))
+        if (h, k) == self._track_k:
+            return
+        self._track_k = (h, k)
+        for n, (mesh, actor) in enumerate(zip(self._track_meshes, self.track_actors)):
+            mine = faces[:k][shade[:k] == n] if k else ()
+            mesh.copy_from(pv.PolyData(points, mine.ravel()) if len(mine) else pv.PolyData())
+            actor.SetVisibility(len(mine) > 0)
 
     def _update_summary(self):
         bad = int((~self.reachable).sum())
@@ -675,6 +810,7 @@ class Scene:
             self.set_placement(self.root_frames[i], np.asarray(self.cell_cfg.gantry.direction) * self.e1[i])
         for a in self.path_actors:
             a.user_matrix = self.base_frames[i]
+        self._show_build_up(i)
         table = "  ".join(f"{k} {v:.1f}" for k, v in axes.items())
         if not self.reachable[i]:
             self.status.SetText(2, f"point {i}: UNREACHABLE   {table}")
@@ -853,6 +989,7 @@ class Scene:
                 actor.SetPickable(False)
                 if hasattr(self, "current"):
                     actor.user_matrix = self.base_frames[min(self.current, len(pts) - 1)]
+                actor.SetVisibility(self.build_actor is None)
                 self.line_actors.append(actor)
                 self.path_actors.append(actor)
 

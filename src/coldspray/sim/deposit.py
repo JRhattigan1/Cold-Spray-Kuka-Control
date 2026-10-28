@@ -29,7 +29,7 @@ computed per triangle (at its centroid), so area-weighted statistics are exact
 sums over the triangles.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 from scipy.spatial import cKDTree
@@ -82,8 +82,9 @@ def refine(vertices, faces, max_edge: float, max_triangles: int = MAX_TRIANGLES)
 
 
 # --- spray samples --------------------------------------------------------------
-def spray_samples(path, proc, step: float | None = None):
-    """(positions (n,3), spray dirs (n,3), seconds (n,)) of the gun while spraying.
+def spray_samples(path, proc, step: float | None = None, times: bool = False):
+    """(positions (n,3), spray dirs (n,3), seconds (n,)) of the gun while spraying,
+    plus with `times` the program time (s) at each, as gui.timeline.sample_times counts it.
 
     The path is sampled every ~sigma (ripple < 1%); each sample carries the time spent
     reaching it (distance / move speed), plus spray_settle_s where the spray
@@ -102,6 +103,7 @@ def spray_samples(path, proc, step: float | None = None):
         d = np.linalg.norm(np.diff(pts, axis=0), axis=1)
         sp = speed[idx[1:]]
         dt[1:] = np.divide(d, sp, out=np.zeros_like(d), where=sp > 0)
+    arrive = np.cumsum(dt)               # travel only; settles added below, dwells not counted
     on = on_m[idx].copy()
     # dwells at the end of a move: the move's last sample
     last = np.flatnonzero(np.r_[idx[1:] != idx[:-1], True])
@@ -111,8 +113,14 @@ def spray_samples(path, proc, step: float | None = None):
     sw = first[on_m[idx[first]] & ~on_m[idx[first - 1]]]
     keep = on & (dt > 0)
     settle = np.full(len(sw), float(proc.spray_settle_s))
-    return (np.vstack([pts[keep], pts[sw - 1]]), np.vstack([dirs[keep], dirs[sw - 1]]),
-            np.concatenate([dt[keep], settle]))
+    out = (np.vstack([pts[keep], pts[sw - 1]]), np.vstack([dirs[keep], dirs[sw - 1]]),
+           np.concatenate([dt[keep], settle]))
+    if not times:
+        return out
+    n_sw = np.zeros(len(s))
+    n_sw[sw] = 1.0
+    arrive = arrive + proc.spray_settle_s * np.cumsum(n_sw)
+    return (*out, np.concatenate([arrive[keep], arrive[sw - 1] + settle]))
 
 
 # --- thickness ------------------------------------------------------------------
@@ -122,6 +130,25 @@ class Deposit:
     faces: np.ndarray
     thickness: np.ndarray     # per triangle, mm
     area: np.ndarray          # per triangle, mm^2
+    steps: tuple | None = None    # keep_steps: (program time s, triangle, mm) per contribution, by time
+    _cursor: tuple | None = field(default=None, repr=False, compare=False)   # (k, sum of the first k)
+
+    def thickness_at(self, t: float) -> np.ndarray:
+        """Per-triangle thickness (mm) laid down by program time `t` (needs keep_steps).
+        Moves a running sum from the last call, so stepping through playback is cheap.
+        The returned array is reused by the next call."""
+        times, tri, w = self.steps
+        k = int(np.searchsorted(times, t, side="right"))
+        k0, acc = self._cursor or (0, np.zeros(len(self.faces)))
+        if k < k0 - k:                   # far back: start again
+            k0, acc = 0, np.zeros(len(self.faces))
+        if k > k0:
+            acc += np.bincount(tri[k0:k], w[k0:k], minlength=len(acc))
+        elif k < k0:
+            acc -= np.bincount(tri[k:k0], w[k:k0], minlength=len(acc))
+            np.clip(acc, 0.0, None, out=acc)
+        self._cursor = (k, acc)
+        return acc
 
     def stats(self, floor: float = 0.1) -> dict:
         """Area-weighted min / mean / max over the sprayed area (triangles above
@@ -138,9 +165,12 @@ class Deposit:
                 "area_mm2": float(am.sum())}
 
 
-def thickness(vertices, faces, path, proc, refine_to: float | None = None, cosine: bool = True) -> Deposit:
+def thickness(vertices, faces, path, proc, refine_to: float | None = None, cosine: bool = True,
+              keep_steps: bool = False) -> Deposit:
     """Predicted coating thickness (mm) on the mesh (BASE coordinates, the same
-    frame as the toolpath poses) after running `path`. See the module notes."""
+    frame as the toolpath poses) after running `path`. See the module notes.
+    `keep_steps` also keeps every contribution with its program time, for
+    Deposit.thickness_at (the coating building up during playback)."""
     sig = sigma_mm(proc)
     v, f = refine(vertices, faces, refine_to or 1.5 * sig)
     p = v[f]
@@ -149,7 +179,8 @@ def thickness(vertices, faces, path, proc, refine_to: float | None = None, cosin
     area2 = np.linalg.norm(n, axis=1)
     n = n / np.where(area2 > 0, area2, 1.0)[:, None]
     out = np.zeros(len(f))
-    pos, dirs, dt = spray_samples(path, proc)
+    pos, dirs, dt, at = spray_samples(path, proc, times=True)
+    steps = []
     if len(dt) and len(f):
         dirs = dirs / np.linalg.norm(dirs, axis=1)[:, None]
         aim = pos + dirs * proc.standoff_mm
@@ -170,7 +201,15 @@ def thickness(vertices, faces, path, proc, refine_to: float | None = None, cosin
                 w *= np.clip(-np.einsum("ij,ij->i", n[j], dirs[i]), 0.0, None)
             w[ax <= 0] = 0.0
             out += np.bincount(j, w, minlength=len(f))
-    return Deposit(v, f, out, 0.5 * area2)
+            if keep_steps:
+                m = w > 0
+                steps.append((at[i[m]], j[m].astype(np.int32), w[m]))
+    kept = None
+    if keep_steps:
+        t, j, w = (np.concatenate(x) for x in zip(*steps)) if steps else (np.zeros(0), np.zeros(0, np.int32), np.zeros(0))
+        order = np.argsort(t, kind="stable")
+        kept = (t[order], j[order], w[order])
+    return Deposit(v, f, out, 0.5 * area2, kept)
 
 
 # --- estimates ------------------------------------------------------------------

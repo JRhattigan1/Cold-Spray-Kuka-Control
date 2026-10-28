@@ -8,7 +8,7 @@ from coldspray.gui.checks import CheckList, export_checks, simulate_checks
 from coldspray.gui.stepper import EXPORT, SIMULATE
 from coldspray.gui.timeline import PlaybackControls, Timeline, sample_times
 from coldspray.gui import widgets
-from coldspray.cad.part import build_mesh, other_mesh, placed_vertices
+from coldspray.cad.part import build_frame, build_mesh, other_mesh, placed_vertices
 from coldspray.sim.deposit import estimate, thickness
 from coldspray.sim.scene import make_gun
 from coldspray.gui import style
@@ -56,10 +56,15 @@ def capsule(btn):
 THICKNESS_TIP = ("Colour the part by predicted coating thickness: Gaussian track (track width = FWHM),\n"
                  "scaled so one layer of passes at the step-over and traverse speed gives the layer\n"
                  "thickness. No shadowing. Not for Layers mode (the part is what is built).")
+BUILD_UP_TIP = ("Show material building up during playback, track by track. Layers: finished layers\n"
+                "solid (copper), the layer being sprayed as tracks in two alternating shades; the path\n"
+                "lines hide. Other modes: the thickness map shows the coating laid down so far\n"
+                "(final colour scale; grey = no coating yet).")
 
 
 class SimulateStep:
-    deposit = None           # (toolpath, sim.deposit.Deposit) shown by the Thickness toggle
+    deposit = None           # (toolpath, sim.deposit.Deposit) shown by the Thickness / Build-up toggles
+    deposit_view_path = None # the toolpath those toggles were set for
     solve_future = None      # background "Solve problems" run
     solve_report = None      # its SolveReport (None until run; cleared by Generate)
     solve_lines = ()         # solver log lines (appended by the worker)
@@ -119,6 +124,10 @@ class SimulateStep:
         self.thickness_box.setToolTip(THICKNESS_TIP)
         self.thickness_box.toggled.connect(self._show_thickness)
         checks.add(self.thickness_box)
+        self.build_box = QCheckBox("Build-up")
+        self.build_box.setToolTip(BUILD_UP_TIP)
+        self.build_box.toggled.connect(self._show_thickness)
+        checks.add(self.build_box)
         self.thickness_info = wrap_label("")
         self.thickness_info.setProperty("note", True)
         checks.add(self.thickness_info)
@@ -201,34 +210,59 @@ class SimulateStep:
 
     # --- predicted thickness ------------------------------------------------------------
     def _thickness_path_check(self):
-        """Drop the thickness view once the toolpath changes; Layers mode has none."""
+        """Turn the Thickness and Build-up views off once the toolpath changes; Layers mode
+        has no thickness map."""
         path = self.result[0] if self.result is not None else None
         layers = getattr(self, "result_mode", None) == "layers"
         self.thickness_box.setEnabled(path is not None and not layers)
+        self.build_box.setEnabled(path is not None)
         if self.deposit is not None and self.deposit[0] is not path:
             self.deposit = None
-            self.thickness_box.blockSignals(True)
-            self.thickness_box.setChecked(False)
-            self.thickness_box.blockSignals(False)
+        if self.deposit_view_path is not None and self.deposit_view_path is not path:
+            self.deposit_view_path = None
+            for box in (self.thickness_box, self.build_box):
+                box.blockSignals(True)
+                box.setChecked(False)
+                box.blockSignals(False)
             self.scene.set_thickness(None)
+            self.scene.set_build_up(None)
             self.thickness_info.setText("")
 
-    def _show_thickness(self, on):
-        if self.result is None or not on:
+    def _show_thickness(self, _on=None):
+        """Thickness: the final coating. Build-up: the part growing layer by layer (Layers)
+        or the coating laid down by the shown point (other modes)."""
+        build = self.build_box.isChecked()
+        layers = getattr(self, "result_mode", None) == "layers"
+        thick = (self.thickness_box.isChecked() or build) and not layers
+        if self.result is None or not (thick or build):
             self.scene.set_thickness(None)
+            self.scene.set_build_up(None)
             self.thickness_info.setText("")
             self.plotter.render()
             return
         path, proc, _, _ = self.result
-        if self.deposit is None or self.deposit[0] is not path:
+        self.deposit_view_path = path
+        if build and layers:
+            self.scene.set_build_up(build_frame(self.part), proc.standoff_mm, proc.layer_thickness_mm,
+                                    proc.step_over_mm)
+        else:
+            self.scene.set_build_up(None)
+        if not thick:
+            self.scene.set_thickness(None)
+            self.thickness_info.setText("")
+            self.plotter.render()
+            return
+        if self.deposit is None or self.deposit[0] is not path or (build and self.deposit[1].steps is None):
             QApplication.setOverrideCursor(Qt.WaitCursor)
             try:
-                dep = thickness(placed_vertices(self.part), self.part.faces, path, proc)
+                dep = thickness(placed_vertices(self.part), self.part.faces, path, proc, keep_steps=build)
             finally:
                 QApplication.restoreOverrideCursor()
             self.deposit = (path, dep)
         dep = self.deposit[1]
-        self.scene.set_thickness(dep)
+        if build and (self.times is None or len(self.times) != self.scene.n_points):
+            self.times = sample_times(path, self.scene.samples, proc)
+        self.scene.set_thickness(dep, times=self.times if build else None)
         st = dep.stats()
         self.thickness_info.setText(
             f"Predicted thickness: min {st['min']:.2f} · mean {st['mean']:.2f} · max {st['max']:.2f} mm<br>"
