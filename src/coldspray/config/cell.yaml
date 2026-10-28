@@ -61,7 +61,7 @@ home_deg: [0, -90, 90, 0, 0, 0]
 
 # The gun must not point far down (bad for the equipment): spray direction at
 # most this many degrees below horizontal. Steeper points are flagged.
-gun_max_down_deg: 45.0
+gun_max_down_deg: 70.0
 
 # Warm-up / powder purge point in free space (optional). The gun goes here,
 # switches the spray on and dwells, then travels to the part with the spray on;

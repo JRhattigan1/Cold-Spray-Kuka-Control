@@ -167,14 +167,6 @@ def spiral(region, proc, layer_index: int, start=None) -> list[np.ndarray]:
     return out
 
 
-def crosshatch(region, proc, layer_index: int, start=None) -> list[np.ndarray]:
-    """Alternate perpendicular full-density rasters layer by layer (0/90, then rotated
-    by `raster_angle_step_deg` every pair of layers)."""
-    angle = (proc.raster_start_deg + 90 * (layer_index % 2)
-             + (layer_index // 2) * proc.raster_angle_step_deg) % 180
-    return _order(raster_segments(region, proc.step_over_mm, angle), _start(start))
-
-
 def islands(region, proc, layer_index: int, start=None) -> list[np.ndarray]:
     """Checkerboard tiles, neighbouring tiles rastered at 90 degrees to each other, to
     break up long tracks and reduce residual stress. The board shifts half a tile per layer."""
@@ -203,6 +195,5 @@ PATTERNS = {
     "oneway": oneway,
     "concentric": concentric,
     "spiral": spiral,
-    "crosshatch": crosshatch,
     "islands": islands,
 }

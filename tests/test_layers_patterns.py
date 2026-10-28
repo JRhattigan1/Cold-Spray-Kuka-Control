@@ -32,3 +32,16 @@ def test_every_pattern_plans_on_builtin_parts(part, pattern):
 def test_patterns_change_the_infill(part):
     counts = {p: sum(m.tag == "infill" for m in plan_part(part, _proc(p))[1].moves) for p in PATTERNS}
     assert len(set(counts.values())) > 1, counts
+
+
+def test_gun_stays_on_between_layers_without_a_jump():
+    part = load_part("test_block")
+    cell = None
+    for h, stays in ((0.0, True), (20.0, False)):
+        proc = load_process().model_copy(update={"jump_height_mm": h})
+        moves = plan_part(part, proc, "layers")[1].moves
+        on = [m.gun_on for m in moves]
+        first, last = on.index(True), len(on) - 1 - on[::-1].index(True)
+        gaps = [i for i in range(first, last) if not on[i]]
+        assert (not gaps) == stays
+        assert not moves[-1].gun_on

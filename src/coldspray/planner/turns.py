@@ -16,7 +16,7 @@ from shapely.ops import unary_union
 
 from coldspray.sim.datums import datum_plane
 
-RASTER_PATTERNS = ("zigzag", "oneway", "crosshatch", "islands")
+RASTER_PATTERNS = ("zigzag", "oneway", "islands")
 
 
 def parse_plane(spec: str):

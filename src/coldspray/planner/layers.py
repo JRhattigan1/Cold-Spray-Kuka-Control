@@ -88,9 +88,10 @@ def plan_layers(layers: list[Layer], proc: ProcessConfig, name="part", table_axe
         first = strokes[0][0]
         kind = "PTP" if not path.moves else "LIN"
         clear = proc.approach_height_mm if kind == "PTP" else proc.jump_height_mm   # into the job / between layers
-        path.moves.append(Move(pose(0, 0, z + clear), proc.rapid_speed_mm_s, kind=kind,
+        keep_on = kind == "LIN" and proc.jump_height_mm == 0    # layer to layer with no lift: gun stays on
+        path.moves.append(Move(pose(0, 0, z + clear), proc.rapid_speed_mm_s, kind=kind, gun_on=keep_on,
                                axes=dict(table_axes or {}) if kind == "PTP" else {}, tag="approach"))
-        path.moves.append(Move(pose(0, 0, z), proc.rapid_speed_mm_s, tag="approach"))
+        path.moves.append(Move(pose(0, 0, z), proc.rapid_speed_mm_s, gun_on=keep_on, tag="approach"))
         here, last_ki = first, (0, 0)                           # aim point of the last move
         for k, stroke in enumerate(strokes):
             if np.linalg.norm(stroke[0] - here) > 1.5 * proc.step_over_mm:
@@ -107,8 +108,9 @@ def plan_layers(layers: list[Layer], proc: ProcessConfig, name="part", table_axe
                                                                 and len(stroke) == 4 and i in (1, 3)) else tag))
                 here, last_ki = p, (k, i)
         # Lift by the jump height to go to the next layer; only the last layer leaves at approach height
-        path.moves.append(Move(pose(*last_ki, z + proc.jump_height_mm), proc.rapid_speed_mm_s, tag="approach"))
+        path.moves.append(Move(pose(*last_ki, z + proc.jump_height_mm), proc.rapid_speed_mm_s,
+                               gun_on=proc.jump_height_mm == 0, tag="approach"))
         leave = pose(*last_ki, z + proc.approach_height_mm)
     if path.moves:
-        path.moves[-1] = replace(path.moves[-1], pose=leave)
+        path.moves[-1] = replace(path.moves[-1], pose=leave, gun_on=False)
     return path

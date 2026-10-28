@@ -37,6 +37,45 @@ def layer_ends(path: Toolpath) -> list[int]:
             and any(x.gun_on for x in m[:i])]
 
 
+CLEAR_MARGIN_MM = 50.0     # via-point height above the part's bounding box
+
+
+def _hits_box(a, b, lo, hi) -> bool:
+    """Does the segment a-b cross the box lo..hi (slab test)?"""
+    d = b - a
+    t0, t1 = 0.0, 1.0
+    for k in range(3):
+        if abs(d[k]) < 1e-9:
+            if a[k] < lo[k] or a[k] > hi[k]:
+                return False
+            continue
+        u, v = sorted(((lo[k] - a[k]) / d[k], (hi[k] - a[k]) / d[k]))
+        t0, t1 = max(t0, u), min(t1, v)
+        if t0 > t1:
+            return False
+    return True
+
+
+def _clearance_vias(path: Toolpath, start_pose, from_pose, speed):
+    """BASE moves that rise over the part when the straight way from the purge pose to the
+    path start would cross its bounding box (sprayed points + margin): up above the box, across,
+    then the path's own approach comes down over the start. Empty when the line is clear."""
+    pts = np.array([m.pose[:3, 3] for m in path.moves if m.gun_on])
+    if not len(pts):
+        return []
+    lo, hi = pts.min(0) - CLEAR_MARGIN_MM, pts.max(0) + CLEAR_MARGIN_MM
+    a, b = from_pose[:3, 3], start_pose[:3, 3]
+    if not _hits_box(a, b, lo, hi):
+        return []
+    out = []
+    for src, base in ((a, from_pose), (b, start_pose)):
+        pose = base.copy()
+        pose[:3, 3] = (src[0], src[1], max(src[2], hi[2]))
+        if abs(pose[2, 3] - src[2]) > 1e-6:
+            out.append(Move(pose, speed, gun_on=True, tag="purge"))
+    return out
+
+
 def add_purge(path: Toolpath, cell, speed: float | None = None) -> Toolpath:
     """Copy of `path` with purge visits added (see the module docstring).
     `cell.purge` (if any, and enabled) gives point, spray_dir, dwell_s,
@@ -63,6 +102,7 @@ def add_purge(path: Toolpath, cell, speed: float | None = None) -> Toolpath:
         out += [Move(to_base(back, 0), speed, kind="PTP", axes=dict(axes[0]), tag="purge"),
                 visit(0, purge.dwell_s)]
         span.append(len(out) - 1)
+        out += _clearance_vias(path, moves[0].pose, out[-1].pose, speed)
     ends = set(layer_ends(path)[:-1]) if purge.every_n_layers else set()
     n = 0
     for i, m in enumerate(moves):

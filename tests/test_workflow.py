@@ -62,7 +62,7 @@ def test_layers_generate_and_export(win, monkeypatch):
     win.generate()                       # same settings as Auto position's pick: plan reused
     win.wait()
     assert win.result is not None and len(plans) == n, win.dialogs
-    for pat in ("zigzag", "oneway", "concentric", "spiral", "crosshatch", "islands"):
+    for pat in ("zigzag", "oneway", "concentric", "spiral", "islands"):
         box = win.fields["infill_pattern"]
         box.setCurrentIndex(box.findData(pat))
         win.generate()

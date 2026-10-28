@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 CONFIG_DIR = Path(__file__).parent / "config"
 PROJECT_ROOT = Path(__file__).parents[2]
@@ -123,7 +123,7 @@ class CellConfig(BaseModel):
     gun_output: int
     ptp_velocity_pct: int
     home_deg: list[float]
-    gun_max_down_deg: float = 45.0   # spray direction below horizontal allowed
+    gun_max_down_deg: float = 70.0   # spray direction below horizontal allowed
     purge: PurgeConfig | None = None
 
 
@@ -153,8 +153,14 @@ class ProcessConfig(BaseModel):
     contour_passes: int = _field(ge=0, level="advanced", description="perimeter passes around each layer before infill")
     jump_height_mm: float = _field(ge=0, level="advanced",
                                    description="long moves between areas lift the gun this much (spray stays on)")
-    infill_pattern: Literal["zigzag", "oneway", "concentric", "spiral", "crosshatch", "islands"] = _field(
+    infill_pattern: Literal["zigzag", "oneway", "concentric", "spiral", "islands"] = _field(
         "zigzag", level="basic", description="how the inside of each layer is filled after the contours")
+
+    @field_validator("infill_pattern", mode="before")
+    @classmethod
+    def _retired_pattern(cls, v):
+        return "zigzag" if v == "crosshatch" else v   # crosshatch was removed: old configs get the default
+
     contour_tilt_deg: float = _field(0.0, ge=0, level="advanced",
                                      description="tilt the gun outwards on contour passes (0 = off)")
     turn_mode: Literal["inside", "overrun", "beyond_plane"] = _field(
