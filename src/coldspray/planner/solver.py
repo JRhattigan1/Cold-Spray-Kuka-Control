@@ -129,22 +129,56 @@ def joint_sweep(q0, q1, step_deg: float = 5.0) -> np.ndarray:
     return (1 - t) * q0 + t * q1
 
 
-def find_issues(path: Toolpath, ctx: Context):
-    """(samples, joints, issues): joints NaN where unreachable; one Issue per bad sample."""
+def _sampled(path: Toolpath, ctx: Context):
+    """(samples, robot targets, hint) of `path`, cached on ctx for the last few paths:
+    levers and the after-check often sample the same path object more than once."""
+    cache = ctx.__dict__.setdefault("_sample_cache", [])
+    for p, val in cache:
+        if p is path:
+            return val
     o = ctx.opts
     s = path.sample(o.sample_mm, o.angle_step_deg, axis_defaults(ctx.cell))
+    val = (s, robot_targets(s, ctx.cell), path.hint_for(s.move_index))
+    cache.append((path, val))
+    del cache[:-4]
+    return val
+
+
+def _check(ctx: Context, q, axes) -> str | None:
+    """Colliding pairs at `q` / `axes` as Issue detail text (None: clear), cached on ctx:
+    after a lever changes a few moves most samples keep exactly the same joints."""
+    cache = ctx.__dict__.setdefault("_check_cache", {})
+    if cache.get("__checker__") is not ctx.checker:
+        cache.clear()
+        cache["__checker__"] = ctx.checker
+    key = (np.asarray(q, float).tobytes(), tuple(sorted(axes.items())))
+    if key not in cache:
+        pairs = ctx.checker.check(q, axes)
+        cache[key] = ", ".join(f"{a}/{b}" for a, b in sorted(pairs)) if pairs else None
+    return cache[key]
+
+
+def find_issues(path: Toolpath, ctx: Context, limit: int | None = None):
+    """(samples, joints, issues): joints NaN where unreachable; one Issue per bad sample.
+    With `limit`, collision checks stop once more than `limit` problem points are found
+    (issues then holds limit + 1 of them): enough for levers that only compare counts.
+    IK runs over the whole path and ctx.last is set either way."""
+    s, targets, hint = _sampled(path, ctx)
     seed = ctx.cell.home_deg if ctx.seed is None else ctx.seed
-    joints = ctx.robot.ik_path(robot_targets(s, ctx.cell), seed_deg=seed, hint=path.hint_for(s.move_index))
+    joints = ctx.robot.ik_path(targets, seed_deg=seed, hint=hint)
     joints = ptp_in_joint_space(ptp_moves(path, ctx.cell), s.move_index, joints)
-    issues = [Issue(i, int(s.move_index[i]), "unreachable") for i in np.flatnonzero(np.isnan(joints[:, 0]))]
+    ctx.last = (s, joints)
+    issues = [Issue(int(i), int(s.move_index[i]), "unreachable") for i in np.flatnonzero(np.isnan(joints[:, 0]))]
+    if limit is not None and len(issues) > limit:
+        return s, joints, issues[:limit + 1]
     if ctx.checker is not None:
         for i in np.flatnonzero(~np.isnan(joints[:, 0])):
-            pairs = ctx.checker.check(joints[i], s.axes_at(i))
-            if pairs:
-                issues.append(Issue(int(i), int(s.move_index[i]), "collision",
-                                    ", ".join(f"{a}/{b}" for a, b in sorted(pairs))))
+            detail = _check(ctx, joints[i], s.axes_at(i))
+            if detail is not None:
+                issues.append(Issue(int(i), int(s.move_index[i]), "collision", detail))
+                if limit is not None and len(issues) > limit:
+                    break
     issues.sort(key=lambda x: x.sample)
-    ctx.last = (s, joints)
     return s, joints, issues
 
 
@@ -153,8 +187,7 @@ def issues_in(path: Toolpath, ctx: Context, lo: int, hi: int) -> list[Issue]:
     searching. IK starts from the joints the last `find_issues` had just before
     move `lo`, so moves before `lo` must be unchanged since then (moves after
     `hi` may be added or removed). `solve` still re-checks the whole path."""
-    o = ctx.opts
-    s = path.sample(o.sample_mm, o.angle_step_deg, axis_defaults(ctx.cell))
+    s, all_targets, hint = _sampled(path, ctx)
     sel = np.flatnonzero((s.move_index >= lo) & (s.move_index <= hi))
     if not len(sel):
         return []
@@ -164,8 +197,7 @@ def issues_in(path: Toolpath, ctx: Context, lo: int, hi: int) -> list[Issue]:
         before = np.flatnonzero(last[0].move_index < lo)
         if len(before) and not np.isnan(last[1][before[-1], 0]):
             seed = last[1][before[-1]]
-    targets = robot_targets(s, ctx.cell)[sel]
-    hint = path.hint_for(s.move_index)
+    targets = all_targets[sel]
     joints = ctx.robot.ik_path(targets, seed_deg=seed, hint=None if hint is None else hint[sel])
     joints = ptp_in_joint_space(ptp_moves(path, ctx.cell), s.move_index[sel], joints,
                                 before=seed if last is not None or lo == 0 else None)
@@ -174,10 +206,9 @@ def issues_in(path: Toolpath, ctx: Context, lo: int, hi: int) -> list[Issue]:
         if np.isnan(q[0]):
             out.append(Issue(int(i), int(s.move_index[i]), "unreachable"))
         elif ctx.checker is not None:
-            pairs = ctx.checker.check(q, s.axes_at(i))
-            if pairs:
-                out.append(Issue(int(i), int(s.move_index[i]), "collision",
-                                 ", ".join(f"{a}/{b}" for a, b in sorted(pairs))))
+            detail = _check(ctx, q, s.axes_at(i))
+            if detail is not None:
+                out.append(Issue(int(i), int(s.move_index[i]), "collision", detail))
     return out
 
 
