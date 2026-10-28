@@ -17,7 +17,7 @@ def fake_surface(monkeypatch):
     """Replace coldspray.planner.surface with a recorder returning a 2-move path."""
     calls = {}
 
-    def plan_surface(vertices, faces, coat_mask, proc, name, table_axes, coats=1, max_tilt_deg=60.0):
+    def plan_surface(vertices, faces, coat_mask, proc, name, table_axes, coats=1, max_tilt_deg=60.0, face_ids=None):
         calls.update(vertices=vertices, faces=faces, mask=coat_mask, name=name, table=table_axes,
                      coats=coats, max_tilt=max_tilt_deg)
         pose = spray_frame([0, 0, 100], [0, 0, -1], [1, 0, 0])

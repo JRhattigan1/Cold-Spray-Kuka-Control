@@ -219,3 +219,87 @@ def test_raster_start_angle(angle):
     y = np.array([m.pose[:3, 1] for m in path.moves if m.tag == "infill"])     # gun Y: along the stroke
     a = np.degrees(np.arctan2(y[:, 1], y[:, 0])) % 180
     assert np.allclose(np.minimum(a, 180 - a), min(angle % 180, 180 - angle % 180), atol=1e-6)
+
+
+def _tube_side_and_end(part):
+    v = placed_vertices(part)
+    axis, top = v[:, :2].mean(0), v[:, 2].max()
+    return _face_mask(part, lambda c, n: ((np.abs(n[:, 2]) < 0.1) & (np.linalg.norm(c[:, :2] - axis, axis=1) > 50))
+                      | ((n[:, 2] > 0.99) & np.isclose(c[:, 2], top)))
+
+
+def _blocks(path):
+    """Runs of gun-on moves (raster blocks), split at gun-off moves."""
+    out, cur = [], []
+    for m in path.moves:
+        if m.gun_on:
+            cur.append(m)
+        elif cur:
+            out.append(cur)
+            cur = []
+    return out + ([cur] if cur else [])
+
+
+@pytest.mark.parametrize("pattern", ["zigzag", "concentric"])
+def test_wrapping_pick_is_rastered_face_by_face(pattern):
+    """The tube's outer side and its end face picked together (one connected region that
+    wraps round): one raster block per CAD face, gun off between them, and no stroke
+    runs over the edge from the side onto the end."""
+    from coldspray.pipeline import same_surface_ids
+    part = load_part("test_tube")
+    v, mask = _tube_side_and_end(part)
+    assert len(np.unique(part.face_ids[mask])) == 2
+    proc = load_process().model_copy(update={"infill_pattern": pattern})
+    path = plan_surface(v, part.faces, mask, proc, face_ids=same_surface_ids(part))
+    blocks = _blocks(path)
+    if pattern == "zigzag":
+        assert len(blocks) == 2
+    kinds = []
+    for b in blocks:
+        z = np.array([m.pose[2, 0] for m in b if m.tag in ("infill", "contour")])   # spray direction, Z
+        if not len(z):
+            continue
+        end, side = np.all(z < -0.999), np.all(np.abs(z) < 1e-3)
+        assert end or side                         # every block on one face: no stroke over the edge
+        kinds.append("end" if end else "side")
+    assert set(kinds) == {"end", "side"}
+    assert kinds == sorted(kinds, key=kinds.index) and kinds.count(kinds[0]) + kinds.count(kinds[-1]) == len(kinds) \
+        or kinds[0] != kinds[-1]
+    # each face once, in one stretch: the sequence changes face exactly once
+    assert sum(a != b for a, b in zip(kinds, kinds[1:])) == 1
+    sw = [i for i, m in enumerate(path.moves) if not m.gun_on and m.tag == "jump"]
+    assert sw and all(m.tag == "jump" for m in (path.moves[i] for i in sw))
+    # without face ids the old behaviour: strokes blend over the edge in one zigzag
+    if pattern == "zigzag":
+        old = plan_surface(v, part.faces, mask, proc)
+        assert len(_blocks(old)) == 1
+
+
+def test_single_face_pick_unchanged_by_face_ids():
+    """Picks on one CAD face plan exactly as without face ids."""
+    from coldspray.pipeline import same_surface_ids
+    part = load_part("test_tube")
+    ids = same_surface_ids(part)
+    axis = placed_vertices(part)[:, :2].mean(0)
+    side = _face_mask(part, lambda c, n: (np.abs(n[:, 2]) < 0.1) & (np.linalg.norm(c[:, :2] - axis, axis=1) > 50))
+    for v, mask in (_tube_end(part)[:2], side):
+        a = plan_surface(v, part.faces, mask, load_process())
+        b = plan_surface(v, part.faces, mask, load_process(), face_ids=ids)
+        assert len(a.moves) == len(b.moves)
+        assert all(np.array_equal(x.pose, y.pose) and x.gun_on == y.gun_on and x.tag == y.tag
+                   for x, y in zip(a.moves, b.moves))
+
+
+def test_oneway_overrun_measured_from_the_face_edge():
+    """A oneway infill sits inside the contour passes, but its strokes run on to the
+    face's edge and then overrun_mm past it (not overrun_mm past the inset)."""
+    proc = load_process().model_copy(update={"infill_pattern": "oneway", "contour_passes": 2,
+                                             "raster_start_deg": 0.0})
+    top = trimesh.creation.box([40, 30, 20])
+    path = plan_surface(top.vertices, top.faces, top.face_normals[:, 2] > 0.9, proc)
+    first = [m.tag for m in path.moves].index("infill")
+    pts = np.array([m.pose[:3, 3] for m in path.moves[first - 1:]
+                    if m.gun_on and np.isclose(m.pose[2, 3], 10 + proc.standoff_mm)])   # stroke starts too
+    assert len(pts)
+    assert np.isclose(pts[:, 0].min(), -20 - proc.overrun_mm, atol=0.01)
+    assert np.isclose(pts[:, 0].max(), 20 + proc.overrun_mm, atol=0.01)

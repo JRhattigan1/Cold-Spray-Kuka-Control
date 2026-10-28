@@ -19,6 +19,14 @@ passes, then the pattern; see patterns.py) and the strokes are dropped back
 onto the faces. Strokes more than 1.5 x step-over apart are joined by a lifted
 jump, as in Layers. A region that wraps round (a face turned away from its mean
 normal, e.g. a whole cylinder) can't be flattened and keeps the zigzag.
+
+Per-face split: when the caller passes CAD face ids (`face_ids`), a region that
+wraps round (its faces don't all face its mean normal, e.g. a cylinder side, a
+fillet and the end face) is split into its CAD faces. Each face is rastered on
+its own, in its own frame, the faces taken nearest-first, with a gun-off move
+(lifted by `approach_height_mm`) from one face to the next, so no stroke crosses
+a face boundary. A region on a single CAD face, or one that faces one way, is
+planned as before.
 """
 
 from typing import NamedTuple
@@ -217,7 +225,10 @@ def pattern_strokes(vertices, faces, coat_mask, proc, index=0, blend_mm=10.0, ma
     flat = [(s, "contour") for s in contour_loops(region, proc)]
     start = flat[0][0][0] if flat else None
     fill = region.buffer(-proc.contour_passes * proc.step_over_mm - EDGE_MM)
-    flat += [(s, "infill") for s in PATTERNS[proc.infill_pattern](fill, proc, index, start=start)]
+    infill = PATTERNS[proc.infill_pattern](fill, proc, index, start=start)
+    if proc.infill_pattern in OVERRUN_PATTERNS:          # the overrun is measured from the face edge
+        infill = [_to_edge(s, region) for s in infill]
+    flat += [(s, "infill") for s in infill]
 
     rays = trimesh.ray.ray_triangle.RayMeshIntersector(mesh)
     above = ((mesh.vertices - o) @ n).max() + 1.0
@@ -251,6 +262,30 @@ def pattern_strokes(vertices, faces, coat_mask, proc, index=0, blend_mm=10.0, ma
     return out, skipped
 
 
+def _to_edge(s, region):
+    """Open flat stroke `s` (k, 2) with each end run on along its direction to the
+    region's boundary (EDGE_MM inside), so the overrun is measured from the edge of
+    the face, not from the inset the pattern was filled in."""
+    if len(s) < 2 or np.allclose(s[0], s[-1]):
+        return s
+    from shapely.geometry import LineString, Point
+    edge = region.boundary
+    reach = np.ptp(np.asarray(region.envelope.exterior.coords), axis=0).sum() + 1.0
+    ends = []
+    for a, b in ((s[1], s[0]), (s[-2], s[-1])):
+        t = b - a
+        if np.linalg.norm(t) < 1e-12:
+            ends.append(None)
+            continue
+        t = t / np.linalg.norm(t)
+        hit = LineString([b, b + t * reach]).intersection(edge)
+        d = Point(b).distance(hit) if not hit.is_empty else 0.0
+        ends.append(b + t * (d - EDGE_MM) if d > EDGE_MM else None)
+    head = [ends[0]] if ends[0] is not None else []
+    tail = [ends[1]] if ends[1] is not None else []
+    return np.vstack(head + [s] + tail)
+
+
 def coat_regions(vertices, faces, coat_mask) -> list[np.ndarray]:
     """The picked triangles split into separate regions, as masks over `faces`.
     Faces that share an edge are one region (strokes run on over the edge);
@@ -274,6 +309,48 @@ def coat_regions(vertices, faces, coat_mask) -> list[np.ndarray]:
         return []
     centre = [np.asarray(vertices)[faces[m]].reshape(-1, 3).mean(0) for m in out]
     return [out[i] for i in sorted(range(len(out)), key=lambda i: (round(centre[i][0], 3), centre[i][1]))]
+
+
+def _wraps(vertices, faces, mask) -> bool:
+    """The triangles under `mask` don't all face their (area-weighted) mean normal."""
+    tri = np.asarray(vertices, float)[np.asarray(faces)[mask]]
+    cr = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+    area = np.linalg.norm(cr, axis=1)
+    keep = area > 1e-12
+    if not keep.any():
+        return False
+    nrm = cr[keep] / area[keep, None]
+    mean = (nrm * area[keep, None]).sum(0) / area[keep].sum()
+    if np.linalg.norm(mean) < WEAK_MEAN:
+        return True
+    return bool((nrm @ (mean / np.linalg.norm(mean))).min() < FOLD_COS)
+
+
+def split_faces(vertices, faces, regions, face_ids) -> tuple[list[np.ndarray], list[int]]:
+    """`regions` (coat_regions) with each one that wraps round and spans several
+    CAD faces (`face_ids`, per triangle) split per face: (masks, the region each
+    came from). The faces of a split region are ordered nearest-first (centroids),
+    starting from the face first along BASE X, then Y."""
+    face_ids = np.asarray(face_ids)
+    v, f = np.asarray(vertices, float), np.asarray(faces)
+    masks, group = [], []
+    for g, m in enumerate(regions):
+        ids = np.unique(face_ids[m])
+        if len(ids) < 2 or not _wraps(v, f, m):
+            masks.append(m)
+            group.append(g)
+            continue
+        parts = [q for i in ids for q in coat_regions(v, f, m & (face_ids == i))]
+        centre = [v[f[q]].reshape(-1, 3).mean(0) for q in parts]
+        todo = sorted(range(len(parts)), key=lambda i: (round(centre[i][0], 3), centre[i][1]))
+        order = [todo.pop(0)]
+        while todo:
+            k = min(todo, key=lambda i: np.linalg.norm(centre[i] - centre[order[-1]]))
+            todo.remove(k)
+            order.append(k)
+        masks += [parts[i] for i in order]
+        group += [g] * len(order)
+    return masks, group
 
 
 def _extend(p, n, length):
@@ -307,15 +384,20 @@ def _spray_frame(point, spray_dir, travel_dir) -> np.ndarray:
 
 def plan_surface(vertices, faces, coat_mask, proc: ProcessConfig, name="surface",
                  table_axes: dict | None = None, *, coats: int = 1, max_tilt_deg: float = 60.0,
-                 blend_mm: float = 10.0) -> Toolpath:
+                 blend_mm: float = 10.0, face_ids=None) -> Toolpath:
     """Toolpath coating the triangles where `coat_mask` is true (vertices in BASE).
     Separate regions (coat_regions) are rastered one after the other, with a
     jump (lifted by `jump_height_mm`) between them. Each region is filled with
     `proc.infill_pattern` where it can be flattened, else zigzagged (module doc).
     The number of points dropped for tilting more than `max_tilt_deg` from the
     mean normal is left in `path.skipped_points`; `path.zigzag_regions` counts
-    regions that had to fall back to the zigzag."""
+    regions that had to fall back to the zigzag. With `face_ids` (CAD face per
+    triangle) a region that wraps round is split per face (split_faces); moves
+    between faces of one region are gun-off, lifted by `approach_height_mm`."""
     regions = coat_regions(vertices, faces, coat_mask)
+    group = list(range(len(regions)))
+    if face_ids is not None:
+        regions, group = split_faces(vertices, faces, regions, face_ids)
     pattern = proc.infill_pattern
     cut: dict[int, list] = {}                # region -> plane-cut strokes, planned once
     strokes, skipped, fallback = [], 0, set()
@@ -363,6 +445,11 @@ def plan_surface(vertices, faces, coat_mask, proc: ProcessConfig, name="surface"
             path.moves.append(Move(pose(lift, n[0], tang[0]), proc.rapid_speed_mm_s, kind="PTP",
                                    axes=dict(table_axes or {}), tag="approach"))
             path.moves.append(Move(pose(p[0], n[0], tang[0]), proc.rapid_speed_mm_s, tag="approach"))
+        elif region != prev_region and group[region] == group[prev_region]:
+            # next CAD face of a region that wraps round: gun off, lifted off one face and onto the next
+            h, travel = proc.approach_height_mm, p[0] - prev_p
+            for q, nn in ((prev_p + prev_n * h, prev_n), (p[0] + n[0] * h, n[0]), (p[0], n[0])):
+                path.moves.append(Move(pose(q, nn, travel), proc.rapid_speed_mm_s, gun_on=False, tag="jump"))
         elif region != prev_region or (far_jumps and np.linalg.norm(p[0] - prev_p) > 1.5 * proc.step_over_mm):
             # another region, or across a hole: jump, lifted by jump_height_mm, as Layers does
             h, travel = proc.jump_height_mm, p[0] - prev_p
