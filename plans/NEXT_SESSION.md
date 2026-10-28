@@ -54,7 +54,7 @@
 6. **Review finding 7a:** the gantry carriage is not in the collision environment.
 7. **Review finding 8:** `Toolpath.sample` uses the last move's axis value where KRL uses the configured value.
 8. **Faint step-bar done labels** (maybe nested QGraphicsEffects; check on screen).
-9. **"90Â°" mojibake** in the 3D HUD labels (`sim/viewer.py` ~594, ~625): write `°`.
+9. **"90Â°" mojibake** in the 3D HUD labels (`sim/viewer.py` ~625, ~656): write `°`.
 10. **`widgets.Segmented`** (combo shown when the capsule row doesn't fit): planned by FM, not written.
 11. **Slicer `polygonize` option:** faster `slice_mesh`, but it changes the output. Decide, then re-baseline.
 12. **Launch time:** re-measure on a quiet machine (78 s cold under load); the `pyvistaqt` import is the biggest part.
