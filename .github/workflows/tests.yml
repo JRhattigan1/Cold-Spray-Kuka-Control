@@ -1,0 +1,33 @@
+# Quick tests on every push: KRL byte hashes, imports and the planner/post unit tests.
+# The licensed cell CAD (assets/) is not in git, so tests that need it skip here;
+# the full suite still runs locally. Windows runner: the KRL hashes were recorded on Windows.
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  quick:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e ".[sim,cad,dev]"
+      - name: KRL regression and imports
+        run: python -m pytest -q -p no:cacheprovider tests/test_krl_regression.py tests/test_imports.py
+      - name: Planner and post unit tests
+        run: >
+          python -m pytest -q -p no:cacheprovider -m "not slow"
+          tests/test_krl.py tests/test_krl_base.py tests/test_krl_joints.py tests/test_krl_split.py
+          tests/test_krl_preflight_status.py tests/test_simplify.py tests/test_turns.py
+          tests/test_patterns.py tests/test_layers_patterns.py tests/test_revolve.py tests/test_surface.py
+          tests/test_gun.py tests/test_opw.py tests/test_robot.py tests/test_ik_batch.py
+          tests/test_models.py tests/test_config_io.py tests/test_constraints.py tests/test_solver.py
+          tests/test_solver_golden.py tests/test_ptp_joint_space.py tests/test_toolpath.py
