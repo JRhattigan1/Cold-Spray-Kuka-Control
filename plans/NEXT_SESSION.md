@@ -2,7 +2,20 @@
 
 **Start here.** Where each feature stands is in [ROADMAP.md](ROADMAP.md), and what the app does is in [README.md](../README.md). Each agent's detail is in `plans/reports/<ID>-1.md` on its branch (`git show wp/<ID>:plans/reports/<ID>-1.md`; the session 5 worktrees are removed). Older hand-offs are in git history.
 
-## State (2026-10-28, end of session 5)
+## State (2026-10-28, session 6 mini run)
+Branches are unmerged unless stated; none is pushed. Per-run files are in `C:\Users\qrb21117\worktrees\run6\`.
+| agent | branch | sha | result |
+|---|---|---|---|
+| S6M | `wp/S6M` | `76bf656` | Fit merge (F3, F1, F2fit, U20): merges clean; 87 passed, 2 failed (capsule test, order-dependent fit test). |
+| S6T | (none) | n/a | Full suite on `main` @ `3120475`, not slow, `-x`: 598 passed, 0 failed, 3 skipped. Unfinished: still in `test_surface_e2e.py::test_tube_outer_cylinder` (~91 %) at cutoff. |
+| S6A | `wp/S6A` | `e581a9e` | Mojibake fixed, `Toolpath.sample` defaults; 13 passed. |
+| S6B | `wp/S6B` | `e3d06c5` | Purge-actions dropdown in Position; 10 passed, 2 skipped. |
+| S6C | `wp/S6C` | `d7d7d18` | Gantry carriage in the collision env (finding 7a), moves with E1, tool never allowed; 26 passed, 3 skipped. |
+| S6E | `wp/S6E` | `30f808d` | `widgets.Segmented` fallback, from `wp/F3`; 3 passed. |
+| S6F | `wp/S6F` | `6305733` | Crisp step-bar labels; 3 passed. |
+| S6R | read-only | n/a | Review of `a987069..3120475` (src), no tests: `run6\REVIEW.md`. Top findings are to-do 18-23. |
+
+## State of session 5 (2026-10-28)
 - **`main` @ `4087bf2`.** Sessions 1–4, plus these session 5 merges (`git log --first-parent main`):
   | merge | branch | what |
   |---|---|---|
@@ -50,23 +63,29 @@
 - **UI:** sidebar/3D splitter; sidebar 460 px (min 400), width saved; window min 1100x680, start 1440x900 capped to the screen; Next pinned below each panel; Mode shown as Layers / Revolve / Surface; panels shrink to the sidebar; dark mode for the 3D view, toolbars and markers.
 
 ## To do, in order
-1. **Merge the fit branches:** F3 → F1 → F2fit (FM-1 steps), then U20.
-2. **Full suite** (not run this session).
+1. **Merge the fit branches:** done in `wp/S6M` (`76bf656`); fix its 2 failing tests (capsule, order-dependent fit), then merge to main.
+2. **Full suite:** S6T ran 598 passed on `main`, unfinished at `test_tube_outer_cylinder`; rerun after the merges.
 3. **By-hand check in the app (`.\run`):** resize, splitter, light and dark, 100 % and 150 %; Surface patterns on the tube end; KRL base; Fixed in the cell; gun hold; constraint picking; Suggest purge point; Cancel and the plan cache; WearPlate2.
 4. **K1 arcs:** see Kept branches.
 5. **Review finding 3:** PTP moves are interpolated in Cartesian space in `Toolpath.sample`, and HOME → first and last → HOME are not simulated. Sample PTPs in joint space and check those legs.
-6. **Review finding 7a:** the gantry carriage is not in the collision environment.
+6. **Review finding 7a:** done in `wp/S6C` (`d7d7d18`); review and merge.
 7. **Review finding 8:** `Toolpath.sample` uses the last move's axis value where KRL uses the configured value.
-8. **Faint step-bar done labels** (maybe nested QGraphicsEffects; check on screen).
-9. **"90Â°" mojibake** in the 3D HUD labels (`sim/viewer.py` ~625, ~656): write `°`.
-10. **`widgets.Segmented`** (combo shown when the capsule row doesn't fit): planned by FM, not written.
+8. **Faint step-bar done labels:** done in `wp/S6F` (`6305733`); check on screen, merge.
+9. **"90Â°" mojibake:** done in `wp/S6A` (`e581a9e`); merge.
+10. **`widgets.Segmented`:** done in `wp/S6E` (`30f808d`, on F3); merge.
 11. **Slicer `polygonize` option:** faster `slice_mesh`, but it changes the output. Decide, then re-baseline.
 12. **Launch time:** re-measure on a quiet machine (78 s cold under load); the `pyvistaqt` import is the biggest part.
-13. **Purge-actions dropdown** in Position (F1 left the buttons stacked).
+13. **Purge-actions dropdown:** done in `wp/S6B` (`e3d06c5`); merge.
 14. **Export split/preflight end to end:** save a long program, load all parts on the controller, check the HALT guard.
 15. **S/T bits:** verify against `$POS_ACT` before writing S/T on LINs.
 16. **Older list:** cable wind-up check (A4/A6); Surface per-face split and holes; saved constraints; solver gaps; P7 collisions with the Filtration unit; reach IK on a worker.
 17. **Robot cell checks:** README "Before running on the real robot", in T1 first.
+18. **S6R 1:** E1 is written on the layer's first gun-off move, so moves before it use the LAST E1 in `Toolpath.sample` (back-fill) but the cell E1 in the KRL (`solve_e1.py:27`, `krl.py:82`). Simulate and the program disagree. Also `fix_e1` scores pre-carrier gun-on moves it cannot fix, and a layer with `carriers[k] is None` leaks E1 into the next.
+19. **S6R 2:** `krl.py:157` PTP uses Simulate's configuration, but the joint-space sweep (e.g. the E1-change PTP) is never collision-checked.
+20. **S6R 3:** `krl.py:160` NaN fallback seeds from the last PTP, not the last LIN, and silently picks `sols[0]`. Seed from the last valid `pj`; log or raise.
+21. **S6R 4:** `collision.py:231` `check()` follows the live `cell.gantry.position_mm`; a moved E1 raises an uncaught `ValueError` in `solver.py:97,130`, `solve_arm.py:76`, `viewer.py:918`. Also an `np.allclose` per check in the hot loop.
+22. **S6R 5:** `plan_jobs.py:101` side-free is judged on the final path, not at `level_gun` time, so a plan can be reused for the wrong robot side; `PlanKey.cell` is live (racy).
+23. **S6R 6-8:** sidebar min width is fixed at build, so Advanced mode can clip with no scroll bar; Next footer lookup is fragile; OP3 `zigzag_regions` now carried (output change; batched gemm not verified bit-identical).
 
 ## Waiting on the user
 1. **Obsolete unmerged branches:** `wp/WP0-wip`, `wp/M2-fix`, `wp/E2p` (Part Simple/Advanced, test hangs), `wp/P8` (slow turn clearance), `wp/O5` (superseded by `wp/K1`). Delete them?
@@ -77,7 +96,7 @@
 6. **Wrapping Surface regions:** split them per CAD face?
 
 ## Lessons for running agents
-- At most about 6 agents at once. With more, pytest runs were killed and timings were noise.
+- Agent count is not the limit (user, 2026-10-28): the crashes came from on-screen app windows. Run app, screenshot and GUI-test runs offscreen; run as many agents as the work needs.
 - App and screenshot runs are offscreen and one at a time.
 - Agents' clocks drift: use `date`, not their own sense of time.
 - A manager per team (KM, FM) worked: one plan, disjoint files, one merger.
