@@ -15,7 +15,8 @@ from dataclasses import replace
 import numpy as np
 
 from coldspray.planner.purge import layer_ends
-from coldspray.planner.solver import Context, e1_of, find_issues, issues_in
+from coldspray.planner.solve_route import count_in, prime_seed
+from coldspray.planner.solver import Context, e1_of
 
 STEP_MM = 250.0
 MAX_SHIFT_MM = 1000.0     # with a collision checker: its cropped cell covers the robot only this far
@@ -62,19 +63,19 @@ def fix_e1(path, issues, ctx: Context):
         if c is not None:
             span[k] = (c, next((x for x in carriers[k + 1:] if x is not None), len(path.moves)) - 1)
 
-    def bad_in(p, k):
-        return len(issues_in(p, ctx, *span[k]))     # fast: only the moves layer k's E1 governs
+    def bad_in(p, k, limit=None):
+        return count_in(p, ctx, *span[k], limit=limit)   # fast: only the moves layer k's E1 governs; stops at `limit`
 
     bad_layers = sorted({k for x in issues for k, (a, b) in span.items() if a <= x.move <= b})
     for k in bad_layers:
         base = _with_e1(path, carriers, values, g.axis)
-        find_issues(base, ctx)                  # joints up to this layer, with earlier layers' new E1
+        prime_seed(base, ctx, span[k][0])        # joints up to this layer, with earlier layers' new E1
         best, best_n = values[k], bad_in(base, k)
         for e in sorted(cands, key=lambda e: abs(e - cur[k])):
             if e == values[k] or best_n == 0:
                 continue
             trial = values[:k] + [float(e)] + values[k + 1:]
-            n = bad_in(_with_e1(path, carriers, trial, g.axis), k)
+            n = bad_in(_with_e1(path, carriers, trial, g.axis), k, best_n)      # >= best_n: not better, whatever it is
             if n < best_n:
                 best, best_n = float(e), n
         if best != values[k]:
