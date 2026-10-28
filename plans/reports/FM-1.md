@@ -27,3 +27,19 @@ App level (owned by U21, check after merge): PANEL_WIDTH 380 -> 420, sidebar scr
 - F1 part.py, position.py, constraints_panel.py: Part combo/body rows, Position placement buttons (stack or dropdown), SpaceNavigator text, injector combo, purge form wrap + actions.
 - F2 toolpath.py, simulate.py, export.py, timeline.py: Toolpath mode capsule -> QComboBox dropdown, StatTiles 2-col grid, Simulate tiles 2x2, PlaybackControls 2 rows.
 - F3 widgets.py, style.py: widgets.fit_combo(combo, n=12) helper, widgets.Segmented(combo, max_width) that shows the combo when the row would not fit, widgets.TileGrid(cols=2); trim padding in style.py.
+
+## Stopped 08:50 (user decision): F1-F3 NOT merged into wp/FM
+State: wp/FM = 3f62b53 (audit + U20/U21/U23). F branches kept for next session: wp/F3 7e8a80f (done, 68 passed incl. U20 test fix),
+wp/F2fit b08a4df (done: toolpath/simulate/export fit + export split_krl/preflight, 4 + krl_regression passed),
+wp/F1 a90bfd5 (committed at stop, not reviewed or tested by FM). Old wp/F2 and wp/F2b are unrelated; ignore them.
+Merge order: wp/F3 -> wp/F1 -> wp/F2fit (F3 first: fit_combo/TileGrid in widgets.py that F1/F2fit may use).
+Steps left:
+1. Merge the three in that order (F3 and F2fit merged cleanly onto 3f62b53 in a trial; reverted).
+2. Test offscreen: test_gui_layout, test_imports, test_timeline_legend, test_ui_mode_steps, test_u20_glass_light,
+   test_krl_regression, test_f3_widgets, test_sidebar_fit_f2, plus F1's tests.
+3. Merge main (has U20/U21/U23, KM, OP1/OP2 already): expect mostly no-ops; likely conflict in steps/export.py
+   (F2fit split/preflight vs main's KM merge).
+4. Re-audit once, check every panel's root minimumSizeHint <= ~400 px.
+Audit-script note: scratchpad audit.py (copy to tools/ if kept) uses panels.widget(i) as the QScrollArea; since U21 each
+page is a wrapper, so use panels.widget(i).scroll (and .scroll.viewport() for the inner width). Offscreen font
+metrics are approximate; it reports the deepest visible widget whose min/size hint exceeds the viewport.
