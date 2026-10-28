@@ -31,9 +31,10 @@ def main():
         os.environ["QT_SCALE_FACTOR"] = str(args.scale)
     out = Path(args.outdir)
     out.mkdir(parents=True, exist_ok=True)
-    if not has_display():
-        os.environ["QT_QPA_PLATFORM"] = "offscreen"
-        print("no display: offscreen, 3D views may be blank")
+    if "QT_QPA_PLATFORM" not in os.environ:
+        os.environ["QT_QPA_PLATFORM"] = "offscreen"  # default: never open real windows
+    if os.environ["QT_QPA_PLATFORM"] == "offscreen":
+        print("offscreen: 3D views may be blank")
 
     from PySide6.QtCore import QSettings
     from PySide6.QtWidgets import QApplication
