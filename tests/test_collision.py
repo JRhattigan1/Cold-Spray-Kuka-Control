@@ -1,4 +1,4 @@
-import numpy as np
+﻿import numpy as np
 import pytest
 import pyvista as pv
 
@@ -132,3 +132,41 @@ def test_no_link_vs_cell_allowed_with_bare_meshes():
     checker = CollisionChecker(robot, cell, _bare_meshes(robot), reach_mm=1e5)
     assert not any(b == "cell" for _, b in checker.allowed)
     assert isinstance(checker.allowed_text(), str)
+
+
+def _carriage_checker(robot, cell):
+    """A box carriage under the base, touching the base box and A1 in the CAD pose (gantry at 0)."""
+    root = robroot(cell, 0.0)
+    a2 = root @ robot.link_frames(HOME_DEG)[1][:, 3]
+    centre = root[:3, 3] + root[:3, :3] @ np.array([0.0, 0.0, -50.0])
+    box = pv.Cube(center=centre, x_length=300, y_length=300, z_length=300)
+    # second box where A2 ends up with the arm swung round
+    a2_swung = root @ robot.link_frames(SWUNG)[1][:, 3]
+    far = pv.Cube(center=a2_swung[:3] + [0.0, 0.0, 150.0], x_length=300, y_length=300, z_length=300)
+    meshes = CellMeshes(static=pv.PolyData(), carriage=box.merge(far), robot=_links(robot))
+    return CollisionChecker(robot, cell, meshes, reach_mm=1e5), a2
+
+
+def test_carriage_cad_contacts_allowed_and_reported_elsewhere():
+    robot, cell = Robot(load_robot()), load_cell()
+    checker, _ = _carriage_checker(robot, cell)
+    E0 = {cell.gantry.axis: 0.0}
+    assert checker.check(np.array(HOME_DEG, float), E0) == set()
+    assert any("carriage" in p for p in checker.allowed)
+    pairs = checker.check(np.array(SWUNG, float), E0)
+    assert any(p[1] == "carriage" and p[0] in ("A2", "A3") for p in pairs), pairs
+
+
+def test_carriage_moves_with_e1():
+    robot, cell = Robot(load_robot()), load_cell()
+    checker, _ = _carriage_checker(robot, cell)
+    lo, hi = cell.gantry.limits_mm
+    e1 = float(np.clip(500.0, lo, hi))
+    checker.check(np.array(HOME_DEG, float), {cell.gantry.axis: e1})
+    m = checker.env._objs["carriage"]["obj"].getTranslation()
+    assert np.allclose(m, np.asarray(cell.gantry.direction) * e1)
+
+
+def test_carriage_never_allowed_for_tool():
+    from coldspray.sim import collision
+    assert {"gun", "nozzle"} <= set(collision.TOOL) and "carriage" in collision.NEVER_ALLOWED_FOR_TOOL

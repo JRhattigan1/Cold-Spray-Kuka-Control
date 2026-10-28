@@ -32,10 +32,13 @@ from coldspray.cell import base_world, robroot, turntable_axes, turntable_motion
 from coldspray.kinematics.robot import HOME_DEG, Robot
 from coldspray.models import CellConfig
 from coldspray.sim.cell_model import OPTIONAL, CellMeshes
+from coldspray.transforms import frame
 
 LINK_NAMES = ["A1", "A2", "A3", "A4", "A5", "A6"]
 WORKPIECE = ("part", "substrate", "fixture")     # bodies clamped to the faceplate
 NEVER_ALLOWED = {*WORKPIECE, "faceplate", "turntable"}
+TOOL = ("gun", "nozzle")
+NEVER_ALLOWED_FOR_TOOL = {"carriage"}   # the robot's own mount: arm contacts in the CAD are ignored, tool never
 ROBOT_REACH_MM = 2600.0     # KR 50 R2500 reach plus the gun: what must stay inside the cropped cell
 SIMPLIFY_MM = 10.0          # merge cell-mesh points closer than this
 SIMPLIFY_ABOVE = 50_000     # ... for meshes with more triangles than this
@@ -132,6 +135,11 @@ class CollisionChecker:
         for label, poly in (("turntable", meshes.tilting), ("faceplate", rotating)):
             if poly.n_cells:
                 self.env.add_object(label, _trimesh(poly))
+        # Gantry carriage (drawn with E1 = 0): follows the robot root along the gantry
+        self.root_e1_0 = frame(**cell.robroot.model_dump())    # robroot with E1 = 0 (no limit check)
+        carriage = getattr(meshes, "carriage", None)
+        if carriage is not None and carriage.n_cells:
+            self.env.add_object("carriage", _trimesh(carriage))
         self.set_workpiece(part, substrate, fixture)
 
         # Learn contacts that exist in the CAD as drawn
@@ -139,7 +147,8 @@ class CollisionChecker:
         working = self.world_from_robot
         self.set_placement(robroot(cell, self._cad_e1(cell)) if cell.gantry else robroot(cell))
         contacts = self.check(np.asarray(cad_pose, float), {}, _follow=False)
-        self.allowed = {p for p in contacts if not NEVER_ALLOWED & set(p)}
+        self.allowed = {p for p in contacts if not NEVER_ALLOWED & set(p)
+                        and not (set(TOOL) & set(p) and NEVER_ALLOWED_FOR_TOOL & set(p))}
         self.set_placement(working)
 
     def allowed_text(self) -> str:
@@ -157,6 +166,10 @@ class CollisionChecker:
         checker was built for - build a new checker for a different position."""
         self.world_from_robot = world_from_robot
         self.own.set_transform("robot base", world_from_robot)
+        if "carriage" in self.env._objs:       # shift by gantry.direction * e1 from where the CAD draws it
+            m = np.eye(4)
+            m[:3, 3] = world_from_robot[:3, 3] - self.root_e1_0[:3, 3]
+            self.env.set_transform("carriage", m)
 
     def set_gun(self, robot: Robot, gun):
         """Swap the tool (e.g. another nozzle): new TCP and gun / nozzle meshes."""
