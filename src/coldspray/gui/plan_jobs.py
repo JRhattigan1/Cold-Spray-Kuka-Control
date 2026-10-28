@@ -7,8 +7,11 @@
 `_enter_setup` does). Hosts without a `plan_pool` (bare test hosts) run `work` inline.
 
 The cache maps a plan key (part, placement, Part choices, process, mode, tilt,
-rotation, coats, cell without E1, substrate, gun angle, wrist) to plan_part's
-(summary, path), so Generate after Auto position doesn't plan again.
+rotation, coats, cell without E1, substrate, gun angle, wrist, plus the side the
+robot is on) to plan_part's (summary, path), so Generate after Auto position
+doesn't plan again. Only the robot's side depends on E1 (level_gun turns a
+near-vertical gun towards the robot), so a plan whose spray never comes near
+vertical is reused for any E1.
 """
 
 import copy
@@ -36,16 +39,53 @@ def _num(x):
     return None if x is None else round(float(x), 6)
 
 
+class PlanKey(tuple):
+    """plan_key's tuple: the last item is the robot's side (E1-dependent), `cell` the cell."""
+    cell = None
+
+
+def _robot_side(cell):
+    """level_gun's horizontal direction towards the robot (WORLD), rounded; None without a cell."""
+    if cell is None or getattr(cell, "robroot", None) is None:
+        return None
+    from coldspray.cell import base_world, robroot
+    side = robroot(cell)[:3, 3] - base_world(cell)[:3, 3]
+    side[2] = 0.0
+    n = np.linalg.norm(side)
+    return tuple(np.round(side / n, 6)) if n > 1e-9 else None
+
+
+def _side_free(path, cell) -> bool:
+    """True when level_gun never used the robot's side for `path`: every spray is
+    further than VERTICAL from vertical, so the WORLD up direction always levels it."""
+    try:
+        from coldspray.cell import base_worlds
+        from coldspray.planner.gun import VERTICAL
+        poses = np.array([m.pose for m in path.moves])
+        x = (base_worlds(cell, path.axis_values()) @ poses)[:, :3, 0]
+        return bool(np.all(np.abs(x[:, 2]) <= VERTICAL))
+    except Exception:
+        return False
+
+
 def plan_key(ident, part, proc, kw: dict) -> tuple:
     """Cache key for plan_part(part, proc, **kw); `ident` is id() of the GUI's part.
-    The gantry position is left out: plans don't depend on E1 (Auto position relies on it)."""
-    cell = kw.get("cell")
+    The gantry position is left out except through the robot's side (the last
+    item), which cached_plan ignores for plans that don't depend on it."""
+    raw = kw.get("cell")
+    cell = raw
     if cell is not None:
         cell = cell.model_copy(deep=True)
         if getattr(cell, "gantry", None) is not None:
             cell.gantry.position_mm = 0.0
         cell = cell.model_dump_json()
     wrist = kw.get("wrist")
+    key = PlanKey((*_base_key(ident, part, proc, kw, cell, wrist), _robot_side(raw)))
+    key.cell = raw
+    return key
+
+
+def _base_key(ident, part, proc, kw, cell, wrist) -> tuple:
     return (ident, part.name, np.asarray(part.placement, float).round(9).tobytes(),
             tuple(sorted(part.coat_faces)), part.start_face, part.base_face, part.build_body,
             bool(part.fixed_in_cell), proc.model_dump_json(), kw.get("mode"), _num(kw.get("tilt_deg")),
@@ -54,20 +94,47 @@ def plan_key(ident, part, proc, kw: dict) -> tuple:
 
 
 def cached_plan(cache, key, plan):
-    """plan() through `cache` (an OrderedDict, or None for no cache)."""
+    """plan() through `cache` (an OrderedDict, or None for no cache). A PlanKey also
+    hits an entry planned with the robot on another side when that plan didn't use it."""
     if cache is None:
         return plan()
     if key in cache:
         cache.move_to_end(key)
         return cache[key]
+    if isinstance(key, PlanKey):
+        free = getattr(cache, "side_free", {})
+        for k in reversed(cache):
+            if isinstance(k, PlanKey) and k[:-1] == key[:-1] and free.get(k):
+                cache.move_to_end(k)
+                return cache[k]
     out = cache[key] = plan()
+    if isinstance(key, PlanKey) and key.cell is not None:
+        try:
+            path = out[1]
+        except Exception:
+            path = None
+        if path is not None and hasattr(cache, "side_free"):
+            cache.side_free[key] = _side_free(path, key.cell)
     while len(cache) > CACHE_SIZE:
         cache.popitem(last=False)
     return out
 
 
+class PlanCache(OrderedDict):
+    """OrderedDict of plans, plus per key whether the plan ignored the robot's side."""
+
+    def __init__(self):
+        super().__init__()
+        self.side_free = {}
+
+    def popitem(self, last=True):
+        k, v = super().popitem(last)
+        self.side_free.pop(k, None)
+        return k, v
+
+
 def new_cache() -> OrderedDict:
-    return OrderedDict()
+    return PlanCache()
 
 
 def _buttons(win, on: bool):
