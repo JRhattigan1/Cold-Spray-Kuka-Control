@@ -349,6 +349,29 @@ class ConstraintsPanel(Section):
         row.deleteLater()
         self.changed.emit()
 
+    def rows_state(self) -> list[dict]:
+        """The rows as plain dicts (undo snapshots); `set_rows` rebuilds them."""
+        return [dict(kind=r.kind.currentText(), face=r.face.currentText(), face2=r.face2.currentText(),
+                     ref=r.ref.currentText(), value=r.value.value(), suppressed=r.suppress.isChecked(),
+                     pose=None if r.pose is None else np.array(r.pose, float)) for r in self.rows]
+
+    def set_rows(self, state: list[dict]):
+        """Replace every row with `state` (from `rows_state`) without emitting `changed`."""
+        self.blockSignals(True)
+        try:
+            self.cancel_pick()
+            for row in list(self.rows):
+                self.remove(row)
+            for s in state:
+                row = self.add(s["kind"], s["face"] or None, s["ref"], s["value"], s["face2"] or None)
+                row.pose = None if s["pose"] is None else np.array(s["pose"], float)
+                row.suppress.setChecked(s["suppressed"])      # panel signals are blocked
+        finally:
+            self.blockSignals(False)
+        if not self.rows:
+            self.result = None
+            self.chip.setVisible(False)
+
     def active(self) -> bool:
         return any(not r.suppress.isChecked() for r in self.rows)
 
