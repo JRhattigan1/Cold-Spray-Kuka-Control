@@ -19,7 +19,6 @@ that edge's end (a corner). See `krl_base_frame`.
 from dataclasses import dataclass, field, replace
 
 import numpy as np
-import trimesh
 
 from coldspray.transforms import frame
 
@@ -103,6 +102,7 @@ def grow_tangent(part: Part, faces, max_deg: float = 10.0) -> set[int]:
     """`faces` plus every CAD face reached from them across shared edges where
     the triangle normals on the two sides are within `max_deg` (smooth joins,
     e.g. a fillet onto a flat; not a sharp box edge)."""
+    import trimesh
     mesh = trimesh.Trimesh(part.vertices, part.faces, process=False)
     mesh.merge_vertices()                       # faces are tessellated apart: join their edges
     pairs = mesh.face_adjacency
@@ -133,6 +133,7 @@ def krl_base_frame(part: Part, face_id: int, click) -> np.ndarray:
     click, the origin at the end of that edge nearest the click."""
     z = np.asarray(part.planar[face_id].normal, float)
     z /= np.linalg.norm(z)
+    import trimesh
     mesh = trimesh.Trimesh(part.vertices, part.faces[part.face_ids == face_id])   # merges vertices
     v, edges = mesh.vertices, mesh.edges_sorted
     _, index, count = np.unique(edges, axis=0, return_index=True, return_counts=True)
@@ -175,6 +176,7 @@ class Substrate:
 
     def mesh(self) -> tuple[np.ndarray, np.ndarray]:
         """(vertices, faces) of the plate in BASE."""
+        import trimesh
         box = trimesh.creation.box(extents=(self.length, self.width, self.thickness))
         return np.asarray(box.vertices) + [0.0, 0.0, self.thickness / 2], np.asarray(box.faces)
 
