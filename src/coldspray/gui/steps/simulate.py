@@ -180,8 +180,9 @@ class SimulateStep:
 
     # --- collision checking (background) -------------------------------------------
     def _start_collision_check(self, robot, gun, cell, part, substrate, fixture, joints):
-        from coldspray.sim.collision import CollisionChecker
+        from coldspray.sim.collision import CollisionChecker, part_for_mode
 
+        part = part_for_mode(getattr(self, "result_mode", None), part)   # Layers: the part isn't built yet
         self.check_id += 1
         self.collision_failed = None
         job, a = self.check_id, self.assets

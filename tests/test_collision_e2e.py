@@ -42,9 +42,9 @@ def plan(part, proc, mode, tilts, purge=None):
     return path, robot, cell
 
 
-def collisions(assets, part, path, robot, cell):
+def collisions(assets, part, path, robot, cell, mode):
     """Collision points of `path`, built like Simulate's _start_collision_check."""
-    from coldspray.sim.collision import CollisionChecker
+    from coldspray.sim.collision import CollisionChecker, part_for_mode
     from coldspray.sim.scene import make_gun
 
     s = path.sample(2.0, 5.0)
@@ -53,7 +53,7 @@ def collisions(assets, part, path, robot, cell):
     joints = robot.ik_path(targets, seed_deg=cell.home_deg)
     # Surface: some interpolated samples have no IK (reach is checked at move ends); Simulate skips them
     checker = CollisionChecker(robot, cell, assets.meshes, make_gun(load_tool(), assets.gun_mesh),
-                               build_mesh(part), cell.robot_cad_pose_deg, fixture=other_mesh(part))
+                               part_for_mode(mode, build_mesh(part)), cell.robot_cad_pose_deg, fixture=other_mesh(part))
     hits = checker.check_path(joints, s.axes_at, every=CHECK_EVERY)
     tags = {path.moves[s.move_index[h.sample]].tag for h in hits}
     return hits, tags
@@ -68,7 +68,7 @@ def report(hits, tags):
 def test_block_zigzag_no_collision(assets):
     part = load_part("test_block")
     path, robot, cell = plan(part, load_process(), "layers", layer_tilts(load_cell()))
-    hits, tags = collisions(assets, part, path, robot, cell)
+    hits, tags = collisions(assets, part, path, robot, cell, "layers")
     assert not hits, report(hits, tags)
 
 
@@ -77,7 +77,7 @@ def test_block_with_purge_no_collision(assets):
     part = load_part("test_block")
     path, robot, cell = plan(part, load_process(), "layers", layer_tilts(load_cell()), purge=PURGE)
     assert any(m.tag == "purge" for m in path.moves)
-    hits, tags = collisions(assets, part, path, robot, cell)
+    hits, tags = collisions(assets, part, path, robot, cell, "layers")
     assert not hits, report(hits, tags)
 
 
@@ -87,5 +87,5 @@ def test_repair_surface_no_collision(assets):
     part = load_part("test_repair")
     part.coat_faces = repair_patch_faces(part)
     path, robot, cell = plan(part, load_process(), "surface", TILTS)
-    hits, tags = collisions(assets, part, path, robot, cell)
+    hits, tags = collisions(assets, part, path, robot, cell, "surface")
     assert not hits, report(hits, tags)

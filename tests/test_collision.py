@@ -185,3 +185,11 @@ def test_moved_cell_e1_does_not_move_or_break_a_built_checker():
     cell.gantry.position_mm = lo if abs(lo - checker.e1) > abs(hi - checker.e1) else hi
     checker.check(np.array(HOME_DEG, float), {})
     assert np.allclose(checker.world_from_robot, root)
+
+
+def test_part_not_checked_in_layers_mode():
+    """S7K/5: Layers builds the part up, so it isn't there to hit; Revolve / Surface coat it."""
+    from coldspray.sim.collision import part_for_mode
+    part = (np.zeros((3, 3)), np.array([[0, 1, 2]]))
+    assert part_for_mode("layers", part) is None
+    assert part_for_mode("revolve", part) is part and part_for_mode("surface", part) is part

@@ -7,7 +7,9 @@ E2/E5), the workpiece - part, the substrate plate it sits on and any other
 bodies of the part's assembly ("fixture": the component being repaired,
 clamps), all clamped to the faceplate - and, for the gun and nozzle only, the
 robot's own base and arm. Workpiece bodies touching each other are not
-checked (all are environment).
+checked (all are environment). In Layers mode the part is being built up, so it
+isn't there to hit: part_for_mode leaves it out (substrate and fixture stay);
+Revolve and Surface coat an existing part, which is checked.
 
 Contacts that exist in the CAD as drawn (robot at its CAD pose and gantry
 position, turntable at 0 - parts that touch by design, e.g. the robot base
@@ -94,6 +96,12 @@ def _cell_mesh(poly: pv.PolyData, centre, half_size) -> trimesh.Trimesh | None:
         a, b, c = faces.T
         faces = faces[(a != b) & (b != c) & (a != c)]   # drop collapsed triangles
     return trimesh.Trimesh(pts, faces, process=False)
+
+
+def part_for_mode(mode: str | None, part_mesh):
+    """The part mesh to collision-check for a toolpath mode: none in Layers (built up
+    layer by layer, the part isn't there yet), the part in Revolve and Surface."""
+    return None if mode == "layers" else part_mesh
 
 
 class CollisionChecker:
