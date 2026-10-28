@@ -3,7 +3,6 @@
 from dataclasses import dataclass
 
 import numpy as np
-import trimesh
 from shapely.geometry import MultiPolygon, Polygon
 from shapely.ops import unary_union
 
@@ -23,6 +22,7 @@ def place_on_plate(vertices: np.ndarray) -> np.ndarray:
 
 def slice_mesh(vertices, faces, layer_thickness: float) -> list[Layer]:
     """Cut the mesh at the middle of every layer from z = 0 up to its top."""
+    import trimesh  # lazy: keeps app start-up fast
     mesh = trimesh.Trimesh(vertices, faces, process=True)
     top = vertices[:, 2].max()
     n = int(np.ceil(top / layer_thickness - 1e-9))

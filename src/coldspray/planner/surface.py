@@ -25,8 +25,6 @@ from typing import NamedTuple
 
 import numpy as np
 import shapely
-import trimesh
-from scipy.spatial import cKDTree
 from shapely.geometry import MultiPoint
 
 from coldspray.models import ProcessConfig
@@ -77,6 +75,7 @@ def chain(segments: np.ndarray, seg_normals: np.ndarray) -> list[tuple[np.ndarra
     """Join (n, 2, 3) segments sharing endpoints into polylines.
     Returns (points, point normals, closed) per polyline."""
     ends = segments.reshape(-1, 3)
+    from scipy.spatial import cKDTree  # lazy: keeps app start-up fast
     tree = cKDTree(ends)
     key = np.arange(len(ends))
     for i, j in sorted(tree.query_pairs(1e-5)):
@@ -147,6 +146,7 @@ def surface_strokes(vertices, faces, coat_mask, step_over, blend_mm=10.0, max_ti
     plus the number of points skipped for tilting too far from the mean normal.
     `angle_deg` turns the strokes about the mean normal from the longest side
     (no effect when the faces wrap round: the cuts are rings)."""
+    import trimesh  # lazy: keeps app start-up fast
     mesh = trimesh.Trimesh(np.asarray(vertices, float), np.asarray(faces)[np.asarray(coat_mask, bool)])
     if len(mesh.faces) == 0:
         return [], 0
@@ -202,6 +202,7 @@ def pattern_strokes(vertices, faces, coat_mask, proc, index=0, blend_mm=10.0, ma
     (strokes [(points, normals, closed, tag)], points skipped for tilt), or None when
     the region wraps round and can't be flattened. `index` plays the layer index
     (raster angle, seam position), so successive coats differ as layers do."""
+    import trimesh  # lazy: keeps app start-up fast
     mesh = trimesh.Trimesh(np.asarray(vertices, float), np.asarray(faces)[np.asarray(coat_mask, bool)])
     if len(mesh.faces) == 0:
         return [], 0
@@ -259,6 +260,7 @@ def coat_regions(vertices, faces, coat_mask) -> list[np.ndarray]:
     sel = np.flatnonzero(np.asarray(coat_mask, bool))
     if not len(sel):
         return []
+    import trimesh  # lazy: keeps app start-up fast
     mesh = trimesh.Trimesh(np.asarray(vertices, float), faces[sel], process=True, validate=False)
     groups = trimesh.graph.connected_components(mesh.face_adjacency, nodes=np.arange(len(sel)), min_len=1)
     out = []
