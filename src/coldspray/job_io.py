@@ -40,7 +40,7 @@ DEFAULTS = {
     },
     "toolpath": {"mode": "layers", "coats": 1, "process": {}},
     "purge": None,                 # PurgeConfig dict (incl. a solver-applied point); None: keep the cell's
-    "export": {"preflight": False},
+    "export": {"preflight": False, "spray_output": True, "split": False},
 }
 
 

@@ -46,7 +46,8 @@ def collect(win) -> dict:
     return job_io.plain(dict(
         version=job_io.JOB_VERSION, part=part, position=position,
         toolpath=dict(mode=win.mode.currentData(), coats=win.coats.value(), process=process),
-        purge=dict(win.purge_cfg), export=dict(preflight=win.preflight_check.isChecked())))
+        purge=dict(win.purge_cfg), export=dict(preflight=win.preflight_check.isChecked(),
+                    spray_output=win.spray_output_check.isChecked(), split=win.split_check.isChecked())))
 
 
 def _set(box, value):
@@ -161,6 +162,8 @@ def apply(win, job: dict):
             cell.purge = PurgeConfig(**win.purge_cfg)
         win._purge_load()
     win.preflight_check.setChecked(bool(job["export"].get("preflight", False)))
+    win.spray_output_check.setChecked(bool(job["export"].get("spray_output", True)))
+    win.split_check.setChecked(bool(job["export"].get("split", False)))
     widgets.refresh()
     win.go_to(TOOLPATH)
 

@@ -64,6 +64,8 @@ def test_save_open_same_settings_and_krl(tmp_path, monkeypatch):
         box = a.fields["infill_pattern"]
         box.setCurrentIndex(box.findData("oneway"))
         a.preflight_check.setChecked(True)
+        a.spray_output_check.setChecked(False)
+        a.split_check.setChecked(True)
         path = job_menu.save_job(a, tmp_path / "job.csjob")
         assert path.exists() and job_menu.recent(a)[0] == str(path.resolve())
         krl_a = _krl(a)
@@ -78,6 +80,7 @@ def test_save_open_same_settings_and_krl(tmp_path, monkeypatch):
         assert b.read_process() == a.read_process()
         assert b.mode.currentData() == a.mode.currentData()
         assert b.purge_cfg == a.purge_cfg and b.preflight_check.isChecked()
+        assert not b.spray_output_check.isChecked() and b.split_check.isChecked()
         assert job_menu.collect(b) == job_menu.collect(a)
         assert _krl(b) == krl_a
         assert not [d for d in a.dialogs + b.dialogs if d[0] == "warning"], a.dialogs + b.dialogs
