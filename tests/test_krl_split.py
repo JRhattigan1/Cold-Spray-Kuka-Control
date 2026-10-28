@@ -43,3 +43,22 @@ def test_no_cut_while_spraying_or_blended():
     assert "$OUT[1] = FALSE" in parts[on].split("$OUT[1] = TRUE")[1] or on == names[-1] or \
         any("$OUT[1] = FALSE" in parts[on].split("$OUT[1] = TRUE")[1] for _ in [0])
     assert all(len(n) <= 24 for n in parts)
+
+
+def test_circ_is_a_motion_line():
+    """A blended CIRC is never the last line of a part, and CIRCs stay in order."""
+    L = ["&ACCESS RVP", "&REL 1", "DEF demo( )", "$OUT[1] = FALSE", "", "PTP {A1 0}  ;home"]
+    for i in range(60):
+        L.append(f"CIRC {{X {i}}}, {{X {i}.5}} C_DIS" if i % 2 else f"LIN {{X {i}}}")
+    L += ["", "PTP {A1 0}  ;home", "END", ""]
+    t = "\n".join(L)
+    parts = split_krl(t, 10)
+    assert len(parts) > 3
+    seq = []
+    for n, body in parts.items():
+        if n == "demo":
+            continue
+        motion = [l for l in body.split("\n") if l.startswith(("LIN", "CIRC"))]
+        assert "C_DIS" not in motion[-1] or n == list(parts)[-1]
+        seq += motion
+    assert seq == [l for l in L if l.startswith(("LIN", "CIRC"))]

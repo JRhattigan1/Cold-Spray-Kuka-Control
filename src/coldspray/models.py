@@ -170,6 +170,8 @@ class ProcessConfig(BaseModel):
     surface_coats: int = _field(1, ge=1, level="advanced", description="Surface mode: coats over the selected faces")
     surface_max_tilt_deg: float = _field(60.0, ge=0, le=90, level="advanced",
                                          description="Surface mode: most the gun may tilt to stay normal to the face")
+    arcs: bool = _field(False, level="advanced",
+                        description="merge straight spray runs into one LIN and write curved ones as CIRC arcs (check on the robot in T1 first)")
 
 
 def field_level(name: str) -> str:
