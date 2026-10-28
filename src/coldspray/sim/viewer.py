@@ -18,7 +18,7 @@ import numpy as np
 import pyvista as pv
 from scipy.spatial.transform import Rotation
 
-from coldspray.cell import base_world, base_worlds, robroot, turntable_motion
+from coldspray.cell import axis_defaults, base_world, base_worlds, robroot, turntable_motion
 from coldspray.kinematics.robot import HOME_DEG, Robot
 from coldspray.models import CellConfig
 from coldspray.planner.position import gun_down_deg
@@ -535,7 +535,7 @@ class Scene:
         self.spray_actor.SetVisibility(True)
         self.cell_cfg = cell
 
-        s = path.sample(step, angle_step)
+        s = path.sample(step, angle_step, axis_defaults(cell))
         self.samples = s
         self.move_kind = [path.moves[i].kind for i in s.move_index]
         self.base_frames = base_worlds(cell, [s.axes_at(i) for i in range(len(s))])
