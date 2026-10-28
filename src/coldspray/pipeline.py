@@ -246,7 +246,7 @@ def plan_part(part: Part, proc: ProcessConfig, mode="layers", tilt_deg=0.0, rota
         mask = np.isin(part.face_ids, sorted(coat))
         path = plan_surface(placed_vertices(part), part.faces, mask, proc, part.name, table,
                             coats=proc.surface_coats,
-                            max_tilt_deg=proc.surface_max_tilt_deg)
+                            max_tilt_deg=proc.surface_max_tilt_deg, face_ids=same_surface_ids(part))
         n = proc.surface_coats
         note = (f"; {path.zigzag_regions} region(s) wrap round, zigzagged instead"
                 if path.zigzag_regions else "")
@@ -259,6 +259,31 @@ def plan_part(part: Part, proc: ProcessConfig, mode="layers", tilt_deg=0.0, rota
     path = plan_layers(layers, proc, part.name, table_axes=table, to_base=to_base).transformed(to_base)
     start = f" from start face {part.start_face}" if part.start_face is not None else ""
     return f"{len(layers)} layers{start}", _hold_gun(add_purge(path, cell), cell, roll_deg, wrist, proc.arcs)
+
+
+def same_surface_ids(part) -> np.ndarray:
+    """Part.face_ids with CAD faces on one plane or one cylinder given one id (a
+    cylinder split at its seam stays one face for the Surface per-face split)."""
+    ids = np.asarray(part.face_ids).copy()
+    seen: list[tuple[int, str, np.ndarray, float]] = []
+    surfaces = [(k, "plane", f.normal, f.point) for k, f in sorted(part.planar.items())]
+    surfaces += [(k, "cyl", c.axis, (c.point, c.radius)) for k, c in sorted(part.cylinders.items())]
+    for k, kind, d, at in surfaces:
+        d = np.asarray(d, float)
+        for j, kj, dj, atj in seen:
+            if kj != kind:
+                continue
+            if kind == "plane" and d @ dj > 1 - 1e-6 and abs((np.asarray(at) - atj) @ d) < 1e-3:
+                break
+            if kind == "cyl" and abs(d @ dj) > 1 - 1e-6 and abs(at[1] - atj[1]) < 1e-3:
+                off = np.asarray(at[0], float) - atj[0]
+                if np.linalg.norm(off - (off @ dj) * dj) < 1e-3:
+                    break
+        else:
+            seen.append((k, kind, d, np.asarray(at) if kind == "plane" else at))
+            continue
+        ids[ids == k] = j
+    return ids
 
 
 def _hold_gun(path, cell, roll_deg, wrist, arcs=False):
