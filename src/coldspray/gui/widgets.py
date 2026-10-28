@@ -11,7 +11,7 @@ import shiboken6
 from PySide6.QtCore import QEasingCurve, QPointF, QRectF, QSettings, Qt, QVariantAnimation, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QLinearGradient, QPainter, QPen
 from PySide6.QtWidgets import (
-    QButtonGroup, QDoubleSpinBox, QFrame, QGraphicsDropShadowEffect, QHBoxLayout, QLabel, QLayout, QPushButton, QSizePolicy, QVBoxLayout,
+    QButtonGroup, QComboBox, QDoubleSpinBox, QGridLayout, QFrame, QGraphicsDropShadowEffect, QHBoxLayout, QLabel, QLayout, QPushButton, QSizePolicy, QVBoxLayout,
     QWidget,
 )
 
@@ -326,6 +326,42 @@ def wrap_label(text: str = "") -> QLabel:
 SIMPLE, ADVANCED = "simple", "advanced"
 SETTINGS_SCOPE = ("ColdSpray", "KukaControl")    # QSettings organisation, application
 MODE_KEY = "ui/mode"
+
+
+def fit_combo(combo: QComboBox, n: int = 12) -> QComboBox:
+    """Let a combo shrink to ~n characters in a narrow sidebar; its popup stays as wide as its items."""
+    combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+    combo.setMinimumContentsLength(n)
+    combo.setSizePolicy(QSizePolicy.Policy.Expanding, combo.sizePolicy().verticalPolicy())
+    view = combo.view()
+    fm = view.fontMetrics()
+    w = max((fm.horizontalAdvance(combo.itemText(i)) for i in range(combo.count())), default=0)
+    if w:
+        view.setMinimumWidth(w + 40)
+    return combo
+
+
+class TileGrid(QWidget):
+    """Tiles laid out in `cols` columns (default 2); add() fills row by row."""
+
+    def __init__(self, cols: int = 2, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._cols = max(1, cols)
+        self._n = 0
+        self._grid = QGridLayout(self)
+        self._grid.setContentsMargins(0, 0, 0, 0)
+        self._grid.setSpacing(6)
+        for c in range(self._cols):
+            self._grid.setColumnStretch(c, 1)
+
+    def add(self, widget: QWidget) -> QWidget:
+        widget.setSizePolicy(QSizePolicy.Policy.Ignored, widget.sizePolicy().verticalPolicy())
+        self._grid.addWidget(widget, self._n // self._cols, self._n % self._cols)
+        self._n += 1
+        return widget
+
+    def count(self) -> int:
+        return self._n
 
 
 @dataclass
