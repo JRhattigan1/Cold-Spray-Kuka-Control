@@ -124,6 +124,7 @@ class CellConfig(BaseModel):
     ptp_velocity_pct: int
     home_deg: list[float]
     gun_max_down_deg: float = 70.0   # spray direction below horizontal allowed
+    cable_windup_deg: dict[str, float] = {"A4": 270.0, "A6": 270.0}  # most each wrist axis turns from home (gun cables)
     purge: PurgeConfig | None = None
 
 

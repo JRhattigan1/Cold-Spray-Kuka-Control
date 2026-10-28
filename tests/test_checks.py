@@ -153,3 +153,18 @@ def test_flip_row(cell):
     sc.move_kind = ["LIN"] * 6
     sc.samples = SimpleNamespace(move_index=np.array([0, 0, 0, 1, 1, 1]))
     assert by_key(simulate_checks(sc, cell, "off"))["flip"].state == "ok"
+
+
+def test_cable_windup_rows(cell):
+    """A4 / A6 turned past cell.cable_windup_deg from home: one warning row per axis, at the first sample."""
+    sc = fake_scene(6)
+    sc.joints = np.zeros((6, 6))
+    sc.samples = SimpleNamespace(move_index=np.zeros(6, int))
+    sc.move_kind = ["PTP"] * 6
+    assert not [k for k in by_key(simulate_checks(sc, cell, "off")) if k.startswith("windup")]
+    lim = cell.cable_windup_deg["A6"]
+    sc.joints[4:, 5] = -(lim + 10.0)
+    sc.joints[5, 3] = np.nan                          # unsolved samples are not counted
+    c = by_key(simulate_checks(sc, cell, "off"))
+    assert "windup_A4" not in c
+    assert (c["windup_A6"].state, c["windup_A6"].sample, c["windup_A6"].count) == ("warn", 4, 2)

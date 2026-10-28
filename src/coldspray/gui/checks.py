@@ -92,6 +92,26 @@ def _flips(scene):
     return np.flatnonzero(bad) + 1
 
 
+def _windup(scene, cell) -> list[Check]:
+    """A warning row per wrist axis that turns further from home than cell.cable_windup_deg
+    allows (the gun's cables and powder hose wind round it); no rows without joints."""
+    joints = getattr(scene, "joints", None)
+    if joints is None or len(joints) != scene.n_points or not len(joints):
+        return []
+    out = []
+    for axis, limit in cell.cable_windup_deg.items():
+        k = int(axis[1:]) - 1
+        with np.errstate(invalid="ignore"):
+            turn = np.abs(np.asarray(joints, float)[:, k] - cell.home_deg[k])
+        over = turn > limit
+        n = int(over.sum())
+        if n:
+            out.append(Check(f"windup_{axis}", "warn", f"{axis} turns more than {limit:.0f}° at {n} points",
+                             f"Up to {np.nanmax(turn):.0f}° from home: the gun cables and powder hose "
+                             f"wind round {axis}", _first(over), n))
+    return out
+
+
 def simulate_checks(scene, cell, collision_state, solve_report=None) -> list[Check]:
     """Reach, gun angle and collision rows for the toolpath shown in `scene`."""
     if not getattr(scene, "n_points", 0):
@@ -118,6 +138,8 @@ def simulate_checks(scene, cell, collision_state, solve_report=None) -> list[Che
                    Check("flip", "bad", f"{len(flips)} configuration flips inside linear moves",
                          f"A joint jumps more than {JUMP_DEG:.0f}° between neighbouring points of one LIN move; "
                          "the real robot cannot follow that", int(flips[0]), len(flips)))
+
+    out.extend(_windup(scene, cell))
 
     if isinstance(collision_state, str):
         if collision_state == "off":

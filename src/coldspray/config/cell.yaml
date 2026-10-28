@@ -63,6 +63,10 @@ home_deg: [0, -90, 90, 0, 0, 0]
 # most this many degrees below horizontal. Steeper points are flagged.
 gun_max_down_deg: 70.0
 
+# Gun cables and powder hose wind round the wrist: most A4 / A6 may turn from
+# home before a warning. CHECK against the cable dressing on the robot.
+cable_windup_deg: {A4: 270.0, A6: 270.0}
+
 # Warm-up / powder purge point in free space (optional). The gun goes here,
 # switches the spray on and dwells, then travels to the part with the spray on;
 # it returns at the end (and every N layers) and switches off here.
