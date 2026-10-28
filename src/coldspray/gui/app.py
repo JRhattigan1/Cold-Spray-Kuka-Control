@@ -11,7 +11,8 @@ from concurrent.futures import ThreadPoolExecutor
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QApplication, QFrame, QHBoxLayout, QMainWindow, QMenu, QPushButton, QScrollArea, QStackedWidget, QToolButton,
+    QApplication, QFrame, QHBoxLayout, QMainWindow, QMenu, QPushButton, QScrollArea, QSplitter, QStackedWidget,
+    QToolButton,
     QVBoxLayout, QWidget,
 )
 from pyvistaqt import QtInteractor
@@ -28,7 +29,14 @@ from coldspray.sim.scene import gantry_offset, load_assets, make_gun
 from coldspray.sim.spacemouse import SpaceMouse
 from coldspray.sim.viewer import Scene, fly
 
-PANEL_WIDTH = 380
+PANEL_WIDTH = 460      # sidebar start width (logical px: Qt 6 scales these by the screen's DPI)
+PANEL_MIN = 400        # narrowest the splitter lets the sidebar go before its forms clip
+VIEW_MIN = 480         # narrowest 3D view
+
+
+def fit_size(avail_w: int, avail_h: int, want=(1600, 950)) -> tuple[int, int]:
+    """Start size: the wanted size, shrunk to 92 % of a smaller screen's available area."""
+    return min(want[0], int(avail_w * 0.92)), min(want[1], int(avail_h * 0.92))
 
 
 class MainWindow(QMainWindow, PartStep, PositionStep, ToolpathStep, SimulateStep, ExportStep):
@@ -36,7 +44,9 @@ class MainWindow(QMainWindow, PartStep, PositionStep, ToolpathStep, SimulateStep
         """settings: QSettings for the saved UI mode (default: widgets.settings(); tests pass their own)."""
         super().__init__()
         self.setWindowTitle("Cold Spray KUKA Control")
-        self.resize(1600, 950)
+        screen = QApplication.primaryScreen()
+        avail = screen.availableGeometry() if screen else None
+        self.resize(*fit_size(avail.width(), avail.height()) if avail else (1600, 950))
         self.assets = None
         self.scene = None
         self.source = None      # the part as loaded, with the choices made in the Part step
@@ -97,9 +107,9 @@ class MainWindow(QMainWindow, PartStep, PositionStep, ToolpathStep, SimulateStep
 
         # Left: one scrolling panel per step (built in order: later panels use earlier widgets)
         self.panels = QStackedWidget()
-        self.panels.setFixedWidth(PANEL_WIDTH)
         self.sidebar = QFrame()             # floating glass card around the panels
         self.sidebar.setObjectName("sidebar")
+        self.sidebar.setMinimumWidth(PANEL_MIN)
         side = QVBoxLayout(self.sidebar)
         side.setContentsMargins(6, 6, 6, 6)
         side.addWidget(self.panels)
@@ -107,6 +117,10 @@ class MainWindow(QMainWindow, PartStep, PositionStep, ToolpathStep, SimulateStep
         for build in (self._build_part_panel, self._build_position_panel, self._build_toolpath_panel,
                       self._build_simulate_panel, self._build_export_panel):
             self.panels.addWidget(self._scroll(build()))
+        # The sidebar never gets narrower than its widest panel needs (plus scroll bar and card margins)
+        need = max(self.panels.widget(i).widget().minimumSizeHint().width() for i in range(self.panels.count()))
+        bar = self.style().pixelMetric(self.style().PixelMetric.PM_ScrollBarExtent)
+        self.sidebar.setMinimumWidth(max(PANEL_MIN, need + bar + 12))
 
         # Right: the 3D views, each with a toolbar row above it (filled by view_toolbar)
         self.views = QStackedWidget()
@@ -121,12 +135,21 @@ class MainWindow(QMainWindow, PartStep, PositionStep, ToolpathStep, SimulateStep
             vbox.addWidget(plotter.interactor, 1)
             self.views.addWidget(view)
 
+        # Sidebar | 3D view share the body through a splitter: drag the gap to widen the panel;
+        # on window resize the 3D view takes the change, the sidebar keeps its width.
+        self.views.setMinimumWidth(VIEW_MIN)
         body = QWidget()
         hbox = QHBoxLayout(body)
         hbox.setContentsMargins(14, 10, 14, 14)
-        hbox.setSpacing(14)
-        hbox.addWidget(self.sidebar)
-        hbox.addWidget(self.views, 1)
+        self.splitter = QSplitter(Qt.Horizontal)
+        self.splitter.setHandleWidth(14)        # the gap between the cards doubles as the handle
+        self.splitter.setChildrenCollapsible(False)
+        self.splitter.addWidget(self.sidebar)
+        self.splitter.addWidget(self.views)
+        self.splitter.setStretchFactor(0, 0)
+        self.splitter.setStretchFactor(1, 1)
+        hbox.addWidget(self.splitter)
+        self._split_set = False       # start widths applied on first show, once the splitter has its size
         central = QWidget()
         vbox = QVBoxLayout(central)
         vbox.setContentsMargins(0, 0, 0, 0)
@@ -146,6 +169,14 @@ class MainWindow(QMainWindow, PartStep, PositionStep, ToolpathStep, SimulateStep
         self.statusBar().showMessage("Starting...")
         QTimer.singleShot(50, self._startup)
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self._split_set:        # sidebar at PANEL_WIDTH (or its minimum), the 3D view gets the rest
+            self._split_set = True
+            total = max(self.splitter.width(), self.width() - 28)
+            side = max(PANEL_WIDTH, self.sidebar.minimumWidth())
+            self.splitter.setSizes([side, max(VIEW_MIN, total - side - self.splitter.handleWidth())])
+
     # --- layout ---------------------------------------------------------------
     @staticmethod
     def _scroll(inner) -> QScrollArea:
@@ -153,6 +184,7 @@ class MainWindow(QMainWindow, PartStep, PositionStep, ToolpathStep, SimulateStep
         scroll.setWidget(inner)
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)   # forms reflow to the width, never clip
         return scroll
 
     def _toolpath_notice(self) -> QWidget:
@@ -240,6 +272,7 @@ class MainWindow(QMainWindow, PartStep, PositionStep, ToolpathStep, SimulateStep
             f"#sidebar {{ background: {t['panel']}e6; border: 1px solid {t['line']}; border-radius: 22px; }}"
             " #sidebar QScrollArea, #sidebar QScrollArea > QWidget,"
             " #sidebar QScrollArea > QWidget > QWidget { background: transparent; }")
+        self.splitter.setStyleSheet("QSplitter::handle { background: transparent; }")
         self.mode_toggle.setStyleSheet(
             f"#modeToggle {{ background: {t['soft']}; border: 1px solid {t['line']}; border-radius: 14px; }}"
             " #modeToggle QPushButton { border-radius: 12px; border: none; padding: 4px 14px;"

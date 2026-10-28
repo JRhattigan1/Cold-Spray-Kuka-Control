@@ -170,6 +170,11 @@ def _glass_css(name: str, radius: int = 14) -> str:
             f"QFrame#{name} QLabel {{ background: transparent; }}")
 
 
+def short_label(text: str) -> str:
+    """Segment label: the text before any " (explanation)"."""
+    return text.split(" (", 1)[0].strip()
+
+
 class SegmentedCapsule(QFrame):
     """Glass segmented capsule that mirrors a QComboBox (the combo stays the data API)."""
 
@@ -181,7 +186,9 @@ class SegmentedCapsule(QFrame):
         lay.setContentsMargins(3, 3, 3, 3)
         lay.setSpacing(2)
         for i in range(combo.count()):
-            b = QPushButton(combo.itemText(i))
+            text = combo.itemText(i)
+            b = QPushButton(short_label(text))     # "Layers (build up ...)" -> "Layers"; full text as tooltip
+            b.setToolTip(text)
             b.setCheckable(True)
             b.setCursor(Qt.PointingHandCursor)
             b.clicked.connect(lambda _=False, i=i: combo.setCurrentIndex(i))
