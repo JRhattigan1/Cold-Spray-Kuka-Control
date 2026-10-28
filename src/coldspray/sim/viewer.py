@@ -551,6 +551,8 @@ class Scene:
         targets = [inv[id(r)] @ b @ p for r, b, p in zip(roots, self.base_frames, s.poses)]
         self.joints = self.robot.ik_path(targets, seed_deg=HOME_DEG if home is None else home,
                                          hint=path.hint_for(s.move_index))
+        from coldspray.planner.solver import ptp_in_joint_space, ptp_moves
+        self.joints = ptp_in_joint_space(ptp_moves(path, cell), s.move_index, self.joints)   # PTP as the robot moves
         self.reachable = ~np.isnan(self.joints[:, 0])
         self.gun_down = gun_down_deg(self.base_frames @ s.poses)
         self.steep = (self.gun_down > gun_limit_deg + 1e-6) if gun_limit_deg is not None             else np.zeros(len(s), bool)

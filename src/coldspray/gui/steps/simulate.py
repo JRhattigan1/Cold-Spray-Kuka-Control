@@ -202,7 +202,7 @@ class SimulateStep:
                 self.checker.set_gun(robot, gun)
                 self.checker.set_workpiece(part, substrate, fixture)
                 self.checker.cell = cell
-            return job, self.checker.check_path(joints, axes_at, every=CHECK_EVERY,
+            return job, self.checker.check_path(joints, axes_at, every=CHECK_EVERY, home=cell.home_deg,
                                                 progress=self.job.set_fraction, cancel=self.job.is_cancelled)
 
         self.job.start("Collision check...")
