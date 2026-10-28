@@ -158,3 +158,28 @@ def test_purge_to_start_rises_over_the_part(setup):
     assert n > 2                                   # purge back, visit, plus a via-point
     top = max(x.pose[2, 3] for x in path.moves if x.gun_on)
     assert any(x.tag == "purge" and x.pose[2, 3] > top + 20 for x in m[:n])
+
+
+def test_every_n_purge_trips_rise_over_the_part_both_ways(setup):
+    """S7G/3: mid-run purge trips (every_n_layers) get clearance vias going out and coming back."""
+    _, cell, _ = setup
+    at = lambda x, z: spray_frame((x, 0.0, z), (0, 0, -1), (1, 0, 0))
+    moves = []
+    for k in range(3):                 # layers retract low on the far side of the part from the purge
+        z = 30.0 + 2 * k
+        moves += [Move(at(60, z + 10), 250, kind="PTP" if k == 0 else "LIN",
+                       axes={"E2": 0.0, "E5": 0.0} if k == 0 else {}, tag="approach"),
+                  Move(at(60, z), 20, gun_on=True, tag="infill"),
+                  Move(at(-50, z), 20, gun_on=True, tag="infill"),
+                  Move(at(60, z), 20, gun_on=True, tag="infill"),
+                  Move(at(60, z + 10), 250, tag="approach")]
+    path = Toolpath("p", moves)
+    pt = base_world(cell)[:3, 3] + [-200.0, 0.0, 30.0]
+    m = add_purge(path, _cell(cell, point=tuple(pt), every_n_layers=1, at_start=False, at_end=False)).moves
+    top = max(x.pose[2, 3] for x in path.moves if x.gun_on)
+    visits = [i for i, x in enumerate(m) if x.tag == "purge" and x.dwell_s > 0]
+    assert len(visits) == 2
+    for v in visits:
+        assert m[v - 1].tag == "purge" and m[v - 1].pose[2, 3] > top + 20     # rose on the way out
+        assert m[v + 1].tag == "purge" and m[v + 1].pose[2, 3] > top + 20     # and on the way back
+        assert all(x.gun_on for x in m[v - 2:v + 3])

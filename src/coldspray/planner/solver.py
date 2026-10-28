@@ -12,6 +12,8 @@ the same path if it can't help. Each lives in its own module:
   arm      planner/solve_arm.py     arm/wrist configuration along the path (no A4/A6 wind-up)
   angle    planner/solve_angle.py   gun angle within +-angle_band_deg, and lean along travel
   reroute  planner/solve_route.py   lift / go round on approach, jump and purge moves
+  purge    planner/solve_purge.py   move the purge point in X/Y/Z (spray direction kept)
+  gantry   planner/solve_gantry.py  one gantry E1 for the whole program (suggested in the report)
   e1       planner/solve_e1.py      another gantry E1 for the layers that need it
 
 Moves may carry the gantry in `axes` ("E1"); without it the cell's E1 is used.
@@ -34,6 +36,8 @@ class SolveOptions:
     ramp_mm: float = 20.0            # changes blend in/out over this path length
     reroute: bool = True
     e1_per_layer: bool = True
+    gantry: bool = True              # one whole-program E1 (tried before e1 per layer)
+    purge: bool = True               # move the purge point (not its spray direction)
     sample_mm: float = 5.0           # path sampling, as Simulate
     angle_step_deg: float = 5.0
 
@@ -50,6 +54,7 @@ class Issue:
 class SolveReport:
     fixed: list[str] = field(default_factory=list)      # one line per lever that changed the path
     unfixed: list[Issue] = field(default_factory=list)
+    suggested: dict = field(default_factory=dict)          # e.g. {"gantry_e1": mm, "purge_point": (x, y, z)}
 
     @property
     def ok(self) -> bool:
@@ -177,7 +182,8 @@ def issues_in(path: Toolpath, ctx: Context, lo: int, hi: int) -> list[Issue]:
 
 
 LEVER_LABELS = {"arm": "arm / elbow choice", "angle": "gun angle band and lean",
-                "reroute": "rerouting approach and jump moves", "e1": "E1 position per layer"}
+                "reroute": "rerouting approach and jump moves", "e1": "E1 position per layer",
+                "gantry": "one gantry E1 for the whole program", "purge": "moving the purge point"}
 
 
 def _levers():
@@ -188,6 +194,8 @@ def _levers():
             ("arm", "solve_arm", "fix_arm", lambda o: True),
             ("angle", "solve_angle", "fix_angle", lambda o: o.angle_band_deg > 0 or o.lean_max_deg > 0),
             ("reroute", "solve_route", "fix_route", lambda o: o.reroute),
+            ("purge", "solve_purge", "fix_purge", lambda o: o.purge),
+            ("gantry", "solve_gantry", "fix_gantry", lambda o: o.gantry),
             ("e1", "solve_e1", "fix_e1", lambda o: o.e1_per_layer)):
         try:
             mod = __import__(f"coldspray.planner.{module}", fromlist=[attr])
@@ -207,12 +215,14 @@ def solve(path: Toolpath, ctx: Context) -> tuple[Toolpath, SolveReport]:
             continue
         before = len(issues)
         ctx.log(f"Solver: trying {LEVER_LABELS.get(name, name)}...")
+        ctx.suggested = {}               # a lever may leave a suggestion for the cell set-up here
         new = fn(path, issues, ctx)
         if new is path:
             continue
         _, _, after = find_issues(new, ctx)
         if len(after) < before:          # keep a lever's change only if it helped
             report.fixed.append(f"{name}: {before - len(after)} of {before} problem points fixed")
+            report.suggested.update(getattr(ctx, "suggested", None) or {})
             ctx.log(f"Solver: {report.fixed[-1]}")
             path, issues = new, after
     report.unfixed = issues
