@@ -86,7 +86,7 @@ def test_fix_e1_scores_only_the_moves_its_e1_governs(setup, monkeypatch):
     car = e1_carriers(p, starts)
     assert car[1] is None and car[0] is not None and car[2] is not None
     spans = []
-    monkeypatch.setattr(se, "find_issues", lambda *a: None)
-    monkeypatch.setattr(se, "issues_in", lambda p, ctx, lo, hi: spans.append((lo, hi)) or [])
+    monkeypatch.setattr(se, "prime_seed", lambda *a: None)
+    monkeypatch.setattr(se, "count_in", lambda p, ctx, lo, hi, limit=None: spans.append((lo, hi)) or 0)
     fix_e1(p, [Issue(0, starts[1], "unreachable")], Context(robot, cell, log=lambda _: None))
     assert spans and set(spans) == {(car[0], car[2] - 1)}
