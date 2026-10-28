@@ -16,8 +16,8 @@ from dataclasses import replace
 
 import numpy as np
 
-from coldspray.cell import axis_defaults
-from coldspray.planner.solver import Context, Issue, find_issues, ptp_in_joint_space, ptp_moves, robot_targets
+from coldspray.planner.solver import (Context, Issue, _check, _sampled, find_issues, ptp_in_joint_space,
+                                      ptp_moves)
 from coldspray.toolpath.model import Toolpath
 
 TAGS = {"approach", "jump", "purge"}
@@ -29,8 +29,7 @@ def count_in(path: Toolpath, ctx: Context, lo: int, hi: int, limit: int | None =
     but it stops once the count reaches `limit` (then the result is only >= limit). The
     expensive collision checks run on every `stride`-th reachable sample first, so a bad
     candidate is usually dropped after a fraction of them. IK and seeds are those of issues_in."""
-    o = ctx.opts
-    s = path.sample(o.sample_mm, o.angle_step_deg, axis_defaults(ctx.cell))
+    s, all_targets, hint = _sampled(path, ctx)
     sel = np.flatnonzero((s.move_index >= lo) & (s.move_index <= hi))
     if not len(sel):
         return 0
@@ -40,8 +39,7 @@ def count_in(path: Toolpath, ctx: Context, lo: int, hi: int, limit: int | None =
         before = np.flatnonzero(last[0].move_index < lo)
         if len(before) and not np.isnan(last[1][before[-1], 0]):
             seed = last[1][before[-1]]
-    targets = robot_targets(s, ctx.cell)[sel]
-    hint = path.hint_for(s.move_index)
+    targets = all_targets[sel]
     joints = ctx.robot.ik_path(targets, seed_deg=seed, hint=None if hint is None else hint[sel])
     joints = ptp_in_joint_space(ptp_moves(path, ctx.cell), s.move_index[sel], joints,
                                 before=seed if last is not None or lo == 0 else None)
@@ -52,7 +50,7 @@ def count_in(path: Toolpath, ctx: Context, lo: int, hi: int, limit: int | None =
     rows = np.flatnonzero(reach)
     order = np.concatenate([rows[::stride], np.setdiff1d(rows, rows[::stride])]) if stride > 1 else rows
     for r in order:
-        if ctx.checker.check(joints[r], s.axes_at(sel[r])):
+        if _check(ctx, joints[r], s.axes_at(sel[r])) is not None:
             n += 1
             if limit is not None and n >= limit:
                 break
@@ -63,12 +61,10 @@ def prime_seed(path: Toolpath, ctx: Context, lo: int) -> None:
     """Leave ctx.last as a full find_issues would for what `issues_in(.., lo, ..)` reads of it:
     the joints of the samples before move `lo` (IK only, no collision checks, nothing after)."""
     from types import SimpleNamespace
-    o = ctx.opts
-    s = path.sample(o.sample_mm, o.angle_step_deg, axis_defaults(ctx.cell))
+    s, targets, hint = _sampled(path, ctx)
     n = int(np.searchsorted(s.move_index, lo, side="left"))     # move_index is non-decreasing
     seed = ctx.cell.home_deg if ctx.seed is None else ctx.seed
-    hint = path.hint_for(s.move_index)
-    joints = ctx.robot.ik_path(robot_targets(s, ctx.cell)[:n], seed_deg=seed, hint=None if hint is None else hint[:n])
+    joints = ctx.robot.ik_path(targets[:n], seed_deg=seed, hint=None if hint is None else hint[:n])
     joints = ptp_in_joint_space(ptp_moves(path, ctx.cell), s.move_index[:n], joints)
     ctx.last = (SimpleNamespace(move_index=s.move_index[:n]), joints)
 

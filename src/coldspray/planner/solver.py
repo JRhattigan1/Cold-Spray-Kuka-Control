@@ -158,20 +158,27 @@ def _check(ctx: Context, q, axes) -> str | None:
     return cache[key]
 
 
-def find_issues(path: Toolpath, ctx: Context):
-    """(samples, joints, issues): joints NaN where unreachable; one Issue per bad sample."""
+def find_issues(path: Toolpath, ctx: Context, limit: int | None = None):
+    """(samples, joints, issues): joints NaN where unreachable; one Issue per bad sample.
+    With `limit`, collision checks stop once more than `limit` problem points are found
+    (issues then holds limit + 1 of them): enough for levers that only compare counts.
+    IK runs over the whole path and ctx.last is set either way."""
     s, targets, hint = _sampled(path, ctx)
     seed = ctx.cell.home_deg if ctx.seed is None else ctx.seed
     joints = ctx.robot.ik_path(targets, seed_deg=seed, hint=hint)
     joints = ptp_in_joint_space(ptp_moves(path, ctx.cell), s.move_index, joints)
-    issues = [Issue(i, int(s.move_index[i]), "unreachable") for i in np.flatnonzero(np.isnan(joints[:, 0]))]
+    ctx.last = (s, joints)
+    issues = [Issue(int(i), int(s.move_index[i]), "unreachable") for i in np.flatnonzero(np.isnan(joints[:, 0]))]
+    if limit is not None and len(issues) > limit:
+        return s, joints, issues[:limit + 1]
     if ctx.checker is not None:
         for i in np.flatnonzero(~np.isnan(joints[:, 0])):
             detail = _check(ctx, joints[i], s.axes_at(i))
             if detail is not None:
                 issues.append(Issue(int(i), int(s.move_index[i]), "collision", detail))
+                if limit is not None and len(issues) > limit:
+                    break
     issues.sort(key=lambda x: x.sample)
-    ctx.last = (s, joints)
     return s, joints, issues
 
 

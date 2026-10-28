@@ -81,6 +81,7 @@ def test_suggestion_rows_and_apply_sets_the_cell_e1(monkeypatch):
     rep = SolveReport(fixed=["gantry: 3 of 3 problem points fixed"], suggested={"gantry_e1": 2100.0})
     assert any(r.title == "Suggested gantry E1 = 2100 mm" for r in solve_checks(rep))
     from coldspray.gui.app import MainWindow
+    monkeypatch.setattr(MainWindow, "_startup", lambda self: None)   # queued asset load would overwrite the E1 box
     w = MainWindow()
     w._refresh_steps = lambda: None
     try:

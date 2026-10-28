@@ -13,11 +13,9 @@ from dataclasses import replace
 
 import numpy as np
 
-from coldspray.cell import axis_defaults
 from coldspray.planner import solver as _solver
 from coldspray.planner.solve_e1 import MAX_SHIFT_MM
-from coldspray.planner.solver import (Context, Issue, e1_of, ptp_in_joint_space, ptp_moves,
-                                      robot_targets)
+from coldspray.planner.solver import Context, e1_of
 
 COARSE_MM = 250.0
 FINE_MM = 50.0
@@ -38,37 +36,8 @@ def with_gantry(path, axis, e1):
 def count_issues(path, ctx: Context, limit=None) -> list:
     """find_issues(path, ctx)[2] - but once more than `limit` problem points are found the
     rest is not collision-checked (the list then stops at limit + 1). Candidates are only
-    compared, so a candidate already worse than the best needn't be counted out. IK runs
-    over the whole path as in find_issues and ctx.last is set the same way."""
-    sampled = getattr(_solver, "_sampled", None)          # S8F: per-path sample cache
-    if sampled is not None:
-        s, targets, hint = sampled(path, ctx)
-    else:
-        o = ctx.opts
-        s = path.sample(o.sample_mm, o.angle_step_deg, axis_defaults(ctx.cell))
-        targets, hint = robot_targets(s, ctx.cell), path.hint_for(s.move_index)
-    seed = ctx.cell.home_deg if ctx.seed is None else ctx.seed
-    joints = ctx.robot.ik_path(targets, seed_deg=seed, hint=hint)
-    joints = ptp_in_joint_space(ptp_moves(path, ctx.cell), s.move_index, joints)
-    ctx.last = (s, joints)
-    bad = np.isnan(joints[:, 0])
-    issues = [Issue(int(i), int(s.move_index[i]), "unreachable") for i in np.flatnonzero(bad)]
-    if limit is not None and len(issues) > limit:
-        return issues[:limit + 1]
-    if ctx.checker is not None:
-        check = getattr(_solver, "_check", None)          # S8F: cached collision results
-        for i in np.flatnonzero(~bad):
-            if check is not None:
-                detail = check(ctx, joints[i], s.axes_at(i))
-            else:
-                pairs = ctx.checker.check(joints[i], s.axes_at(i))
-                detail = ", ".join(f"{a}/{b}" for a, b in sorted(pairs)) if pairs else None
-            if detail is not None:
-                issues.append(Issue(int(i), int(s.move_index[i]), "collision", detail))
-                if limit is not None and len(issues) > limit:
-                    break
-    issues.sort(key=lambda x: x.sample)
-    return issues
+    compared, so a candidate already worse than the best needn't be counted out."""
+    return _solver.find_issues(path, ctx, limit)[2]
 
 
 def fix_gantry(path, issues, ctx: Context):
