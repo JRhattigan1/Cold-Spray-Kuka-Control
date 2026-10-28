@@ -194,6 +194,7 @@ class SimulateStep:
         job, a = self.check_id, self.assets
         axes_at = self.scene.samples.axes_at
         e1 = cell.gantry.position_mm if cell.gantry else None
+        first_leg = self._home_first_leg(robot, cell, joints)
 
         def work():
             if job != self.check_id:

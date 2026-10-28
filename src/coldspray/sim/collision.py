@@ -294,10 +294,12 @@ class CollisionChecker:
         return pairs - self.allowed
 
     def check_path(self, joints, axes_per_sample, every=1, progress=None, cancel=None,
-                   home=None) -> list[Collision]:
+                   home=None, first_leg=None) -> list[Collision]:
         """Check every `every`-th sample (and the last); unreachable samples are skipped.
         `home`: also check the PTPs HOME -> first sample and last sample -> HOME (in joint
         space, as the KRL moves them); a hit there is reported at the first / last sample.
+        `first_leg`: joints along HOME -> first sample when the KRL does not move it as a PTP
+        (solver.home_first_leg: a LIN when move 0 is a LIN); None = the PTP joint sweep.
 
         `progress(fraction)`: called with rising values 0..1 (1.0 at the end).
         `cancel()`: polled before each sample; True stops early and returns the hits
@@ -336,7 +338,7 @@ class CollisionChecker:
                 hits.append(Collision(i, pairs))
         if home is not None:
             by = {h.sample: h for h in hits}
-            for i, pairs in self._home_sweeps(joints, axes_per_sample, home):
+            for i, pairs in self._home_sweeps(joints, axes_per_sample, home, first_leg):
                 if i in by:
                     by[i].pairs |= pairs
                 else:
@@ -346,13 +348,14 @@ class CollisionChecker:
             progress(1.0)
         return hits
 
-    def _home_sweeps(self, joints, axes_per_sample, home) -> list[tuple[int, set]]:
+    def _home_sweeps(self, joints, axes_per_sample, home, first_leg=None) -> list[tuple[int, set]]:
         """(sample, pairs) hit on the PTP HOME -> sample 0 and sample n-1 -> HOME."""
         from coldspray.planner.solver import joint_sweep
         out = []
-        for i, qs in ((0, joint_sweep(home, joints[0])), (len(joints) - 1, joint_sweep(joints[-1], home))):
+        first = joint_sweep(home, joints[0]) if first_leg is None else np.asarray(first_leg, float).reshape(-1, 6)
+        for i, qs in ((0, first), (len(joints) - 1, joint_sweep(joints[-1], home))):
             pairs = set()
-            for q in qs:
+            for q in qs[~np.isnan(qs[:, 0])]:
                 pairs |= self.check(q, axes_per_sample(i))
             if pairs:
                 out.append((i, pairs))
