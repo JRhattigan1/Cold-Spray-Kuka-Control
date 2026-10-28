@@ -23,13 +23,25 @@ when the robot reaches the point rather than early. A move's `dwell_s` is a
 WAIT SEC after it (e.g. at a powder purge point).
 """
 
+from dataclasses import dataclass
+
 import numpy as np
 
 from coldspray.cell import base_in_robot, base_world, base_worlds, gantry_position, table_axis_names
 from coldspray.kinematics.robot import Robot
 from coldspray.models import CellConfig, ProcessConfig
 from coldspray.toolpath.model import Toolpath
+from coldspray.post.joints import program_joints
+from coldspray.post.krl_preflight import preflight_lines
 from coldspray.transforms import xyzabc
+
+
+@dataclass(frozen=True)
+class KRLOptions:
+    """Optional program additions; the defaults leave the output unchanged.
+    preflight: HALT before motion if $ACT_TOOL/$ACT_BASE differ or the data is untaught (post/krl_preflight.py)."""
+    preflight: bool = False
+    check_taught: bool = True
 
 
 class KRLError(Exception):
@@ -49,9 +61,14 @@ def _pos(pose, external: dict[str, float] | None = None) -> str:
 
 
 def to_krl(path: Toolpath, robot: Robot, cell: CellConfig, proc: ProcessConfig,
-           part_base: np.ndarray | None = None) -> str:
+           part_base: np.ndarray | None = None,
+           options: KRLOptions | None = None) -> str:
     """`part_base`: faceplate BASE <- KRL base on the part (Part.placement @ Part.krl_base),
-    or None to write relative to the faceplate BASE."""
+    or None to write relative to the faceplate BASE.
+    PTP joints are the ones Simulate solves and collision-checks (post/joints.program_joints);
+    where that has none (NaN) robot.ik seeded from the last PTP is used.
+    `options`: KRLOptions (preflight block); None = none."""
+    pj = program_joints(path, robot, cell)
     name = path.name[:24]
     gun = f"$OUT[{cell.gun_output}]"
     home = cell.home_deg
@@ -103,6 +120,8 @@ def to_krl(path: Toolpath, robot: Robot, cell: CellConfig, proc: ProcessConfig,
         ";ENDFOLD",
         f"BAS(#TOOL, {cell.tool_number})",
         f"BAS(#BASE, {base_number})",
+        *(preflight_lines(cell.tool_number, base_number, options.check_taught)
+          if options is not None and options.preflight else []),
         f"BAS(#VEL_PTP, {cell.ptp_velocity_pct})",
         f"$APO.CDIS = {proc.approx_distance_mm:.1f}",
         f"{gun} = FALSE",
@@ -135,10 +154,13 @@ def to_krl(path: Toolpath, robot: Robot, cell: CellConfig, proc: ProcessConfig,
 
         # A gantry move goes as PTP (joints + E1), never as a LIN that would leave E1 behind
         if m.kind == "PTP" or (i > 0 and e1s[i] != e1s[i - 1]):
-            sols = robot.ik(base_in_robot(cell, table[i], e1s[i].get(e1_axis)) @ m.pose, seed)
-            if not sols:
-                raise KRLError(f"move {i}: PTP target is unreachable")
-            seed = sols[0]
+            if not np.isnan(pj[i]).any():
+                seed = np.asarray(pj[i], dtype=float)
+            else:
+                sols = robot.ik(base_in_robot(cell, table[i], e1s[i].get(e1_axis)) @ m.pose, seed)
+                if not sols:
+                    raise KRLError(f"move {i}: PTP target is unreachable")
+                seed = sols[0]
             lines.append(f"PTP {_axis(seed, e1s[i] | table[i])}")
             dwell(m)
             continue

@@ -138,9 +138,13 @@ class CollisionChecker:
         self.allowed: set[tuple[str, str]] = set()
         working = self.world_from_robot
         self.set_placement(robroot(cell, self._cad_e1(cell)) if cell.gantry else robroot(cell))
-        contacts = self.check(np.asarray(cad_pose, float), {})
+        contacts = self.check(np.asarray(cad_pose, float), {}, _follow=False)
         self.allowed = {p for p in contacts if not NEVER_ALLOWED & set(p)}
         self.set_placement(working)
+
+    def allowed_text(self) -> str:
+        """The CAD contacts that are ignored, e.g. "A3 / cell, A4 / cell" (for the log)."""
+        return ", ".join(f"{a} / {b}" for a, b in sorted(self.allowed)) or "none"
 
     @staticmethod
     def _cad_e1(cell: CellConfig) -> float:
@@ -221,11 +225,11 @@ class CollisionChecker:
                              f"(more than {self.reach_mm - ROBOT_REACH_MM:.0f} mm): build a new checker")
         self.set_placement(root)
 
-    def check(self, q, axes, _pre=None, _table=None) -> set[tuple[str, str]]:
+    def check(self, q, axes, _pre=None, _table=None, _follow=True) -> set[tuple[str, str]]:
         """Colliding (moving body, other body) pairs at joints `q` and table `axes`
         (and gantry, if `axes` sets it)."""
-        if self.cell.gantry is not None and self.cell.gantry.axis in axes:
-            self._follow_e1(axes[self.cell.gantry.axis])
+        if _follow and self.cell.gantry is not None:       # no E1 given: the configured position, never a stale root
+            self._follow_e1(axes.get(self.cell.gantry.axis, self.cell.gantry.position_mm))
         self._place(q, axes, _pre, _table)
         pairs = set()
         for mgr in (self.arm, self.tool):

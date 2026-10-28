@@ -64,16 +64,16 @@ def test_contact_with_workpiece_never_ignored(name):
     block = _block_at_wrist(robot, cell)
     checker = CollisionChecker(robot, cell, _bare_meshes(robot), reach_mm=1e5, **{name: block})
     assert not any(name in p for p in checker.allowed)
-    checker.set_placement(robroot(cell, 0.0))
-    assert ("A5", name) in checker.check(np.array(HOME_DEG, float), {})
+    E0 = {cell.gantry.axis: 0.0}
+    assert ("A5", name) in checker.check(np.array(HOME_DEG, float), E0)
 
 
 def test_part_positional_argument():
     robot, cell = Robot(load_robot()), load_cell()
     checker = CollisionChecker(robot, cell, _bare_meshes(robot), None, _block_at_wrist(robot, cell),
                                HOME_DEG, 1e5)
-    checker.set_placement(robroot(cell, 0.0))
-    assert ("A5", "part") in checker.check(np.array(HOME_DEG, float), {})
+    E0 = {cell.gantry.axis: 0.0}
+    assert ("A5", "part") in checker.check(np.array(HOME_DEG, float), E0)
 
 
 def test_set_workpiece_none_removes_both():
@@ -81,12 +81,12 @@ def test_set_workpiece_none_removes_both():
     block = _block_at_wrist(robot, cell)
     checker = CollisionChecker(robot, cell, _bare_meshes(robot), part=block, substrate=block,
                                reach_mm=1e5)
-    checker.set_placement(robroot(cell, 0.0))
+    E0 = {cell.gantry.axis: 0.0}
     home = np.array(HOME_DEG, float)
-    assert {("A5", "part"), ("A5", "substrate")} <= checker.check(home, {})
+    assert {("A5", "part"), ("A5", "substrate")} <= checker.check(home, E0)
     checker.set_workpiece(None, None)
     assert "part" not in checker.env._objs and "substrate" not in checker.env._objs
-    assert checker.check(home, {}) == set()
+    assert checker.check(home, E0) == set()
 
 
 @pytest.mark.parametrize("axes", [{"E5": 180.0}, {"E2": 90.0}])
@@ -95,11 +95,11 @@ def test_workpiece_follows_turntable(axes):
     robot, cell = Robot(load_robot()), load_cell()
     block = _block_at_wrist(robot, cell, axes)
     checker = CollisionChecker(robot, cell, _bare_meshes(robot), reach_mm=1e5)
-    checker.set_placement(robroot(cell, 0.0))
+    E0 = {cell.gantry.axis: 0.0}
     checker.set_workpiece(block, block, block)
     home = np.array(HOME_DEG, float)
-    assert {("A5", "part"), ("A5", "substrate"), ("A5", "fixture")} <= checker.check(home, axes)
-    assert checker.check(home, {}) == set()
+    assert {("A5", "part"), ("A5", "substrate"), ("A5", "fixture")} <= checker.check(home, {**E0, **axes})
+    assert checker.check(home, E0) == set()
 
 
 def test_batch_fk_matches_robot():
@@ -112,3 +112,23 @@ def test_batch_fk_matches_robot():
     for i in range(len(q)):
         assert np.allclose(lf[i], robot.link_frames(q[i]), atol=1e-9)
         assert np.allclose(fl[i], robot.flange(q[i]), atol=1e-9)
+
+
+def test_check_without_e1_uses_configured_root_not_stale():
+    robot, cell = Robot(load_robot()), load_cell()
+    if cell.gantry is None:
+        pytest.skip("no gantry")
+    checker = CollisionChecker(robot, cell, _bare_meshes(robot), reach_mm=1e5)
+    lo, hi = cell.gantry.limits_mm
+    other = lo if abs(lo - cell.gantry.position_mm) > 1 else hi
+    checker.check(np.array(HOME_DEG, float), {cell.gantry.axis: other})
+    assert not np.allclose(checker.world_from_robot, robroot(cell))
+    checker.check(np.array(HOME_DEG, float), {})
+    assert np.allclose(checker.world_from_robot, robroot(cell))
+
+
+def test_no_link_vs_cell_allowed_with_bare_meshes():
+    robot, cell = Robot(load_robot()), load_cell()
+    checker = CollisionChecker(robot, cell, _bare_meshes(robot), reach_mm=1e5)
+    assert not any(b == "cell" for _, b in checker.allowed)
+    assert isinstance(checker.allowed_text(), str)

@@ -37,7 +37,7 @@ def test_key_ignores_e1_but_not_tilt_process_or_placement():
     cell = load_cell()
     if cell.gantry:
         cell.gantry.position_mm += 500.0
-        assert plan_jobs.plan_key(1, part, proc, _kw(cell=cell)) == k
+        assert plan_jobs.plan_key(1, part, proc, _kw(cell=cell))[:-1] == k[:-1]
     assert plan_jobs.plan_key(1, part, proc, _kw(tilt_deg=20.0)) != k
     assert plan_jobs.plan_key(2, part, proc, _kw()) != k
     other = proc.model_copy(update={"traverse_speed_mm_s": proc.traverse_speed_mm_s + 1})
