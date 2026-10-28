@@ -342,9 +342,13 @@ class MainWindow(QMainWindow, PartStep, PositionStep, ToolpathStep, SimulateStep
         QApplication.processEvents()
 
     def _startup(self):
+        if getattr(self, "_closed", False):
+            return
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             self.assets = a = load_assets(log=self._status)
+            if getattr(self, "_closed", False):     # closed while loading (_status pumps events)
+                return
             if a.tool.gun:
                 for key, n in a.tool.gun.nozzles.items():
                     self.nozzle.addItem(f"{n.label} ({n.length:.0f} mm)", key)
@@ -454,6 +458,7 @@ class MainWindow(QMainWindow, PartStep, PositionStep, ToolpathStep, SimulateStep
         self.plotter.render()
 
     def closeEvent(self, event):
+        self._closed = True           # a queued _startup must not build on the closed plotters
         self.play_timer.stop()
         self.poll_timer.stop()
         self.sm_timer.stop()

@@ -83,3 +83,15 @@ def test_splitter_width_saved(win):
     win.splitter.setSizes([520, 10_000])
     win._save_split()
     assert int(win.ui_settings.value(gui_app.SIDEBAR_KEY)) == win.splitter.sizes()[0]
+
+
+def test_closed_before_startup_builds_nothing(tmp_path):
+    """The queued _startup must not build the 3D scene on a window closed before it ran."""
+    import time
+    QApplication.instance() or QApplication([])
+    w = gui_app.MainWindow(QSettings(str(tmp_path / "ui.ini"), QSettings.IniFormat))
+    w.close()
+    end = time.time() + 0.5
+    while time.time() < end:
+        QApplication.processEvents()
+    assert getattr(w, "assets", None) is None
