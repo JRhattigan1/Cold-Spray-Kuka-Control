@@ -27,6 +27,10 @@ fields; any advanced value that differs from its default stays visible with a
 "changed" chip. Advanced mode shows every field. (The Part step is not yet tied
 to the switch.) Long jobs (Generate, Auto position, the collision check, Solve
 problems) run in the background with a progress bar and Cancel.
+The sidebar and the 3D view share the window: drag the gap between them to
+widen the sidebar (its width is remembered). The window starts at 1440x900, or
+less on a small screen, and can't go below 1100x680. Each step's "Next" button
+stays at the bottom of its panel while the panel scrolls.
 
 1. **Part** - open a STEP part or assembly, or pick a built-in test part from
    the drop-down (square, block with hole, round boss, stepped block, taper,
@@ -82,7 +86,8 @@ problems) run in the background with a progress bar and Cancel.
      travels to the part **with the spray still on**, and returns there at the
      end. "Save to cell.yaml" writes the `purge:` block (other lines and
      comments are kept).
-3. **Toolpath** - strategy, process parameters, then Generate. "Save as
+3. **Toolpath** - Mode (Layers / Revolve / Surface; hover for the long
+   description), process parameters, then Generate. "Save as
    default" writes the process values to `config/process.yaml`.
    - **Layers**: contour passes, then infill. `infill_pattern`: zigzag, oneway
      (all strokes one way, lifted return), concentric, spiral, crosshatch (0/90°
@@ -115,7 +120,9 @@ problems) run in the background with a progress bar and Cancel.
 4. **Simulate** - playback with reach, gun angle and collision results (the
    collision check runs in the background after Generate; "Check collisions"
    turns it off). **Markers** (view toolbar) shows or hides the collision,
-   unreachable and steep-gun points. **Solve problems** tries to fix what the
+   unreachable and steep-gun points. The **flip** row flags a joint jump of
+   more than 20° inside one LIN or CIRC (a configuration flip the real arm
+   can't make). **Solve problems** tries to fix what the
    check found: arm configuration, gun angle (±30°) and lean (±10°), re-routing
    approach / jump / purge moves, and E1 per layer (±1000 mm; a change of E1 is
    written as a PTP). What it can't fix is listed and Save stays disabled. The
@@ -154,6 +161,8 @@ Other entry points: `python -m coldspray.demo_part [part.step]` (command line),
 | `src/coldspray/planner/solver.py`, `solve_*.py` | Solve problems: arm, gun angle, re-route, E1 levers |
 | `src/coldspray/toolpath/` | Toolpath format, sampling for simulation |
 | `src/coldspray/post/krl.py` | Toolpath → KRL `.src` (faceplate BASE or the part's KRL base) |
+| `src/coldspray/post/joints.py` | PTP joints for the program, computed as Simulate does |
+| `src/coldspray/post/krl_split.py`, `krl_preflight.py`, `krl_status.py` | Not used by Export yet: split a long program into subprograms, TOOL/BASE check at the start, Status/Turn bits (unverified) |
 | `src/coldspray/sim/` | 3D scene (cell, robot, gun, turntable, path), collision checking |
 | `src/coldspray/sim/datums.py` | XY / XZ / YZ datum planes on the faceplate |
 | `src/coldspray/sim/markers.py` | Ghost gun marker for the purge point |
@@ -171,7 +180,8 @@ Other entry points: `python -m coldspray.demo_part [part.step]` (command line),
 - Part fixed in the cell: the program drives the table to E2 = 0, E5 = 0; check
   the table is clear and that is where you expect it.
 - Gantry: confirm E1 = 0 matches the CAD carriage position, and the travel limits.
-  Programs from Solve problems may change E1 between layers (written as PTP).
+  Programs from Solve problems may change E1 between layers (written as PTP,
+  on gun-off moves only). The gantry carriage is not in the collision check.
 - Turntable: confirm +E2 tilts towards the tailstock and which way +E5 turns, the
   axis limits and max speeds, and whether it is mathematically coupled to BASE 1
   (`cell.yaml` → `turntable.coupled`).
