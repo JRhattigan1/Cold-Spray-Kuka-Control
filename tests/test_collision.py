@@ -193,3 +193,15 @@ def test_part_not_checked_in_layers_mode():
     part = (np.zeros((3, 3)), np.array([[0, 1, 2]]))
     assert part_for_mode("layers", part) is None
     assert part_for_mode("revolve", part) is part and part_for_mode("surface", part) is part
+
+
+def test_new_workpiece_is_placed_after_skipped_transforms():
+    """S8C: unchanged transforms are skipped; a body added later still gets placed."""
+    robot, cell = Robot(load_robot()), load_cell()
+    checker = CollisionChecker(robot, cell, _bare_meshes(robot), reach_mm=1e5)
+    q, E0 = np.array(HOME_DEG, float), {cell.gantry.axis: 0.0}
+    assert checker.check(q, E0) == set()
+    checker.set_workpiece(fixture_mesh=_block_at_wrist(robot, cell))
+    assert ("A5", "fixture") in checker.check(q, E0)
+    checker.set_workpiece()
+    assert checker.check(q, E0) == set()
