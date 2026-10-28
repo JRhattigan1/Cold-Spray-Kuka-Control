@@ -1,10 +1,10 @@
-# Roadmap: where each feature stands (2026-10-27, end of session 4)
+# Roadmap: where each feature stands (2026-10-28, end of session 5)
 
 This is the status by feature. The next steps and open decisions are in [NEXT_SESSION.md](NEXT_SESSION.md), and the per-agent detail is in `reports/`.
 
 **Branches:**
-- **`main`:** sessions 1–3.
-- **`surface-patterns`:** session 4 and the optimisation run, built on `main`. **Not merged into `main` yet.** Its full suite passes: 619 passed, 3 xfailed.
+- **`main`:** sessions 1–4 (`surface-patterns` merged, work in progress).
+- **Session 5 `wp/*`:** KRL safety (K1–K4, KM), speed (OP1, OP2), UI scaling and dark mode (U20–U24, FM). Not merged yet; see NEXT_SESSION "State".
 - **Nothing is pushed.**
 
 | Feature | Works now | Left | Risks |
@@ -17,14 +17,15 @@ This is the status by feature. The next steps and open decisions are in [NEXT_SE
 | **Simple / Advanced UI** | Header toggle; the Toolpath and Position steps follow it. | `wp/E2p` (Part step): its test hangs. Final UI sweep. | — |
 | **Purge point** | <ul><li>Purge visits (start, end, every N layers), ghost marker, reach chip, save to `cell.yaml`.</li><li>Suggest purge point at the filtration unit (*surface-patterns*).</li></ul> | <ul><li>Drag the marker.</li><li>Confirm the spray is on between layers (user).</li></ul> | `spray_dir` default is a CHECK. The purge transit is sprayed. |
 | **Turns off the part** | `turn_mode`: inside, overrun, or beyond a datum plane (`planner/turns.py`). | `turn_plane` picker in the form. | — |
-| **Solver** | Arm, gun angle and lean, re-route, and E1-per-layer levers; the "Solve problems" button; unfixed items block Save. | <ul><li>Cancel inside a lever.</li><li>Solver rows in the export confirm.</li><li>Following E1 beyond 1000 mm in the collision check.</li></ul> | E1 changes are PTP moves on the robot. |
+| **Solver** | Arm, gun angle and lean, re-route, and E1-per-layer levers; the "Solve problems" button; unfixed items block Save. | <ul><li>Cancel inside a lever.</li><li>Solver rows in the export confirm.</li><li>Following E1 beyond 1000 mm in the collision check.</li></ul> | E1 changes are PTP moves on the robot; `wp/K2` puts them on gun-off moves only. |
 | **KRL base on the part** | Face + edge pick; LIN points relative to it under `BASE_DATA[part_base_number]`; header values; check list (*surface-patterns*). | Other ways to define it (3 points, typed values) if wanted. | Must be taught on the real part. |
 | **Parts fixed in the cell** | Mounted: Fixed in the cell. The table is held at 0, there are no table checks, and Auto position searches E1 only (*surface-patterns*). | Nothing known. | The table is driven to 0 by the program. |
-| **Speed** (`OPTIMISATION_PLAN.md`) | <ul><li>Gun hold, sampling, IK and collision forward kinematics are vectorised, with identical output.</li><li>Generate and Auto position run on a worker thread with a plan cache.</li></ul> | <ul><li>**Arcs and merged LINs:** `wp/O5`, partial; its report is `reports/O5-1.md`.</li><li>Reach IK still runs on the GUI thread.</li><li>Background collision checker.</li><li>Faster Layers planning for tall parts.</li></ul> | CIRC orientation on the robot (`#PATH`): T1 check. |
+| **Speed** (`OPTIMISATION_PLAN.md`) | <ul><li>Gun hold, sampling, IK and collision forward kinematics are vectorised, with identical output.</li><li>Generate and Auto position run on a worker thread with a plan cache.</li></ul> | <ul><li>**Arcs and merged LINs:** `wp/K1` (O5 finished), held for review and T1.</li><li>Layers planning 4.5x faster on test_tube: `wp/OP2`, not merged.</li><li>Reach IK still runs on the GUI thread.</li><li>Background collision checker.</li><li>Faster Layers planning for tall parts.</li></ul> | CIRC orientation on the robot (`#PATH`): T1 check. |
+| **KRL safety** | PTP joints from `robot.ik` seeded from the last PTP. | <ul><li>`wp/K2`: PTP joints as Simulate (`program_joints`); hook not in `krl.py` yet.</li><li>`wp/K3`: flip check inside LIN/CIRC.</li><li>`wp/K4`: program split, TOOL/BASE pre-flight, S/T bits (off).</li><li>PTP sampled in joint space and HOME legs simulated (finding 3).</li><li>Gantry carriage in collision (7a).</li></ul> | S/T bits 0 and 1 unverified. CIRC `#PATH` and `C_DIS` unverified. |
 
 ## Order
-1. **Check `surface-patterns` by hand in the app, then merge it into `main`.** See the NEXT_SESSION check list.
-2. **Finish `wp/O5`:** arcs and merged LINs, which the user asked for.
-3. **Open user decisions:** listed in NEXT_SESSION.
-4. **`wp/E2p` and `wp/P8`:** fix and merge, or drop.
+1. **Merge session 5** (K2–K4 via `wp/KM`, OP1, OP2, U21–U24, U20 after its tests), then the full suite and the by-hand check list.
+2. **Apply the K2 PTP joints hook to `krl.py`;** review the KRL diff.
+3. **K1 arcs:** review the hash diff, then T1 on a fillet.
+4. **Open user decisions:** listed in NEXT_SESSION.
 5. **Robot cell checks:** the README section "Before running on the real robot", each in T1 first.
