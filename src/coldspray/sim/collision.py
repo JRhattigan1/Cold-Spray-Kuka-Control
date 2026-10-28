@@ -114,6 +114,9 @@ class CollisionChecker:
         self.e1 = float(cell.gantry.position_mm) if cell.gantry is not None else None
         self._root_e1 = self.e1          # E1 the robot root is at now (None: unknown)
         self.cad_frames = robot.link_frames(cad_pose)
+        self._cad_inv = np.linalg.inv(self.cad_frames)
+        self._tables = {}                           # turntable_axes -> _table()
+        self._tf = {}                               # (manager id, name) -> transform last set
         self.gun = gun
 
         self.arm = _Manager()      # A1..A6
@@ -174,20 +177,34 @@ class CollisionChecker:
         lo, hi = cell.gantry.limits_mm
         return float(np.clip(0.0, lo, hi))
 
+    def _set(self, mgr, name, m):
+        """mgr.set_transform, skipped when `m` is the transform already set."""
+        key = (id(mgr), name)
+        last = self._tf.get(key)
+        if last is not None and np.array_equal(last, m):
+            return
+        mgr.set_transform(name, m)
+        self._tf[key] = np.array(m, float)
+
+    def _changed(self):
+        """Bodies added / removed: forget the transforms last set."""
+        self._tf.clear()
+
     def set_placement(self, world_from_robot):
         """Robot root in WORLD. The cell was cropped around the gantry position the
         checker was built for - build a new checker for a different position."""
         self.world_from_robot = world_from_robot
         self._root_e1 = None
-        self.own.set_transform("robot base", world_from_robot)
+        self._set(self.own, "robot base", world_from_robot)
         if "carriage" in self.env._objs:       # shift by gantry.direction * e1 from where the CAD draws it
             m = np.eye(4)
             m[:3, 3] = world_from_robot[:3, 3] - self.root_e1_0[:3, 3]
-            self.env.set_transform("carriage", m)
+            self._set(self.env, "carriage", m)
 
     def set_gun(self, robot: Robot, gun):
         """Swap the tool (e.g. another nozzle): new TCP and gun / nozzle meshes."""
         self.robot, self.gun = robot, gun
+        self._changed()
         for name in ("gun", "nozzle"):
             if name in self.tool._objs:
                 self.tool.remove_object(name)
@@ -199,6 +216,8 @@ class CollisionChecker:
     def set_workpiece(self, part_mesh=None, substrate_mesh=None, fixture_mesh=None):
         """Replace the part, substrate and fixture meshes (vertices, faces in BASE
         coordinates); None removes that body."""
+        if hasattr(self, "_tf"):
+            self._changed()
         for name, mesh in zip(WORKPIECE, (part_mesh, substrate_mesh, fixture_mesh)):
             if name in self.env._objs:
                 self.env.remove_object(name)
@@ -208,7 +227,7 @@ class CollisionChecker:
     def _precompute(self, joints) -> tuple[np.ndarray, np.ndarray | None]:
         """Robot-frame link moves (n, 6, 4, 4) = frames @ inv(CAD frames) and gun
         frames (n, 4, 4) = flange @ to_flange (None without a gun), for all rows."""
-        links = self.robot.link_frames_batch(joints) @ np.linalg.inv(self.cad_frames)
+        links = self.robot.link_frames_batch(joints) @ self._cad_inv
         guns = None
         if self.gun is not None:
             guns = self.robot.flange(joints) @ self.gun.to_flange
@@ -227,18 +246,18 @@ class CollisionChecker:
         links, guns = pre
         for k, name in enumerate(LINK_NAMES):
             m = self.world_from_robot @ links[k]
-            self.arm.set_transform(name, m)
+            self._set(self.arm, name, m)
             if name != "A6":
-                self.own.set_transform(name, m)
+                self._set(self.own, name, m)
         if self.gun is not None:
             g = self.world_from_robot @ guns
             for name in ("gun", "nozzle"):
                 if name in self.tool._objs:
-                    self.tool.set_transform(name, g)
+                    self._set(self.tool, name, g)
         tilt, face, base = table if table is not None else self._table(axes)
         for name, m in (("turntable", tilt), ("faceplate", face)) + tuple((w, base) for w in WORKPIECE):
             if name in self.env._objs:
-                self.env.set_transform(name, m)
+                self._set(self.env, name, m)
 
     def _follow_e1(self, e1: float):
         """Robot root at gantry position `e1` (a move's axes["E1"]). The cell was cropped
@@ -258,6 +277,11 @@ class CollisionChecker:
         (and gantry, if `axes` sets it)."""
         if _follow and self.e1 is not None:       # no E1 given: the position it was built at, never a stale root
             self._follow_e1(float(axes.get(self.cell.gantry.axis, self.e1)))
+        tkey = turntable_axes(self.cell, axes)
+        if _table is None:
+            _table = self._tables.get(tkey)
+            if _table is None:
+                _table = self._tables[tkey] = self._table(axes)
         self._place(q, axes, _pre, _table)
         pairs = set()
         for mgr in (self.arm, self.tool):
