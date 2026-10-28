@@ -49,9 +49,12 @@ def _pos(pose, external: dict[str, float] | None = None) -> str:
 
 
 def to_krl(path: Toolpath, robot: Robot, cell: CellConfig, proc: ProcessConfig,
-           part_base: np.ndarray | None = None) -> str:
+           part_base: np.ndarray | None = None, joints: dict[int, np.ndarray] | None = None) -> str:
     """`part_base`: faceplate BASE <- KRL base on the part (Part.placement @ Part.krl_base),
-    or None to write relative to the faceplate BASE."""
+    or None to write relative to the faceplate BASE.
+    `joints`: move index -> robot joints (deg) for PTP moves, e.g. the configuration the
+    simulation collision-checked; a PTP not in it is solved with robot.ik (seeded from the
+    last PTP)."""
     name = path.name[:24]
     gun = f"$OUT[{cell.gun_output}]"
     home = cell.home_deg
@@ -134,12 +137,18 @@ def to_krl(path: Toolpath, robot: Robot, cell: CellConfig, proc: ProcessConfig,
                 lines.append(f"WAIT SEC {proc.spray_settle_s:.1f}  ;spray settle")
             gun_on = m.gun_on
 
+        e1_moves = i > 0 and e1s[i] != e1s[i - 1]
+        if m.kind == "CIRC" and e1_moves:
+            raise KRLError(f"move {i}: CIRC with a gantry (E1) move; E1 must not change along an arc")
         # A gantry move goes as PTP (joints + E1), never as a LIN that would leave E1 behind
-        if m.kind == "PTP" or (i > 0 and e1s[i] != e1s[i - 1]):
-            sols = robot.ik(base_in_robot(cell, table[i], e1s[i].get(e1_axis)) @ m.pose, seed)
-            if not sols:
-                raise KRLError(f"move {i}: PTP target is unreachable")
-            seed = sols[0]
+        if m.kind == "PTP" or e1_moves:
+            if joints is not None and i in joints:
+                seed = np.asarray(joints[i], dtype=float)
+            else:
+                sols = robot.ik(base_in_robot(cell, table[i], e1s[i].get(e1_axis)) @ m.pose, seed)
+                if not sols:
+                    raise KRLError(f"move {i}: PTP target is unreachable")
+                seed = sols[0]
             lines.append(f"PTP {_axis(seed, e1s[i] | table[i])}")
             dwell(m)
             continue
@@ -167,7 +176,12 @@ def to_krl(path: Toolpath, robot: Robot, cell: CellConfig, proc: ProcessConfig,
                         set_vel(f"$VEL_EXTAX[{k[1:]}]", min(100.0, 100.0 * deg / t / limits[k]))
         nxt = moves[i + 1] if i + 1 < len(moves) else None
         blend = nxt is not None and nxt.gun_on == m.gun_on and nxt.kind in ("LIN", "CIRC") and not m.dwell_s
-        if m.kind == "CIRC":
+        turning = (not coupled and i > 0 and m.kind == "CIRC"
+                   and any(abs(table[i][k] - table[i - 1][k]) > 1e-9 for k in table_names))
+        if turning:                 # the robot's arc is not the arc over the part: two LINs instead
+            lines.append(f"LIN {_pos(cartesian(i, m.aux), table[i])} C_DIS")
+            lines.append(f"LIN {_pos(cartesian(i), table[i])}" + (" C_DIS" if blend else ""))
+        elif m.kind == "CIRC":
             lines.append(f"CIRC {_pos(cartesian(i, m.aux), table[i])}, {_pos(cartesian(i), table[i])}"
                          + (" C_DIS" if blend else ""))
         else:

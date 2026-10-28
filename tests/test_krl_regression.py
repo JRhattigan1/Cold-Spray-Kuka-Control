@@ -2,7 +2,8 @@
 
 The hashes were recorded on unchanged code (main at 453e4e3). A deliberate
 output change updates them and says so in the commit. Layers hashes updated
-2026-10-27: moves between layers lift by jump_height_mm, not approach_height_mm."""
+2026-10-27: moves between layers lift by jump_height_mm, not approach_height_mm.
+test_block updated 2026-10-28 (K1/O5): its round hole is written as 24 CIRC arcs (909 -> 595 LIN)."""
 
 import hashlib
 
@@ -15,7 +16,7 @@ from coldspray.post.krl import to_krl
 
 CASES = {  # part: (mode, table tilt, gun roll, E1, sha256 of the program); positions from auto_position
     "test_block": ("layers", 90.0, -135.0, 2000.0,
-                   "71ecd0f87f7f2a0c3b32eed07619478bd1a9427f5ea2557c6449c93b9531fa76"),
+                   "0ee6266a267ac532220ad3af7847a12c0c0dce7557c9e3dad712952a929cc8f3"),
     "test_repair": ("layers", 90.0, -135.0, 2000.0,
                     "89c900db1c213f9ce0d3728e98b1917ad136ec8606df47bb83e01896d7eb9cfc"),
     "test_tube": ("revolve", 0.0, -45.0, 2500.0,

@@ -18,7 +18,7 @@ from coldspray.toolpath.model import Toolpath, circ_poses, circle, cross, slerp_
 TOL_MM = 0.05
 TOL_DEG = 0.5
 MAX_SWEEP = np.pi            # one CIRC turns at most 180 deg
-MAX_RADIUS = 1e4             # flatter than this is a line
+MAX_RADIUS = 2000.0          # mm; flatter than this stays LIN
 SKIP_TAGS = {"approach", "jump", "purge"}
 
 
@@ -72,6 +72,10 @@ class _Fit:
         ang[0] = 0.0
         ang[-1] = sweep
         if np.any(np.diff(ang) < -1e-9) or ang.max() > sweep + 1e-9:
+            return None
+        # The points are LIN corners: the straight segments between them must lie on the
+        # arc too (sagitta), or e.g. a rectangle's corners would pass as its circumcircle.
+        if (r * (1 - np.cos(np.diff(ang) / 2))).max() > self.tol:
             return None
         poses = circ_poses(self.P[s], self.P[mid], self.P[e], ang / sweep)
         if _angles(poses[:, :3, :3], self.R[s:e + 1]).max() > self.tol_deg:

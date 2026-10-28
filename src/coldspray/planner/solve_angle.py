@@ -51,11 +51,15 @@ def _weights(path, run, ramp_mm) -> np.ndarray:
 
 def _apply(path, w, angle, lean):
     moves = []
-    for m, wi in zip(path.moves, w):
-        if wi <= 0:
+    for k, (m, wi) in enumerate(zip(path.moves, w)):
+        if wi <= 0 and (m.aux is None or k == 0 or w[k - 1] <= 0):
             moves.append(m)
             continue
-        moves.append(replace(m, pose=m.pose @ frame(a=lean * wi, c=angle * wi), axes=dict(m.axes)))
+        aux = m.aux
+        if aux is not None:         # CIRC via point: midway along the arc, so midway weight
+            wa = 0.5 * (wi + (w[k - 1] if k else wi))
+            aux = aux @ frame(a=lean * wa, c=angle * wa)
+        moves.append(replace(m, pose=m.pose @ frame(a=lean * wi, c=angle * wi), aux=aux, axes=dict(m.axes)))
     return replace(path, moves=moves)
 
 
