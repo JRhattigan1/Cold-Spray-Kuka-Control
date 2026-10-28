@@ -1,67 +1,84 @@
 # Next session
 
-**Start here.** Where each feature stands is in [ROADMAP.md](ROADMAP.md), and what the app does is in [README.md](../README.md). Each agent's detail is in `plans/reports/<ID>-1.md`. Older hand-offs are in git history.
+**Start here.** Where each feature stands is in [ROADMAP.md](ROADMAP.md), and what the app does is in [README.md](../README.md). Each agent's detail is in `plans/reports/<ID>-1.md` on its branch (`git show wp/<ID>:plans/reports/<ID>-1.md`; the session 5 worktrees are removed). Older hand-offs are in git history.
 
 ## State (2026-10-28, end of session 5)
-- **`main`:** sessions 1–4 (`surface-patterns` merged at `a987069`, work in progress). Nothing from session 5 is merged yet; INT merges, D0 (these docs) is merged by the user.
-- **Nothing is pushed.** Session 5 worktrees: `C:\Users\qrb21117\worktrees\cs-<ID>`; brief and check-ins in `worktrees\run5\`.
-- **KRL safety (review findings 1–8 in `run5\BRIEF.md`):**
-  - **K1** `wp/K1` `e24f730`: O5 arcs rebased on `main`. Arc fit checks the chord sagitta, 2 m radius cap, `to_krl(joints=)`, CIRC with an E1 change is a `KRLError`, a turning uncoupled table keeps LINs, `solve_angle` tilts `aux`. 21 passed (krl/regression/gun/sample_speed). **HELD:** the regression hashes were re-baselined without a reviewed diff, and CIRC `#PATH` orientation and `C_DIS` between CIRCs are unverified on the real robot.
-  - **K2** `wp/K2` `4d93c11`: `post/joints.py` `program_joints` gives PTP joints as Simulate does (finding 1); E1 only on gun-off moves (5); plan key includes the robot side (6). Solver 7 + solve_ui 5 passed.
-  - **K3** `wp/K3` `48c6402`: "flip" check row, joint jump > `JUMP_DEG` inside a LIN/CIRC (2); collision check follows the configured gantry when axes has no E1 (4); `allowed_text()` for the log (7b). 23 passed.
-  - **K4** `wp/K4` `18309a8`: `post/krl_split.py` (subprograms), `post/krl_preflight.py` (TOOL/BASE guard), `post/krl_status.py` (S/T). All off; `krl.py` untouched. 7 passed.
-  - **KM** `wp/KM` `a669e44`: K4, K2, K3 merged; `plans/KM-options.patch` wires `options=` into `krl.py` (preflight off by default). **`wp/KM-K1`** `469d15c`: K1 merged plus the K2 joints hook and `options=` on K1's `krl.py`. **HELD** with K1.
-- **Speed:**
-  - **OP1** `wp/OP1` `6461806`: cell npz meshes memoised, gun mesh loads in parallel, lazy trimesh in `cad/part.py` and `planner/revolve.py`. Timings are noise (machine overloaded). Still top-level: trimesh in `cad/slicer.py`, `planner/surface.py` (+ cKDTree).
-  - **OP2** `wp/OP2` `87810c4`: test_tube Layers 85.4 → 19.1 s (vectorised `_order`, constant down-frame); all 7 cases identical to the `tools/bench_plan.py` baseline. 96 passed. Next: `raster_segments`.
-- **UI (scaling, positions, dark mode):**
-  - **U20** `wp/U20` `437fae5` (code `976e56e`): opaque field and sidebar fills, ink text. **Tests not run.** Primary button text still off-screen; inputs white-on-white in dark (U22 ask).
-  - **U21** `wp/U21` `3ad1bd9`: sidebar/3D splitter, sidebar 460 (min 400, sized to panels), window min 1100x680, start 1440x900 capped to the screen, pinned Next footer, sidebar width in QSettings, short mode labels. `tests/test_gui_layout.py` 8 tests.
-  - **U22** `wp/U22` `f0869e0`: dark 3D gradient from `style.view_background`, markers/toolbars/view bars follow the theme, `part_view.py` too. 79 + 3 passed.
-  - **U23** `wp/U23` `a383efd`: `fit_panel` on the step panels, 2x2 stat tiles, timeline legend fits, `allowed_text` logged. Asks: check-row gaps (`checks.py:214`), dark review.
-  - **U24** `wp/U24` `372fea7`: `tools/ui_screenshots.py --size WxH --scale S`, offscreen by default. Shots in `run5\shots\U24\`. Offscreen glyphs are boxes and the 3D view is blank: judge layout only.
-  - **FM** (sidebar-fit team): **in progress**, nothing committed (`wp/FM` = `main`).
-- **Older branches still not merged:** `wp/O5` (superseded by `wp/K1`), `wp/E2p` (test hangs), `wp/P8` (slow; rework or drop).
+- **`main` @ `4087bf2`.** Sessions 1–4, plus these session 5 merges (`git log --first-parent main`):
+  | merge | branch | what |
+  |---|---|---|
+  | `0fac8ba` | OP1 | faster cell asset load, lazy trimesh |
+  | `46bbb39` | KM | K2 PTP joints hook in `krl.py`, K3 flip check + stale-root fix, K4 split/preflight/status; no K1 |
+  | `bc4f554` | OP2 | Layers planning 4.5x faster, lazy trimesh/cKDTree imports |
+  | `977cf1f` | OP3 | batched `Toolpath.transformed`/`rolled` |
+  | `86461dd` | OP2b | vectorised `raster_segments`, surface hot spot |
+  | `2ab321a` | U24 | `ui_screenshots.py --size/--scale`, offscreen by default |
+  | `ebf6cfa` | U23 | timeline legend, panels fit the sidebar, 2x2 stat tiles |
+  | `eae7c30` | U22 | dark 3D background, toolbars and markers follow the theme |
+  | `4087bf2` | U21 | splitter, window sizing, pinned Next, saved sidebar width |
+- **Tests:** each merge ran its touched tests + `test_krl_regression.py` + `test_imports.py`, all passed. Final: 76 passed. **The full suite was not run this session.** KRL output is byte-identical (hashes hold).
+- **The main checkout has uncommitted edits** to `gui/style.py` and `gui/widgets.py` (button padding 14 → 10, `fit_combo`, `TileGrid`), made by an agent that wrote there by mistake. They block the U20 merge, and the INT tests ran with them in place. Compare them with `wp/F3`, then commit or discard them.
+- **Nothing is pushed.**
 
-## Check by hand in the app (`.\run`)
-1. **Surface on the tube end:** each pattern. Concentric should give clean rings.
-2. **KRL base:** pick one on `test_block`, save the KRL, check the header and the `BAS(#BASE, 2)` line.
-3. **Fixed in the cell:** move a part off the table, Generate, Simulate.
-4. **Gun hold:** a concentric Layers job with the table flat. The gun must not turn with the loops.
-5. **Constraints:** Pick, then click a face (only stubbed in tests), Esc to cancel, purple highlight.
-6. **Suggest purge point**, then reach and collisions in Simulate.
-7. **Generate and Auto position stay responsive:** Cancel works, and Generate after Auto position is instant (cache).
-8. **WearPlate2** (`Downloads/WearPlate2.stp`): Surface on the top, the angled face and the blends.
-9. **Session 5 UI:** resize the window, drag the splitter, light and dark, 100 % and 150 % scaling.
+## Kept branches
+| branch | sha | what | to do |
+|---|---|---|---|
+| `wp/K1` | `4599a60` | Arcs (CIRC) and merged LINs, O5 finished: sagitta arc fit, 2 m radius cap, CIRC E1 error, LINs on a turning uncoupled table. Tube Surface 40,893 → 1,629 moves. **Held.** | Rebase on `main`; CIRC in the other move walkers; review the hash diff; full suite; T1 check of CIRC `#PATH` and `C_DIS`. |
+| `wp/KM-K1` | `469d15c` | The K1 variant of KM: joints hook + `options=` on K1's `krl.py`. | Use as the reference when K1 is merged, or drop. |
+| `wp/F3` | `7e8a80f` | `widgets.fit_combo`, `TileGrid`, style padding; U20 test fixed. | Merge first. |
+| `wp/F1` | `a90bfd5` | WIP: Part/Position fit the 420 px sidebar (Part 346, Position 376 px). Purge-actions dropdown not done. | Merge second; switch its local `fit_combo` to F3's. |
+| `wp/F2fit` | `e990480` | Toolpath Mode as a combo, StatTiles 2 columns, Playback in 2 rows, Export split `.src` + preflight checkbox. | Merge third; expect a conflict in `steps/export.py`. |
+| `wp/FM` | `eda5589` | Sidebar-fit audit and merge plan (`FM-1.md`), base = U20/U21/U23. | Follow its steps; re-audit every panel ≤ 400 px; add `fit_combo(self.nozzle)` in `app.py` (~350). |
+| `wp/U20` | `437fae5` | Opaque field and sidebar fills, ink text. Not merged (blocked by the main-checkout edits). | Merge with or after F3. |
+| `wp/D0` | — | These docs. | Merge. |
+
+## Results of session 5
+- **Speed** (warm, all identical to the `tools/bench_plan.py` baseline):
+  - tube Layers 85.4 → 14.8 s;
+  - tube Surface 11.7 → 1.7 s;
+  - block Layers 1.2 → 0.11 s.
+- **KRL safety** (review findings in `C:\Users\qrb21117\worktrees\run5\BRIEF.md`, if kept):
+  - 1: PTP joints come from `post/joints.py` `program_joints`, the same IK as Simulate (`robot.ik` only as a fallback);
+  - 2: "flip" check row: a joint jump > `JUMP_DEG` inside one LIN/CIRC;
+  - 4: the collision check follows the configured gantry when axes has no E1 (no stale root);
+  - 5: E1 changes go only on gun-off moves;
+  - 6: the plan key includes the robot side.
+- **K4 modules** (all off by default): `post/krl_split.py` (subprograms), `post/krl_preflight.py` (TOOL/BASE guard), `post/krl_status.py` (S/T; S bits 0 and 1 UNVERIFIED).
+- **UI:** sidebar/3D splitter; sidebar 460 px (min 400), width saved; window min 1100x680, start 1440x900 capped to the screen; Next pinned below each panel; Mode shown as Layers / Revolve / Surface; panels shrink to the sidebar; dark mode for the 3D view, toolbars and markers.
 
 ## To do, in order
-1. **Machine load:** at most about 6 agents at once; app runs and `ui_screenshots.py` jobs one at a time (session 5 pytest runs were killed and timings were noise).
-2. **Merge session 5:** K2, K3, K4 (via `wp/KM`), OP1, OP2, U21–U24, then U20 once its tests run. Full suite after.
-3. **KRL hook state:** `krl.py` on `main` still seeds PTP joints with `robot.ik`. The K2 `program_joints` hook and `options=` exist only on `wp/KM-K1` (with K1) and as `plans/KM-options.patch`. Apply the hook without K1 if K1 stays held; PTP lines in the regression files will change (review the diff).
-4. **K1 arcs (held):** review the KRL diff behind the new hashes, then T1 on a fillet: CIRC `#PATH` orientation and `C_DIS` between CIRCs.
-5. **Review finding 3, open:** PTP moves are interpolated in Cartesian space in `Toolpath.sample`, and HOME → first and last → HOME are not simulated. Sample PTPs in joint space (`ptp_joint_path`, never written) and check those legs.
-6. **Review finding 7a, open:** the gantry carriage is not in the collision environment.
-7. **Review finding 8, open:** `Toolpath.sample` uses the last move's axis value where KRL uses the configured value.
-8. **S/T bits** (`post/krl_status.py`): S bit0 (overhead) and bit1 (elbow) are UNVERIFIED defaults. Compare with `$POS_ACT` on the arm before writing S/T on the first LIN after a PTP.
-9. **"90Â°" mojibake** in the 3D HUD labels (`sim/viewer.py:594`, `:625`): the source has `Â°`; write `°`.
-10. **UI left:** primary button text overflow (U20), dark inputs white-on-white, check-row gaps (`checks.py:214`), faint step-bar done labels, a dark screenshot review.
-11. **Speed:** lazy trimesh/cKDTree in `cad/slicer.py` and `planner/surface.py`; `raster_segments` vectorised; reach IK in `Scene.set_path` on a worker.
-12. **Simulate check for cable wind-up:** A4/A6 travel against a limit in `cell.yaml`.
-13. **Surface:** split a wrapping region per CAD face; the zigzag sprays across holes.
-14. **Constraints:** save them with the Part step choices; pick references in 3D.
-15. **`wp/E2p` and `wp/P8`:** fix and merge, or drop.
-16. **Solver gaps:** cancel inside a lever; solver rows in the export confirm; collision following E1 beyond 1000 mm.
-17. **Collisions found by P7:** A2/A3 against the "Filtration unit" (`reports/P7-1.md`).
-18. **Housekeeping:** about 75 worktrees in `C:\Users\qrb21117\worktrees\` and the merged `wp/*` branches. Remove them with `git worktree remove` and `git branch -d`. Stuck `.git\worktrees\<name>` folders clear with PowerShell `Remove-Item -Recurse -Force`.
-19. **Robot cell checks:** README "Before running on the real robot", in T1 first.
+1. **Merge the fit branches:** sort out the main-checkout edits, then F3 → F1 → F2fit (FM-1 steps), then U20.
+2. **Full suite** (not run this session).
+3. **By-hand check in the app (`.\run`):** resize, splitter, light and dark, 100 % and 150 %; Surface patterns on the tube end; KRL base; Fixed in the cell; gun hold; constraint picking; Suggest purge point; Cancel and the plan cache; WearPlate2.
+4. **K1 arcs:** see Kept branches.
+5. **Review finding 3:** PTP moves are interpolated in Cartesian space in `Toolpath.sample`, and HOME → first and last → HOME are not simulated. Sample PTPs in joint space and check those legs.
+6. **Review finding 7a:** the gantry carriage is not in the collision environment.
+7. **Review finding 8:** `Toolpath.sample` uses the last move's axis value where KRL uses the configured value.
+8. **Faint step-bar done labels** (maybe nested QGraphicsEffects; check on screen).
+9. **"90Â°" mojibake** in the 3D HUD labels (`sim/viewer.py` ~594, ~625): write `°`.
+10. **`widgets.Segmented`** (combo shown when the capsule row doesn't fit): planned by FM, not written.
+11. **Slicer `polygonize` option:** faster `slice_mesh`, but it changes the output. Decide, then re-baseline.
+12. **Launch time:** re-measure on a quiet machine (78 s cold under load); the `pyvistaqt` import is the biggest part.
+13. **Purge-actions dropdown** in Position (F1 left the buttons stacked).
+14. **Export split/preflight end to end:** save a long program, load all parts on the controller, check the HALT guard.
+15. **S/T bits:** verify against `$POS_ACT` before writing S/T on LINs.
+16. **Older list:** cable wind-up check (A4/A6); Surface per-face split and holes; saved constraints; solver gaps; P7 collisions with the Filtration unit; reach IK on a worker.
+17. **Robot cell checks:** README "Before running on the real robot", in T1 first.
 
 ## Waiting on the user
-1. **Spray between layers:** it still switches off, with a settle wait each layer. Keep it on when jump height is 0?
-2. **Crosshatch:** with the default 90° step it repeats a direction (0, 90, 90, 0). Change it?
-3. **Position Simple mode:** E1, tilt and roll count as "changed" whenever they aren't 0. Compare E1 with `gantry.position_mm` instead?
-4. **Purge:** confirm the spray stays on from the first purge visit to the last, including between layers. `spray_dir` in `cell.yaml` is still marked CHECK.
-5. **Surface tube end:** did "covering the whole area" mean the zigzag spraying across the bore?
-6. **Wrapping regions:** split them per CAD face, as in to-do 5?
+1. **Obsolete unmerged branches:** `wp/WP0-wip`, `wp/M2-fix`, `wp/E2p` (Part Simple/Advanced, test hangs), `wp/P8` (slow turn clearance), `wp/O5` (superseded by `wp/K1`). Delete them?
+2. **Spray between layers:** it still switches off, with a settle wait each layer. Keep it on when jump height is 0?
+3. **Crosshatch:** with the default 90° step it repeats a direction (0, 90, 90, 0). Change it?
+4. **Position Simple mode:** compare E1 with `gantry.position_mm` for "changed"?
+5. **Purge:** spray on from the first purge visit to the last? `spray_dir` is still CHECK.
+6. **Wrapping Surface regions:** split them per CAD face?
+
+## Lessons for running agents
+- At most about 6 agents at once. With more, pytest runs were killed and timings were noise.
+- App and screenshot runs are offscreen and one at a time.
+- Agents' clocks drift: use `date`, not their own sense of time.
+- A manager per team (KM, FM) worked: one plan, disjoint files, one merger.
+- A hook that crosses branches (e.g. K2's `krl.py` hook on K1's file) needs one named owner.
+- No agent may edit the main checkout. One did, and it blocked a merge.
 
 ## Agent protocol (paste into every agent prompt)
 ```
