@@ -5,7 +5,8 @@ from coldspray.gui import style
 def test_light_fields_opaque_with_ink():
     qss = style.stylesheet("light")
     line = next(l for l in qss.splitlines() if l.startswith("QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox { background"))
-    assert "rgba" not in line and "color: #" in line
+    bg = line.split("background:")[1].split(";")[0]  # the field fill must be opaque; the hairline border may be translucent
+    assert "rgba" not in bg and "color: #" in line
 
 
 def test_sidebar_scroll_area_opaque():
