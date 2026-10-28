@@ -341,6 +341,70 @@ def fit_combo(combo: QComboBox, n: int = 12) -> QComboBox:
     return combo
 
 
+class Segmented(QWidget):
+    """Segmented capsule row bound to a QComboBox (the combo stays the data API).
+
+    Shows the segments when they fit the available width, otherwise hides itself and shows the combo.
+    """
+
+    def __init__(self, combo: QComboBox, parent: QWidget | None = None):
+        super().__init__(parent or combo.parentWidget())
+        self._combo = combo
+        self.setObjectName("Segmented")
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+        self._group = QButtonGroup(self)
+        self._group.setExclusive(True)
+        self._buttons: list[QPushButton] = []
+        for i in range(combo.count()):
+            b = QPushButton(combo.itemText(i))
+            b.setCheckable(True)
+            b.setObjectName("SegmentButton")
+            self._group.addButton(b, i)
+            lay.addWidget(b)
+            self._buttons.append(b)
+        self._group.idClicked.connect(self._on_clicked)
+        combo.currentIndexChanged.connect(self._sync)
+        self._sync(combo.currentIndex())
+        if self.parentWidget() is not None:
+            self.parentWidget().installEventFilter(self)
+
+    def _on_clicked(self, i: int):
+        if self._combo.currentIndex() != i:
+            self._combo.setCurrentIndex(i)
+
+    def _sync(self, i: int):
+        if 0 <= i < len(self._buttons):
+            self._buttons[i].setChecked(True)
+
+    def _natural_width(self) -> int:
+        return sum(b.sizeHint().width() for b in self._buttons)
+
+    def _avail_width(self) -> int:
+        return self.width() if self.isVisibleTo(self.parentWidget()) else (self.parentWidget().width() if self.parentWidget() else 0)
+
+    def _update_mode(self):
+        fits = self._natural_width() <= self._avail_width()
+        self.setVisible(fits)
+        self._combo.setVisible(not fits)
+
+    def sizeHint(self):
+        sh = super().sizeHint()
+        sh.setWidth(self._natural_width())
+        return sh
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._update_mode()
+
+    def eventFilter(self, obj, ev):
+        if obj is self.parentWidget() and ev.type() == ev.Type.Resize:
+            self._update_mode()
+        return super().eventFilter(obj, ev)
+
+
 class TileGrid(QWidget):
     """Tiles laid out in `cols` columns (default 2); add() fills row by row."""
 
