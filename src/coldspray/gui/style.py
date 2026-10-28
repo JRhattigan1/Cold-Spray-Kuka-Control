@@ -348,7 +348,7 @@ QFrame#pill:hover { background: @glass_hover; border-color: @accent_a; }
 QFrame#pill[current="true"] { border: 1px solid @accent_b; background: @accent_soft; }
 QLabel#chip, QLabel[chip] { background: @glass; border: 1px solid @glass_edge; border-radius: 9px; }
 QPushButton { background: @glass; border: 1px solid @glass_edge; border-bottom: 1px solid @glass_line;
-    border-radius: 13px; padding: 0px 14px; }
+    border-radius: 13px; padding: 0px 10px; }
 QPushButton:hover { background: @glass_hover; border-color: @accent_a; }
 QPushButton:pressed { background: @glass_strong; padding-top: 1px; }
 QPushButton:focus { border: 1px solid @accent; }
