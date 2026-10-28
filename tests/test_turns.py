@@ -51,6 +51,26 @@ def test_overrun_turns_outside_region():
             np.testing.assert_allclose(e[1:3], b)
 
 
+def test_overrun_is_measured_from_the_body_not_the_infill():
+    """With contour passes the infill is inset; the turn still lands overrun_mm past the body face."""
+    reg = _region()
+    o = 7.0
+    proc = _proc(turn_mode="overrun", overrun_mm=o, contour_passes=2)
+    infill = reg.buffer(-proc.contour_passes * proc.step_over_mm)
+    base = zigzag(infill, proc, 0)
+    ext = extend_strokes(base, infill, proc, body=reg)
+    outer = 0
+    for b, e in zip(base, ext):
+        u = (b[-1] - b[0]) / np.linalg.norm(b[-1] - b[0])
+        for end, turn, d in ((b[0], e[0], -u), (b[-1], e[-1], u)):
+            if FILLED(infill).contains(Point(end + d * 0.01)):
+                continue                                       # hole edge
+            outer += 1
+            assert not reg.buffer(-1e-6).contains(Point(turn))
+            assert reg.distance(Point(turn)) >= o - 1e-3       # straight edges: exactly o past the face
+    assert outer
+
+
 def test_beyond_plane_turns_past_x60():
     reg = _region()
     proc = _proc(turn_mode="beyond_plane", overrun_mm=2.0, turn_plane="YZ:60")
