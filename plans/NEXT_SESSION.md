@@ -17,6 +17,13 @@
   | S7S | wrapping Surface pick split per CAD face (own raster, gun off between); oneway overrun from the face edge |
 - Branches left: `wp/FM`, `wp/KM-K1` (obsolete, delete), `wp/U20` + worktree `cs-U20` (merged; holds 12 untracked `shots_before` PNGs), `surface-patterns` (merged). Remote: `origin/wp/E2p`, `O5`, `P8` still exist.
 
+## Run 8: Solve problems speed (2026-10-28, merged `15c0b74`)
+- 10 agents (S8B bench, S8T golden test, S8F solver caches, S8C collision, S8R route/e1, S8G gantry/purge, S8A arm, S8N angle, S8I profile only, S8M merger).
+- `tools/bench_solve.py` (`--only`, `--json`, `--compare`, `--profile`); `tests/test_solver_golden.py` guards solver output.
+- Solve only, collision on: block_layers 29.0 → 24.8 s; repair_surface 115.5 → 42.9 s; total 144.6 → 67.7 s. Output IDENTICAL to main on both.
+- Still slow: block_layers **reroute** (19 s; IK over the whole range per candidate; sample/IK only the changed span) and repair_surface **gantry** (30 s; FCL narrow phase; split the cell mesh into chunks so the broadphase culls). IK `ik_path` per-sample loop (S8I). tube_surface not benchmarked (about 25k issues).
+- `.git\worktrees\cs-S8*` records locked by OneDrive: pause OneDrive, `git worktree prune`. `wp/S8B`, `wp/S8I` (report only) and worktree `cs-S8B` (2 baseline JSONs) are left.
+
 ## To do, in order
 1. **By-hand check:** [HAND_CHECK.md](HAND_CHECK.md).
 2. **Decide (user):** repair patch top + 4 sides now sprays the sides; 10/482 moves on the far side are out of reach (lifted turns, lift between faces). `test_surface_e2e::test_repair_patch_top_and_sides` is xfail. Options: accept; lower lift between faces (jump height); old tilt limit for split faces.
