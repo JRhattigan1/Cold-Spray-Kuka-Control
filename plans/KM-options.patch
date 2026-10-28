@@ -1,0 +1,47 @@
+--- a/src/coldspray/post/krl.py
++++ b/src/coldspray/post/krl.py
+@@ -23,15 +23,26 @@
+ WAIT SEC after it (e.g. at a powder purge point).
+ """
+ 
++from dataclasses import dataclass
++
+ import numpy as np
+ 
+ from coldspray.cell import base_in_robot, base_world, base_worlds, gantry_position, table_axis_names
+ from coldspray.kinematics.robot import Robot
+ from coldspray.models import CellConfig, ProcessConfig
+ from coldspray.toolpath.model import Toolpath, move_length
++from coldspray.post.krl_preflight import preflight_lines
+ from coldspray.transforms import xyzabc
+ 
+ 
++@dataclass(frozen=True)
++class KRLOptions:
++    """Optional program additions; the defaults leave the output unchanged.
++    preflight: HALT before motion if $ACT_TOOL/$ACT_BASE differ or the data is untaught (post/krl_preflight.py)."""
++    preflight: bool = False
++    check_taught: bool = True
++
++
+ class KRLError(Exception):
+     pass
+ 
+@@ -49,7 +60,7 @@
+ 
+ 
+ def to_krl(path: Toolpath, robot: Robot, cell: CellConfig, proc: ProcessConfig,
+-           part_base: np.ndarray | None = None) -> str:
++           part_base: np.ndarray | None = None, options: KRLOptions | None = None) -> str:
+     """`part_base`: faceplate BASE <- KRL base on the part (Part.placement @ Part.krl_base),
+     or None to write relative to the faceplate BASE."""
+     name = path.name[:24]
+@@ -103,6 +114,8 @@
+         ";ENDFOLD",
+         f"BAS(#TOOL, {cell.tool_number})",
+         f"BAS(#BASE, {base_number})",
++        *(preflight_lines(cell.tool_number, base_number, options.check_taught)
++          if options is not None and options.preflight else []),
+         f"BAS(#VEL_PTP, {cell.ptp_velocity_pct})",
+         f"$APO.CDIS = {proc.approx_distance_mm:.1f}",
+         f"{gun} = FALSE",
