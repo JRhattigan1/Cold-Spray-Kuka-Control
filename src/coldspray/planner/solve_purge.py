@@ -12,7 +12,8 @@ import itertools
 import numpy as np
 
 from coldspray.planner.purge import move_purge
-from coldspray.planner.solver import Context, find_issues
+from coldspray.planner.solve_gantry import count_issues
+from coldspray.planner.solver import Context
 
 STEP_MM = 200.0
 N = 1                     # offsets -200, 0, +200 mm per axis (26 tries)
@@ -37,7 +38,7 @@ def fix_purge(path, issues, ctx: Context):
     for off in offsets():
         point = old + off
         trial = move_purge(path, ctx.cell, point)
-        found = find_issues(trial, ctx)[2]
+        found = count_issues(trial, ctx, best_n - 1)     # complete whenever it beats best_n
         if len(found) < best_n:
             best, best_n, best_point = trial, len(found), point
             if not _on_purge(trial, found):

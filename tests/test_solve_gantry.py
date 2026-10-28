@@ -105,16 +105,27 @@ def test_candidates_stay_inside_the_gantry_limits(setup, monkeypatch):
     c.gantry.position_mm = lo + 0.1 * (hi - lo)
     seen = []
 
-    def fake(p, ctx):
+    def fake(p, ctx, limit=None):
         e = p.moves[0].axes.get("E1", ctx.cell.gantry.position_mm)
         seen.append(e)
         assert lo <= e <= hi
-        return None, None, [None] * int((hi - e) // 100)     # better towards the far end
+        return [None] * int((hi - e) // 100)                 # better towards the far end
 
-    monkeypatch.setattr(sg, "find_issues", fake)
+    monkeypatch.setattr(sg, "count_issues", fake)
     monkeypatch.setattr(sg, "COARSE_MM", (hi - lo) / 3.0 + 1e-12)
     ctx = Context(robot, c, log=lambda _: None)
     new = sg.fix_gantry(path, [None] * 5, ctx)
     assert all(lo <= e <= hi for e in seen)
     assert len(seen) > 2 and lo <= ctx.suggested["gantry_e1"] <= hi
     assert new.moves[0].axes["E1"] == ctx.suggested["gantry_e1"]
+
+
+def test_count_issues_matches_find_issues_and_stops_past_the_limit(setup):
+    from coldspray.planner.solve_gantry import count_issues
+    cell, robot, path = setup
+    ctx = Context(robot, _far_cell(cell), log=lambda _: None)
+    full = find_issues(path, ctx)[2]
+    got = count_issues(path, ctx)
+    assert [(i.sample, i.move, i.kind) for i in got] == [(i.sample, i.move, i.kind) for i in full]
+    if len(full) > 2:
+        assert len(count_issues(path, ctx, 1)) == 2
