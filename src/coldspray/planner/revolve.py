@@ -13,7 +13,6 @@ tapered parts are followed at constant standoff.
 """
 
 import numpy as np
-import trimesh
 
 from coldspray.models import ProcessConfig
 from coldspray.toolpath.model import Move, Toolpath, spray_frame
@@ -25,6 +24,7 @@ STEP_DEG = 5.0       # points every 5 degrees of table rotation
 def radius_profile(vertices, faces, heights) -> np.ndarray:
     """Largest distance from the base Z axis of the part's cross-section at
     each height (NaN where the part has no material)."""
+    import trimesh
     mesh = trimesh.Trimesh(vertices, faces, process=True)
     radii = []
     for z in heights:
