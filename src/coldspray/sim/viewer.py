@@ -778,7 +778,9 @@ class Scene:
         return run_layer[run]
 
     def _draw_lines(self):
-        """(Re)draw the spray and travel lines for the current layer filter."""
+        """(Re)draw the spray and travel lines for the current layer filter. Points are the
+        TCP the robot reaches: forward kinematics of the simulated joints, so PTP moves follow
+        their joint-space path rather than a straight line (unreachable samples: as planned)."""
         for a in self.line_actors:
             self.pl.remove_actor(a)
             if a in self.path_actors:
@@ -786,6 +788,20 @@ class Scene:
         self.line_actors = []
         s = self.samples
         pts = s.poses[:, :3, 3]
+        joints, roots = getattr(self, "joints", None), getattr(self, "root_frames", None)
+        cached = getattr(self, "_drawn_pts", None)
+        if cached is not None and cached[0] is joints and cached[1] is s:
+            pts = cached[2]
+        elif joints is not None and roots is not None and len(joints) == len(pts) == len(roots):
+            ok = ~np.isnan(joints[:, 0])
+            if ok.any():
+                tcp = np.asarray(self.robot.fk(joints[ok])).reshape(-1, 4, 4)
+                world = np.asarray(roots)[ok] @ tcp[:, :, 3:]                     # (k, 4, 1)
+                base = np.linalg.solve(self.base_frames[ok], world)[:, :3, 0]     # BASE coordinates
+                pts = pts.copy()
+                moved = np.linalg.norm(base - pts[ok], axis=1) > 1e-3             # PTP samples only
+                pts[np.flatnonzero(ok)[moved]] = base[moved]
+            self._drawn_pts = (joints, s, pts)
         mode, n = self.layer_filter
         keep = np.ones(len(pts), bool)
         if mode != "all" and self.n_layers:

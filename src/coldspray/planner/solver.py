@@ -25,7 +25,7 @@ from typing import Callable, Literal
 import numpy as np
 
 from coldspray.cell import axis_defaults, base_world, robroot
-from coldspray.toolpath.model import Toolpath
+from coldspray.toolpath.model import Toolpath, log_rot, slerp_mats
 
 
 @dataclass
@@ -129,6 +129,56 @@ def joint_sweep(q0, q1, step_deg: float = 5.0) -> np.ndarray:
     return (1 - t) * q0 + t * q1
 
 
+def home_first_leg(robot, home, target0, q0, ptp: bool, step_mm: float = 5.0,
+                   step_deg: float = 5.0) -> np.ndarray:
+    """Joints along the KRL's HOME -> first point (both ends excluded), moved as the KRL
+    issues it (post/krl.py): a PTP (joint line to `q0`) if move 0 is a PTP, else a LIN
+    (TCP straight from HOME to `target0`, robot root frame; IK chained from HOME, NaN where
+    unreachable). Empty if `q0` is unknown (NaN)."""
+    if ptp:
+        return joint_sweep(home, q0, step_deg)
+    if np.isnan(np.asarray(q0, float)).any():
+        return np.zeros((0, 6))
+    p0, p1 = robot.fk(np.asarray(home, float)), np.asarray(target0, float)
+    turn = np.degrees(np.linalg.norm(log_rot(p0[:3, :3].T @ p1[:3, :3])))
+    n = max(1, int(np.ceil(max(np.linalg.norm(p1[:3, 3] - p0[:3, 3]) / step_mm, turn / step_deg))))
+    t = np.arange(1, n) / n
+    if not len(t):
+        return np.zeros((0, 6))
+    poses = np.tile(np.eye(4), (len(t), 1, 1))
+    poses[:, :3, 3] = (1 - t)[:, None] * p0[:3, 3] + t[:, None] * p1[:3, 3]
+    poses[:, :3, :3] = slerp_mats(p0[:3, :3], p1[:3, :3], t)
+    return robot.ik_path(poses, seed_deg=home)
+
+
+def _home_issues(path: Toolpath, ctx: Context, s, targets, joints) -> list[Issue]:
+    """Issues on the KRL's HOME -> first point and last point -> HOME legs, reported at
+    the first / last sample (one per leg and kind; detail names the leg)."""
+    home = np.asarray(ctx.cell.home_deg, float)
+    n, last_move = len(joints), int(s.move_index[-1])
+    legs = [(0, 0, "HOME -> first" + ("" if path.moves[0].kind == "PTP" else " (LIN)"),
+             home_first_leg(ctx.robot, home, targets[0], joints[0], path.moves[0].kind == "PTP",
+                            ctx.opts.sample_mm, ctx.opts.angle_step_deg)),
+            (n - 1, last_move, "last -> HOME", joint_sweep(joints[-1], home, ctx.opts.angle_step_deg))]
+    out = []
+    for i, move, name, qs in legs:
+        if not len(qs):
+            continue
+        bad = np.isnan(qs[:, 0])
+        if bad.any():
+            out.append(Issue(i, move, "unreachable", name))
+        if ctx.checker is not None:
+            axes = s.axes_at(i)
+            pairs = set()
+            for q in qs[~bad]:
+                d = _check(ctx, q, axes)
+                if d is not None:
+                    pairs |= set(d.split(", "))
+            if pairs:
+                out.append(Issue(i, move, "collision", f"{name}: {', '.join(sorted(pairs))}"))
+    return out
+
+
 def _sampled(path: Toolpath, ctx: Context):
     """(samples, robot targets, hint) of `path`, cached on ctx for the last few paths:
     levers and the after-check often sample the same path object more than once."""
@@ -159,7 +209,9 @@ def _check(ctx: Context, q, axes) -> str | None:
 
 
 def find_issues(path: Toolpath, ctx: Context, limit: int | None = None):
-    """(samples, joints, issues): joints NaN where unreachable; one Issue per bad sample.
+    """(samples, joints, issues): joints NaN where unreachable; one Issue per bad sample,
+    plus the KRL's HOME -> first and last -> HOME legs (at the first / last sample, detail
+    naming the leg; only when the path starts from HOME, i.e. ctx.seed is None).
     With `limit`, collision checks stop once more than `limit` problem points are found
     (issues then holds limit + 1 of them): enough for levers that only compare counts.
     IK runs over the whole path and ctx.last is set either way."""
@@ -178,6 +230,8 @@ def find_issues(path: Toolpath, ctx: Context, limit: int | None = None):
                 issues.append(Issue(int(i), int(s.move_index[i]), "collision", detail))
                 if limit is not None and len(issues) > limit:
                     break
+    if ctx.seed is None and len(joints) and (limit is None or len(issues) <= limit):
+        issues += _home_issues(path, ctx, s, targets, joints)       # the KRL's HOME legs
     issues.sort(key=lambda x: x.sample)
     return s, joints, issues
 
