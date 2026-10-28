@@ -72,6 +72,8 @@ def test_save_open_same_settings_and_krl(tmp_path, monkeypatch):
 
         b = _window(tmp_path, monkeypatch, "b")
         assert job_menu.open_job(b, path), b.dialogs
+        b.undo.commit()
+        assert not b.undo.undo_stack, "opening a job is not an undo step"
         assert b.source.coat_faces == {face} and np.allclose(b.part.krl_base, a.part.krl_base)
         assert np.array_equal(b.part.placement, a.part.placement)
         for name in ("roll", "e1", "tilt", "rotation"):

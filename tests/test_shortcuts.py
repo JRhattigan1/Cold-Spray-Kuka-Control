@@ -21,7 +21,8 @@ def test_shortcuts(tmp_path):
         for n, step in enumerate((PART, POSITION, TOOLPATH, SIMULATE, EXPORT)):
             win.shortcuts[n].activated.emit()
             assert win.step == step
-        assert win.shortcuts[-1].key() == QKeySequence("Ctrl+G")
+        assert QKeySequence("Ctrl+G") in [s.key() for s in win.shortcuts]
+        assert {"Ctrl+Z", "Ctrl+Shift+Z", "Ctrl+Y", "Ctrl+S", "Ctrl+O"} <= keys
     finally:
         win.plotter.close()
         win.part_plotter.close()

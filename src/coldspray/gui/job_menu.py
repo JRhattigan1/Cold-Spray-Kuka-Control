@@ -165,6 +165,8 @@ def apply(win, job: dict):
     win.spray_output_check.setChecked(bool(job["export"].get("spray_output", True)))
     win.split_check.setChecked(bool(job["export"].get("split", False)))
     widgets.refresh()
+    if getattr(win, "undo", None) is not None:
+        win.undo.reset()                 # undo starts from the opened job, not its restore steps
     win.go_to(TOOLPATH)
 
 
