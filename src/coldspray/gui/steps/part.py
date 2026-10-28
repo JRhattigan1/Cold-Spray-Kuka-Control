@@ -54,6 +54,9 @@ def capsule_row(*buttons, pick: bool = False) -> QHBoxLayout:
     return row
 
 
+from coldspray.gui.progress import fit_panel
+
+
 class PartStep:
     def _build_part_panel(self) -> QWidget:
         inner = QWidget()
@@ -150,6 +153,7 @@ class PartStep:
 
         layout.addWidget(primary_button("Next: Position  →", lambda: self.go_to(POSITION)))
         layout.addStretch(1)
+        fit_panel(inner)
         return inner
 
     def _open_step(self):

@@ -30,6 +30,9 @@ from coldspray.sim.viewer import camera_axes
 from coldspray.transforms import frame, xyzabc
 
 
+from coldspray.gui.progress import fit_panel
+
+
 class PositionStep:
     def _build_position_panel(self) -> QWidget:
         inner = QWidget()
@@ -185,6 +188,7 @@ class PositionStep:
 
         layout.addWidget(primary_button("Next: Toolpath  →", lambda: self.go_to(TOOLPATH)))
         layout.addStretch(1)
+        fit_panel(inner)
         return inner
 
     @staticmethod

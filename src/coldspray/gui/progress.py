@@ -129,3 +129,15 @@ class JobProgress(QWidget):
         return self._cancelled
 
     cancelled = Property(bool, _get_cancelled)
+
+
+def fit_panel(root):
+    """Let inputs shrink and grow with the sidebar: no minimum wider than the panel (no horizontal scrollbar)."""
+    from PySide6.QtWidgets import QAbstractSpinBox, QComboBox, QLineEdit, QSizePolicy, QWidget
+    for w in root.findChildren(QWidget):
+        if isinstance(w, QComboBox):
+            w.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+            w.setMinimumContentsLength(6)
+        if isinstance(w, (QAbstractSpinBox, QComboBox, QLineEdit)):
+            w.setMinimumWidth(0)
+            w.setSizePolicy(QSizePolicy.Expanding, w.sizePolicy().verticalPolicy())

@@ -110,7 +110,7 @@ class Timeline(QWidget):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         fm = QFontMetrics(self.font())
         self.setFixedHeight(self.TRACK_H + fm.height() + 2 * self.PAD + 4)
-        self.setMinimumWidth(200)
+        self.setMinimumWidth(120)
 
     # --- data ------------------------------------------------------------------
     def set_data(self, n: int, spray=None, unreachable=None, collision=None, steep=None, times=None):
@@ -332,7 +332,7 @@ class PlaybackControls(QWidget):
         rim = 'rgba(255,255,255,0.22)' if dark else 'rgba(0,0,0,0.12)'
         for b in (self.prev_btn, self.next_btn):
             b.setFixedSize(30, 30)
-        self.play_btn.setMinimumSize(84, 30)
+        self.play_btn.setMinimumSize(64, 30)
         self.setStyleSheet(
             f"QToolButton{{background:{glass};border:1px solid {rim};border-radius:15px;color:{t['ink']};padding:0 10px;}}"
             f"QToolButton:hover{{background:{hover};border-color:{t['accent']};}}"
