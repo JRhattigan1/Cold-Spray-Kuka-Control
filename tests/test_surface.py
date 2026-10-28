@@ -127,9 +127,25 @@ def test_separate_faces_are_separate_regions_with_a_jump():
     path = plan_part(part, proc, "surface")[1]
     tags = [m.tag for m in path.moves]
     assert "jump" in tags
-    gaps = [np.linalg.norm(b.pose[:3, 3] - a.pose[:3, 3]) for a, b in zip(path.moves, path.moves[1:])
-            if a.tag == b.tag == "infill"]
-    assert max(gaps) < 5.0                     # within a stroke: resampled points, never across the slot
+    # No infill stroke (merged LINs are long) crosses the slot: every point along every
+    # infill segment lies over a prong top (in plan view, 0.5 mm margin at the edges).
+    v = placed_vertices(part)
+    tri = v[part.faces[mask]][:, :, :2]                                   # (T, 3, 2) prong triangles
+    a, b, c = tri[:, 0], tri[:, 1], tri[:, 2]
+    det = (b - a)[:, 0] * (c - a)[:, 1] - (b - a)[:, 1] * (c - a)[:, 0]
+
+    def over_prong(p):
+        d = p[:, None, :] - a[None]
+        u = (d[..., 0] * (c - a)[:, 1] - d[..., 1] * (c - a)[:, 0]) / det
+        w = ((b - a)[:, 0] * d[..., 1] - (b - a)[:, 1] * d[..., 0]) / det
+        return ((u >= -0.05) & (w >= -0.05) & (u + w <= 1.05)).any(axis=1)
+
+    segs = [(a_.pose[:3, 3], b_.pose[:3, 3]) for a_, b_ in zip(path.moves, path.moves[1:])
+            if a_.tag == b_.tag == "infill"]
+    assert segs
+    t = np.linspace(0, 1, 50)[:, None]
+    for p0, p1 in segs:
+        assert over_prong((p0 + t * (p1 - p0))[:, :2]).all()
 
 
 def _tube_end(part):
