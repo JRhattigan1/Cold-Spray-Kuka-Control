@@ -205,3 +205,20 @@ def test_new_workpiece_is_placed_after_skipped_transforms():
     assert ("A5", "fixture") in checker.check(q, E0)
     checker.set_workpiece()
     assert checker.check(q, E0) == set()
+
+
+def test_follow_e1_at_exactly_max_shift():
+    """S9F: the gantry lever may score E1 exactly solve_e1.MAX_SHIFT_MM from the built E1; the
+    sampled axes then carry round-off (1499.9999999999998, from interpolating E1 between
+    moves), which made solver.solve crash with "too far from where this collision check was set up"."""
+    from coldspray.planner.solve_e1 import MAX_SHIFT_MM
+    from coldspray.sim.collision import ROBOT_REACH_MM
+    robot, cell = Robot(load_robot()), load_cell().model_copy(deep=True)
+    if cell.gantry is None:
+        pytest.skip("no gantry")
+    cell.gantry.position_mm = 2500.0
+    checker = CollisionChecker(robot, cell, _bare_meshes(robot), reach_mm=ROBOT_REACH_MM + MAX_SHIFT_MM)
+    for e1 in (2500.0 - MAX_SHIFT_MM, 1499.9999999999998, 2500.0 + MAX_SHIFT_MM, 3500.0000000000005):
+        checker.check(np.array(HOME_DEG, float), {cell.gantry.axis: e1})
+    with pytest.raises(ValueError):
+        checker.check(np.array(HOME_DEG, float), {cell.gantry.axis: 2500.0 - MAX_SHIFT_MM - 1.0})
