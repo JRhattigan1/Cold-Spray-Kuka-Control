@@ -148,6 +148,15 @@ def solve_checks(report) -> list[Check]:
     out = []
     for line in report.fixed:
         out.append(Check("solve_fixed", "ok", "Solver: " + line))
+    sug = getattr(report, "suggested", None) or {}
+    if "gantry_e1" in sug:
+        out.append(Check("solve_gantry", "ok", f"Suggested gantry E1 = {sug['gantry_e1']:.0f} mm",
+                         "The solved toolpath already drives the gantry there; Apply sets it in the cell"))
+    if "purge_point" in sug:
+        x, y, z = sug["purge_point"]
+        out.append(Check("solve_purge", "ok", f"Suggested purge point = ({x:.0f}, {y:.0f}, {z:.0f}) mm",
+                         "WORLD, spray direction unchanged; the solved toolpath already uses it, Apply sets it"
+                         " in the cell"))
     if report.unfixed:
         first = report.unfixed[0]
         shown = "; ".join(f"point {i.sample} ({i.kind}{': ' + i.detail if i.detail else ''})"

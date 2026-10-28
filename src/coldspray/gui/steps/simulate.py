@@ -87,6 +87,11 @@ class SimulateStep:
         self.solve_btn.setEnabled(False)
         capsule(self.solve_btn)
         checks.add(self.solve_btn)
+        self.apply_suggested_btn = QPushButton("Apply suggested set-up")
+        self.apply_suggested_btn.setToolTip("Set the solver's suggested gantry E1 / purge point in the cell")
+        self.apply_suggested_btn.clicked.connect(self._apply_suggested)
+        self.apply_suggested_btn.setVisible(False)
+        checks.add(self.apply_suggested_btn)
         self.sim_checks = CheckList()
         self.sim_checks.goTo.connect(self._goto)
         checks.add(self.sim_checks)
@@ -174,6 +179,7 @@ class SimulateStep:
         busy = self.check_future is not None or self.solve_future is not None
         self.solve_btn.setEnabled(not busy)
         report = self._report()
+        self.apply_suggested_btn.setVisible(bool(report is not None and getattr(report, "suggested", None)))
         unfixed = bool(report is not None and report.unfixed)
         self.save_krl_btn.setEnabled(getattr(self, "unreachable", 0) == 0 and not unfixed)
         self._show_time()
@@ -244,6 +250,27 @@ class SimulateStep:
         self.solve_future = self.pool.submit(work)
         self.solve_btn.setEnabled(False)
         self.poll_timer.start()
+
+    def _apply_suggested(self):
+        """Put the solver's suggestions (report.suggested) into the cell set-up: gantry E1
+        (the Position step's E1 box) and purge point (its X/Y/Z boxes, spray direction kept)."""
+        report = self._report()
+        sug = getattr(report, "suggested", None) or {}
+        done = []
+        if "gantry_e1" in sug and getattr(self, "e1", None) is not None:
+            self.e1.setValue(float(sug["gantry_e1"]))
+            done.append(f"gantry E1 = {sug['gantry_e1']:.0f} mm")
+        if "purge_point" in sug:
+            boxes = getattr(self, "purge_xyz", None)
+            if boxes:
+                for box, v in zip(boxes, sug["purge_point"]):
+                    box.setValue(float(v))
+            cell = getattr(getattr(self, "assets", None), "cell", None)
+            if getattr(cell, "purge", None) is not None:
+                cell.purge.point = tuple(float(v) for v in sug["purge_point"])
+            done.append("purge point = (" + ", ".join(f"{v:.0f}" for v in sug["purge_point"]) + ") mm")
+        if done:
+            self._status("Applied " + "; ".join(done))
 
     def _poll_solve(self):
         """GUI thread: show progress lines; once done, apply or drop the result."""
