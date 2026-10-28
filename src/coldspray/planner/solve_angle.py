@@ -12,7 +12,9 @@ from dataclasses import replace
 
 import numpy as np
 
-from coldspray.planner.solver import find_issues, issues_in
+from coldspray.planner.solver import find_issues, ptp_in_joint_space, ptp_moves, robot_targets
+from coldspray.cell import axis_defaults
+from coldspray.toolpath.model import Toolpath
 from coldspray.transforms import frame
 
 
@@ -49,9 +51,11 @@ def _weights(path, run, ramp_mm) -> np.ndarray:
     return np.clip(1.0 - d / ramp_mm, 0.0, 1.0)
 
 
-def _apply(path, w, angle, lean):
+def _apply_range(path, w, angle, lean, a, b):
+    """Moves a..b (inclusive) of `path` with the offset applied (others untouched)."""
     moves = []
-    for k, (m, wi) in enumerate(zip(path.moves, w)):
+    for k in range(a, b + 1):
+        m, wi = path.moves[k], w[k]
         if wi <= 0 and (m.aux is None or k == 0 or w[k - 1] <= 0):
             moves.append(m)
             continue
@@ -60,7 +64,49 @@ def _apply(path, w, angle, lean):
             wa = 0.5 * (wi + (w[k - 1] if k else wi))
             aux = aux @ frame(a=lean * wa, c=angle * wa)
         moves.append(replace(m, pose=m.pose @ frame(a=lean * wi, c=angle * wi), aux=aux, axes=dict(m.axes)))
-    return replace(path, moves=moves)
+    return moves
+
+
+def _apply(path, w, angle, lean):
+    return replace(path, moves=_apply_range(path, w, angle, lean, 0, len(path.moves) - 1))
+
+
+def _full_axes(path, initial):
+    """Axis values of every move, as Toolpath.sample fills them in."""
+    per_move = path.axis_values()
+    names = sorted({k for a in per_move for k in a})
+    first = {k: initial.get(k, per_move[-1].get(k, 0.0)) for k in names}
+    return [{k: a.get(k, first[k]) for k in names} for a in per_move]
+
+
+def _clears(trial_moves, a, base, ctx, lo, hi, axes, ptp):
+    """True if moves lo..hi have no problem point: the check issues_in makes, on just the
+    window of moves a..hi (the sampling of a segment only needs its two end moves)."""
+    o = ctx.opts
+    win = Toolpath(base.name, [replace(m, axes=axes[a + k]) for k, m in enumerate(trial_moves)])
+    s = win.sample(o.sample_mm, o.angle_step_deg)
+    mi = s.move_index + a
+    sel = np.flatnonzero((mi >= lo) & (mi <= hi))
+    if not len(sel):
+        return True
+    seed = ctx.cell.home_deg if ctx.seed is None else ctx.seed
+    last = getattr(ctx, "last", None)
+    if last is not None:
+        before = np.flatnonzero(last[0].move_index < lo)
+        if len(before) and not np.isnan(last[1][before[-1], 0]):
+            seed = last[1][before[-1]]
+    targets = robot_targets(s, ctx.cell)[sel]
+    hint = base.joint_hint
+    hint = None if hint is None or len(hint) != len(base.moves) else hint[mi]
+    joints = ctx.robot.ik_path(targets, seed_deg=seed, hint=None if hint is None else hint[sel])
+    joints = ptp_in_joint_space(ptp, mi[sel], joints, before=seed if last is not None or lo == 0 else None)
+    if np.isnan(joints[:, 0]).any():
+        return False
+    if ctx.checker is not None:
+        for i, q in zip(sel, joints):
+            if ctx.checker.check(q, s.axes_at(i)):
+                return False
+    return True
 
 
 def fix_angle(path, issues, ctx):
@@ -75,9 +121,14 @@ def fix_angle(path, issues, ctx):
         if not any(i.move in region for i in cur_issues):
             continue                                  # an earlier stretch's change already fixed it
         lo, hi = min(region), max(region) + 1          # the move after the ramp feels it too
+        n = len(cur.moves)
+        a, b = max(lo - 1, 0), min(hi, n - 1)
+        axes = _full_axes(cur, axis_defaults(ctx.cell))
+        ptp = ptp_moves(cur, ctx.cell)
         for angle, lean in cands:
-            trial = _apply(cur, w, angle, lean)
-            if not issues_in(trial, ctx, lo, hi):        # fast: only the changed stretch
+            part = _apply_range(cur, w, angle, lean, a, b)
+            if _clears(part, a, cur, ctx, lo, hi, axes, ptp):   # fast: only the changed stretch
+                trial = replace(cur, moves=cur.moves[:a] + part + cur.moves[b + 1:])
                 _, _, cur_issues = find_issues(trial, ctx)
                 cur, changed = trial, True
                 break
