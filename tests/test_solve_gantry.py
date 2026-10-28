@@ -94,3 +94,27 @@ def test_suggestion_rows_and_apply_sets_the_cell_e1(monkeypatch):
     finally:
         w.pool.shutdown(wait=False)
         w.close()
+
+
+def test_candidates_stay_inside_the_gantry_limits(setup, monkeypatch):
+    """Float steps (e.g. 5500.000000000001) are clipped/rounded into limits_mm (S8I crash)."""
+    import coldspray.planner.solve_gantry as sg
+    cell, robot, path = setup
+    c = cell.model_copy(deep=True)
+    lo, hi = c.gantry.limits_mm
+    c.gantry.position_mm = lo + 0.1 * (hi - lo)
+    seen = []
+
+    def fake(p, ctx):
+        e = p.moves[0].axes.get("E1", ctx.cell.gantry.position_mm)
+        seen.append(e)
+        assert lo <= e <= hi
+        return None, None, [None] * int((hi - e) // 100)     # better towards the far end
+
+    monkeypatch.setattr(sg, "find_issues", fake)
+    monkeypatch.setattr(sg, "COARSE_MM", (hi - lo) / 3.0 + 1e-12)
+    ctx = Context(robot, c, log=lambda _: None)
+    new = sg.fix_gantry(path, [None] * 5, ctx)
+    assert all(lo <= e <= hi for e in seen)
+    assert len(seen) > 2 and lo <= ctx.suggested["gantry_e1"] <= hi
+    assert new.moves[0].axes["E1"] == ctx.suggested["gantry_e1"]

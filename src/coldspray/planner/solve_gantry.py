@@ -46,7 +46,7 @@ def fix_gantry(path, issues, ctx: Context):
     scores = {}
 
     def score(e):
-        e = float(np.clip(e, lo, hi))
+        e = float(min(max(round(float(e), 6), lo), hi))      # inside limits_mm (no 5500.000000000001)
         if span is not None and abs(e - centre) > span + 1e-9:
             return e, None
         if e not in scores:
