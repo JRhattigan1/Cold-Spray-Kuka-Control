@@ -1,7 +1,8 @@
 """Screenshot each step of the GUI: python tools/ui_screenshots.py OUTDIR [--theme light|dark]
 
 Loads the built-in test_block, visits the five steps (generating a toolpath on Toolpath) and
-saves stepN_<name>.png (window grab) plus stepN_<name>_3d.png (the 3D view alone).
+--size WxH sets the window size, --scale sets QT_SCALE_FACTOR.
+Saves stepN_<name>.png (window grab) plus stepN_<name>_3d.png (the 3D view alone).
 With no display it falls back to the offscreen platform, where the 3D views may be blank."""
 import argparse
 import ctypes
@@ -22,12 +23,18 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("outdir")
     ap.add_argument("--theme", choices=["light", "dark"], default="light")
+    ap.add_argument("--size", default="1600x1000", help="window size WxH")
+    ap.add_argument("--scale", type=float, default=None, help="QT_SCALE_FACTOR, e.g. 1.5")
     args = ap.parse_args()
+    w, h = (int(v) for v in args.size.lower().split("x"))
+    if args.scale:
+        os.environ["QT_SCALE_FACTOR"] = str(args.scale)
     out = Path(args.outdir)
     out.mkdir(parents=True, exist_ok=True)
-    if not has_display():
-        os.environ["QT_QPA_PLATFORM"] = "offscreen"
-        print("no display: offscreen, 3D views may be blank")
+    if "QT_QPA_PLATFORM" not in os.environ:
+        os.environ["QT_QPA_PLATFORM"] = "offscreen"  # default: never open real windows
+    if os.environ["QT_QPA_PLATFORM"] == "offscreen":
+        print("offscreen: 3D views may be blank")
 
     from PySide6.QtCore import QSettings
     from PySide6.QtWidgets import QApplication
@@ -36,8 +43,13 @@ def main():
     from coldspray.gui.app import MainWindow
     win = MainWindow(QSettings(str(out / "ui.ini"), QSettings.IniFormat))
     win.set_theme(args.theme)
-    win.resize(1600, 1000)
+    win.resize(w, h)
     win.show()
+    pump0 = [app.processEvents() for _ in range(20)]
+    msh = win.minimumSizeHint()
+    print(f"requested {w}x{h} scale={args.scale or 1} actual {win.width()}x{win.height()} "
+          f"minimumSizeHint {msh.width()}x{msh.height()} minimumSize "
+          f"{win.minimumWidth()}x{win.minimumHeight()}")
 
     def pump(n=20):
         for _ in range(n):
