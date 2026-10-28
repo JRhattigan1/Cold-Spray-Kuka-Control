@@ -129,7 +129,7 @@ def main():
     for n in names:
         dt, res[n] = run(n, a.profile); total += dt
     print(f"TOTAL {total:.2f} s")
-    if a.json: json.dump(res, open(a.json, "w"))
+    if a.json: json.dump(res, open(a.json, "w"), default=lambda o: o.item() if hasattr(o, "item") else str(o))
 
 
 if __name__ == "__main__":
