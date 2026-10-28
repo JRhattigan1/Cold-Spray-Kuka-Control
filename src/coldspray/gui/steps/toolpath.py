@@ -175,39 +175,6 @@ def short_label(text: str) -> str:
     return text.split(" (", 1)[0].strip()
 
 
-class SegmentedCapsule(QFrame):
-    """Glass segmented capsule that mirrors a QComboBox (the combo stays the data API)."""
-
-    def __init__(self, combo: QComboBox):
-        super().__init__()
-        self.setObjectName("segcap")
-        self.combo, self.buttons = combo, []
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(3, 3, 3, 3)
-        lay.setSpacing(2)
-        for i in range(combo.count()):
-            text = combo.itemText(i)
-            b = QPushButton(short_label(text))     # "Layers (build up ...)" -> "Layers"; full text as tooltip
-            b.setToolTip(text)
-            b.setCheckable(True)
-            b.setCursor(Qt.PointingHandCursor)
-            b.clicked.connect(lambda _=False, i=i: combo.setCurrentIndex(i))
-            lay.addWidget(b, 1)
-            self.buttons.append(b)
-        combo.currentIndexChanged.connect(self._sync)
-        combo.hide()
-        self._sync()
-
-    def _sync(self, *_):
-        t = style.tokens(style.current_mode())
-        self.setStyleSheet(
-            f"QFrame#segcap {{ background: {t['soft']}; border: 1px solid {t['line']}; border-radius: 16px; }}"
-            f"QPushButton {{ background: transparent; border: none; border-radius: 13px; padding: 5px 10px; color: {t['muted']}; }}"
-            f"QPushButton:checked {{ background: {t['accent']}; color: #ffffff; font-weight: 600; }}")
-        for i, b in enumerate(self.buttons):
-            b.setChecked(i == self.combo.currentIndex())
-
-
 class StatTiles(QWidget):
     """Summary as glass stat tiles; keeps the QLabel.setText API used by generate."""
 

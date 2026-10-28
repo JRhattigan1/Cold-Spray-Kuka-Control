@@ -376,7 +376,7 @@ class MainWindow(QMainWindow, PartStep, PositionStep, ToolpathStep, SimulateStep
             self.scene.focus_on_work()
             self.spacemouse = SpaceMouse.open()
             if self.spacemouse:
-                self.sm_part.setText(f"{self.spacemouse.name} moves the part")
+                self.sm_part.setToolTip(f"{self.spacemouse.name}\n{self.sm_part.toolTip()}")    # device names are long: tooltip, not label
                 self.sm_part.setVisible(True)
                 self.sm_timer.start()
             view_toolbar.install(self)
