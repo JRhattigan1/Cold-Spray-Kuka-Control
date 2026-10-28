@@ -22,10 +22,11 @@
 2. **Decide (user):** repair patch top + 4 sides now sprays the sides; 10/482 moves on the far side are out of reach (lifted turns, lift between faces). `test_surface_e2e::test_repair_patch_top_and_sides` is xfail. Options: accept; lower lift between faces (jump height); old tilt limit for split faces.
 3. **Arcs in T1** (test_block, arcs on): orientation along CIRC with `#PATH`, C_DIS blending, `$VEL.CP`, `$CIRC_TYPE` inside split `_Pnn`. CIRC on a turning table is a 2-LIN chord (short arcs only).
 4. **Gaps left by S7K:** HOME legs not in solver `find_issues`; HOME → first checked as PTP even when move 0 is a LIN; drawn path shows PTP as a straight line; `solve_arm` uses Cartesian samples; no GUI test for the Layers part gate.
-5. **Gantry lever speed:** up to ~32 whole-path checks; measure on WearPlate2 with collision on.
-6. **Position Simple mode:** compare E1 with `gantry.position_mm` for "changed" (user: maybe).
-7. **Review finding 8:** `Toolpath.sample` axis value (partly covered by `initial=`; re-check).
-8. Slicer `polygonize` option; launch time; Export split/preflight on the controller; S/T bits vs `$POS_ACT`; cable wind-up A4/A6; holes in Surface; saved constraints; solver gaps; P7 filtration-unit collisions; reach IK on a worker; README robot checks in T1.
+5. **Surface step-over on curved transitions (user, 2026-10-28):** where a flat face runs into a curved blend, the passes bunch up on the curve and stay evenly spaced on the flat ([screenshot](images/surface_stepover_curve.png)); problem markers cluster there too. Step-over seems set in the flattened / plane-cut frame, not measured along the surface. Fix: space passes by distance along the surface (geodesic, or re-space cuts by arc length across the curve) so the track overlap is constant; add a test on a flat-plus-fillet pick.
+6. **Gantry lever speed:** up to ~32 whole-path checks; measure on WearPlate2 with collision on.
+7. **Position Simple mode:** compare E1 with `gantry.position_mm` for "changed" (user: maybe).
+8. **Review finding 8:** `Toolpath.sample` axis value (partly covered by `initial=`; re-check).
+9. Slicer `polygonize` option; launch time; Export split/preflight on the controller; S/T bits vs `$POS_ACT`; cable wind-up A4/A6; holes in Surface; saved constraints; solver gaps; P7 filtration-unit collisions; reach IK on a worker; README robot checks in T1.
 
 ## User decisions (2026-10-28)
 - Spray stays on between layers at jump 0; crosshatch removed; purge spray on first→last visit (spray is manual for now).
