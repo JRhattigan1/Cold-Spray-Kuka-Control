@@ -7,7 +7,7 @@ import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFileDialog, QGridLayout, QHBoxLayout, QMessageBox, QPushButton,
-    QVBoxLayout, QWidget, QFrame,
+    QSizePolicy, QVBoxLayout, QWidget, QFrame,
 )
 
 from coldspray.cad.part import grow_tangent, krl_base_frame
@@ -38,12 +38,22 @@ def capsule(btn: QPushButton, pick: bool = False) -> QPushButton:
     btn.setMinimumHeight(30)
     btn.setCursor(Qt.PointingHandCursor)
     css = (f"QPushButton {{ background: {t['panel']}; border: 1px solid {t['line']}; border-radius: 15px; "
-           f"padding: 4px 14px; }} QPushButton:hover {{ border-color: {t['accent']}; }}")
+           f"padding: 4px 10px; }} QPushButton:hover {{ border-color: {t['accent']}; }}")
     if pick:
         css += (f" QPushButton:checked {{ background: {t['accent_soft']}; border: 2px solid {t['accent']}; "
                 f"color: {t['accent']}; font-weight: 600; }}")
     btn.setStyleSheet(css)
     return btn
+
+
+def fit_combo(combo: QComboBox, n: int = 12) -> QComboBox:
+    """Let a combo shrink to ~n characters (popup keeps full width) so it never forces the sidebar wider."""
+    combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+    combo.setMinimumContentsLength(n)
+    combo.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+    combo.view().setMinimumWidth(combo.fontMetrics().horizontalAdvance(
+        max((combo.itemText(i) for i in range(combo.count())), key=len, default="")) + 40)
+    return combo
 
 
 def capsule_row(*buttons, pick: bool = False) -> QHBoxLayout:
@@ -73,6 +83,7 @@ class PartStep:
         for key, text in BUILT_IN_LABELS.items():
             self.test_parts.addItem(text, key)
         self.test_parts.activated.connect(self._test_part_chosen)
+        fit_combo(self.test_parts)
         card = QVBoxLayout()
         card.addWidget(self.part_label)
         card.addLayout(capsule_row(open_btn))
@@ -84,7 +95,7 @@ class PartStep:
         self.body_grid = QGridLayout()
         self.body_rows: list[tuple[QCheckBox, QComboBox]] = []
         body_box.add(self.body_grid)
-        isolate = QPushButton("Isolate build body")
+        isolate = QPushButton("Isolate build")
         isolate.setToolTip("Hide the other bodies, e.g. to reach the underside of a repair patch")
         isolate.clicked.connect(lambda: self._show_bodies(only_build=True))
         show_all = QPushButton("Show all")
@@ -101,7 +112,7 @@ class PartStep:
                                   "parallel to it (e.g. the underside of a repair patch)")
         self.start_btn.toggled.connect(lambda on: self._pick_face("start", on))
         self.start_label = wrap_label()
-        self.base_btn = QPushButton("Pick base face (optional)")
+        self.base_btn = QPushButton("Pick base face")
         self.base_btn.setCheckable(True)
         self.base_btn.setToolTip("Click a flat face (any body) for the part to stand on: it is turned\n"
                                  "to face down onto the plate, or the faceplate without one")
@@ -122,7 +133,7 @@ class PartStep:
         self.coat_btn.setToolTip("Faces to coat in Surface mode, any body. Click toggles a face,\n"
                                  "Shift+click adds, Ctrl+click removes. Click the button again to stop")
         self.coat_btn.toggled.connect(self._pick_coat)
-        grow = QPushButton("Grow to tangent faces")
+        grow = QPushButton("Grow tangent")
         grow.setToolTip("Add the faces joined smoothly (normals within 10 degrees) to the chosen ones")
         grow.clicked.connect(self._grow_coat)
         clear_coat = QPushButton("Clear")
@@ -211,13 +222,16 @@ class PartStep:
     def _fill_bodies(self):
         """One row per body: visible tick with its size, and its role."""
         while self.body_grid.count():
-            self.body_grid.takeAt(0).widget().deleteLater()
+            item = self.body_grid.takeAt(0)
+            item.widget().hide()
+            item.widget().deleteLater()
         self.body_rows = []
         part = self.source
         for b in range(part.n_bodies):
             faces = part.faces if part.body_ids is None else part.faces[part.body_ids == b]
             size = np.ptp(part.vertices[np.unique(faces)], axis=0)
-            shown = QCheckBox(f"Body {b + 1}: {size[0]:.0f} x {size[1]:.0f} x {size[2]:.0f} mm")
+            shown = QCheckBox(f"Body {b + 1}")
+            dims = wrap_label(f"<small>{size[0]:.0f} x {size[1]:.0f} x {size[2]:.0f} mm</small>")
             shown.setChecked(True)
             shown.setToolTip("Untick to hide this body (e.g. to pick a face behind it)")
             shown.toggled.connect(lambda on, body=b: self.part_view.set_visible(body, on))
@@ -227,8 +241,10 @@ class PartStep:
             role.setCurrentIndex(ROLES.index(self.roles[b]))
             role.currentIndexChanged.connect(lambda _, body=b: self._role_changed(body))
             role.setEnabled(part.n_bodies > 1)
-            self.body_grid.addWidget(shown, b, 0)
-            self.body_grid.addWidget(role, b, 1)
+            fit_combo(role, 6)
+            self.body_grid.addWidget(shown, 2 * b, 0)
+            self.body_grid.addWidget(role, 2 * b, 1)
+            self.body_grid.addWidget(dims, 2 * b + 1, 0, 1, 2)
             self.body_rows.append((shown, role))
         self.bodies_section.set_chip(str(part.n_bodies))
 
