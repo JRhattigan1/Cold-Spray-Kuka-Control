@@ -2,6 +2,22 @@
 
 **Start here.** Where each feature stands is in [ROADMAP.md](ROADMAP.md), and what the app does is in [README.md](../README.md). Each agent's detail is in `plans/reports/<ID>-1.md` on its branch (`git show wp/<ID>:plans/reports/<ID>-1.md`; the session 5 worktrees are removed). Older hand-offs are in git history.
 
+## Session 9 hand-over (2026-10-28) — READ FIRST
+User asked: fix known bugs, add day-to-day features, housekeeping (robot T1 not possible yet). Session ended mid-run.
+- **Done on main:** `246e8c3` CI workflow `.github/workflows/tests.yml` (windows-latest, KRL hashes + imports + planner/post units; 365 passed locally in 2 min). **Not pushed yet**: push main after merging.
+- **Branches deleted:** remote `wp/E2p`, `wp/O5`, `wp/P8`; local `wp/S8I`, `wp/FM`, `surface-patterns`.
+- **Cleanup left for the user (blocked by the permission check):** `git branch -D wp/KM-K1` (obsolete, unmerged); worktrees `cs-S8B`, `cs-U20` hold only throwaway untracked files (assets junctions already removed): `git worktree remove --force` both, then `git branch -d wp/S8B wp/U20`; pause OneDrive and `git worktree prune` (stale `cs-S8*` records). Remote `surface-patterns` still exists (merged; delete if wanted).
+- **Agents launched (wave 1+2), each on `wp/<ID>` in `C:\Users\qrb21117\worktrees\cs-<ID>`, report `plans/reports/<ID>-1.md`.** Check each branch: report present? tests? then review + merge `--no-ff` (protocol below).
+  | ID | task | main files |
+  |---|---|---|
+  | S9S | Surface step-over by distance along the surface (to-do 5) + repair patch far-side reach by lowering lift between faces (to-do 2; un-xfail) | planner/surface.py |
+  | S9J | Job save/open (`job_io.py`, Ctrl+S/O, recent jobs) | job_io.py, gui/app.py |
+  | S9H | HOME legs in solver; HOME→first checked as the real LIN/PTP; PTP drawn along joint path; finding 8 | planner/solver.py, sim/collision.py, viewer path drawing |
+  | S9T | Predicted thickness map (`sim/deposit.py`), Simulate toggle; cycle time + powder (`powder_feed_g_min`) in Simulate and Export | sim/deposit.py, viewer colouring, steps/simulate.py, export |
+  Overlap: S9H and S9T both touch `sim/viewer.py` (different functions). If an agent died mid-run, its worktree has uncommitted work: commit it as WIP and finish inline.
+- **Wave 3, not started:** (a) undo for part placement and constraint edits; (b) spray on/off from KRL `$OUT` (option, off by default; default KRL hashes must not change); (c) A4/A6 cable wind-up check in Simulate; (d) filtration-unit collisions (P7). (a) touches gui/app.py: start after S9J is merged.
+- **After merging:** full suite; rewrite `ROADMAP.md` (still describes session 5); update this file; push main.
+
 ## State (2026-10-28, session 7)
 - **`main` @ `7efb1f8`**, all session 6/7 work merged; nothing pushed. **Full suite** (before S7O/S7S/startup fix): 703 passed, 1 failed (fixed: `d3795b7`), 3 xfailed, 18 min. After the last merges, touched tests: 141 passed, 1 xfailed.
 - Merged this session (`git log --first-parent main`):
