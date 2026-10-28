@@ -138,7 +138,7 @@ def _tube_end(part):
     return _face_mask(part, lambda c, n: (n[:, 2] > 0.99) & np.isclose(c[:, 2], top)) + (top,)
 
 
-@pytest.mark.parametrize("pattern", ["oneway", "concentric", "spiral", "crosshatch", "islands"])
+@pytest.mark.parametrize("pattern", ["oneway", "concentric", "spiral", "islands"])
 def test_patterns_fill_a_flat_face(pattern):
     """Any infill pattern on the tube's annular end: contour then pattern, gun straight
     down at the standoff, and no spray over the bore (only overruns and jumps cross it)."""
@@ -171,18 +171,6 @@ def test_concentric_rings_on_the_tube_end():
     rings = np.unique(np.round(r))       # contour 2 mm in, then step-over apart from both edges
     assert {42, 44, 46, 48, 52, 54, 56, 58} <= set(rings.astype(int))
     assert sum(t == "jump" for t in (m.tag for m in path.moves)) < 30    # no slivers at the centre line
-
-
-def test_crosshatch_coats_cross():
-    proc = load_process().model_copy(update={"infill_pattern": "crosshatch", "contour_passes": 0})
-    box = trimesh.creation.box([40, 30, 20])
-    mask = box.face_normals[:, 2] > 0.9
-    path = plan_surface(box.vertices, box.faces, mask, proc, coats=2)
-    infill = [m for m in path.moves if m.tag == "infill"]
-    y = np.array([m.pose[:3, 1] for m in infill])           # gun y: along the stroke
-    along_x = np.abs(y[:, 0]) > 0.99
-    assert along_x.any() and (np.abs(y[:, 1]) > 0.99).any()
-    assert along_x[:len(y) // 4].all() and not along_x[-len(y) // 4:].any()   # coat 1 along X, coat 2 across
 
 
 def test_wrapping_region_falls_back_to_zigzag():

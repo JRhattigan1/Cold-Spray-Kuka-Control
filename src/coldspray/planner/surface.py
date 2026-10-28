@@ -36,7 +36,7 @@ WEAK_MEAN = 0.3      # |mean normal| below this: no single "view" direction
 BRIDGE_DEG = 30.0    # pieces of one cut are joined if their normals agree this well
 FOLD_COS = 0.05      # pattern fill: every face must face the mean normal at least this much
 EDGE_MM = 1e-3       # pattern fill: strokes kept this far inside the region so they land on it
-OVERRUN_PATTERNS = ("oneway", "crosshatch")   # pattern strokes that run edge to edge get the overrun
+OVERRUN_PATTERNS = ("oneway",)   # pattern strokes that run edge to edge get the overrun
 
 
 class Stroke(NamedTuple):

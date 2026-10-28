@@ -14,7 +14,7 @@ from coldspray.planner.patterns import PATTERNS
 from coldspray.planner.position import auto_position, layer_tilts, world_poses
 from coldspray.post.krl import to_krl
 
-MOVES = {"concentric": 1564, "crosshatch": 910, "islands": 1444, "oneway": 1300, "spiral": 1564, "zigzag": 910}
+MOVES = {"concentric": 1564, "islands": 1444, "oneway": 1300, "spiral": 1564, "zigzag": 910}
 
 
 def unreachable(path, robot, cell, e1) -> int:

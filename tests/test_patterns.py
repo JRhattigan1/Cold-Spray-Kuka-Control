@@ -68,13 +68,6 @@ def test_spiral_joins_loops_into_fewer_strokes():
     assert len(PATTERNS["spiral"](reg, PROC, 0)) < len(PATTERNS["concentric"](reg, PROC, 0))
 
 
-def test_crosshatch_alternates_perpendicular():
-    a = PATTERNS["crosshatch"](box(0, 0, 40, 30), PROC, 0)[0]
-    b = PATTERNS["crosshatch"](box(0, 0, 40, 30), PROC, 1)[0]
-    da, db = a[-1] - a[0], b[-1] - b[0]
-    assert abs(np.dot(da, db)) < 1e-6 * np.linalg.norm(da) * np.linalg.norm(db)
-
-
 def test_islands_mix_directions():
     strokes = PATTERNS["islands"](box(0, 0, 60, 60), PROC, 0)
     horiz = sum(abs((s[-1] - s[0])[1]) < 1e-9 for s in strokes)
@@ -94,7 +87,7 @@ def _points(strokes):
     return np.vstack(strokes)
 
 
-@pytest.mark.parametrize("a, b", [("zigzag", "crosshatch"), ("concentric", "spiral")])
+@pytest.mark.parametrize("a, b", [("zigzag", "oneway"), ("concentric", "spiral")])
 def test_patterns_differ_by_path_not_just_count(a, b):
     """Same stroke count is fine; the same sprayed points over the first layers is not."""
     reg = box(0, 0, 40, 30)
@@ -109,3 +102,10 @@ def test_spiral_steps_in_without_closing_each_loop():
     stroke = max(PATTERNS["spiral"](reg, PROC, 0), key=len)
     # no point is visited twice (closed rings would return to their start)
     assert len({tuple(np.round(p, 9)) for p in stroke[:-1]}) == len(stroke) - 1
+
+
+def test_old_crosshatch_config_loads_as_zigzag():
+    from coldspray.models import ProcessConfig, load_process
+    d = load_process().model_dump()
+    d["infill_pattern"] = "crosshatch"
+    assert ProcessConfig(**d).infill_pattern == "zigzag"
