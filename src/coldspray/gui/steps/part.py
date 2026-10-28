@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 from coldspray.cad.part import grow_tangent, krl_base_frame
 from coldspray.gui.stepper import PART, POSITION, TOOLPATH
 from coldspray.gui.style import tokens
-from coldspray.gui.widgets import Section, primary_button, wrap_label
+from coldspray.gui.widgets import Section, fit_combo, primary_button, wrap_label
 from coldspray.models import PROJECT_ROOT
 from coldspray.pipeline import BUILT_IN_LABELS, load_part
 from coldspray.sim.part_view import ROLES
@@ -44,16 +44,6 @@ def capsule(btn: QPushButton, pick: bool = False) -> QPushButton:
                 f"color: {t['accent']}; font-weight: 600; }}")
     btn.setStyleSheet(css)
     return btn
-
-
-def fit_combo(combo: QComboBox, n: int = 12) -> QComboBox:
-    """Let a combo shrink to ~n characters (popup keeps full width) so it never forces the sidebar wider."""
-    combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
-    combo.setMinimumContentsLength(n)
-    combo.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
-    combo.view().setMinimumWidth(combo.fontMetrics().horizontalAdvance(
-        max((combo.itemText(i) for i in range(combo.count())), key=len, default="")) + 40)
-    return combo
 
 
 def capsule_row(*buttons, pick: bool = False) -> QHBoxLayout:

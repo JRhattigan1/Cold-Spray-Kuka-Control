@@ -10,12 +10,8 @@ from coldspray.gui import style, widgets
 from coldspray.gui.steps.simulate import capsule
 from coldspray.gui.widgets import Section, primary_button, wrap_label
 from coldspray.models import PROJECT_ROOT
-from coldspray.post.krl import KRLError, to_krl
-try:                                    # on wp/KM, not yet on every branch
-    from coldspray.post.krl import KRLOptions
-    from coldspray.post.krl_split import split_krl
-except ImportError:
-    KRLOptions = split_krl = None
+from coldspray.post.krl import KRLError, KRLOptions, to_krl
+from coldspray.post.krl_split import split_krl
 
 
 from coldspray.gui.progress import fit_panel
@@ -60,7 +56,6 @@ class ExportStep:
         layout.addWidget(self.export_status)
         self.preflight_check = QCheckBox("Pre-flight check (BASE/TOOL)")
         self.preflight_check.setToolTip("HALT before motion if $ACT_TOOL/$ACT_BASE differ from the program's")
-        self.preflight_check.setEnabled(KRLOptions is not None)
         layout.addWidget(widgets.advanced(self.preflight_check))
         note = self.export_save_note = wrap_label("Saving with open items asks once, listing them all.")
         note.setProperty("note", True)

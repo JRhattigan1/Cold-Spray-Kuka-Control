@@ -349,6 +349,7 @@ class MainWindow(QMainWindow, PartStep, PositionStep, ToolpathStep, SimulateStep
                 for key, n in a.tool.gun.nozzles.items():
                     self.nozzle.addItem(f"{n.label} ({n.length:.0f} mm)", key)
                 self.nozzle.setCurrentIndex(self.nozzle.findData(a.tool.gun.nozzle))
+                widgets.fit_combo(self.nozzle)
             else:
                 self.nozzle.setEnabled(False)
             if a.cell.gantry:

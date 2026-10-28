@@ -18,8 +18,8 @@ from coldspray.cell import robroot
 from coldspray.gui.constraints_panel import ConstraintsPanel
 from coldspray.gui.stepper import TOOLPATH
 from coldspray.gui import plan_jobs, widgets
-from coldspray.gui.steps.part import capsule, fit_combo, glass_card
-from coldspray.gui.widgets import Chip, Section, primary_button, spin, wrap_label
+from coldspray.gui.steps.part import capsule, glass_card
+from coldspray.gui.widgets import Chip, Section, fit_combo, primary_button, spin, wrap_label
 from coldspray.models import PurgeConfig
 from coldspray.pipeline import check_placement, plan_part
 from coldspray.planner.gun import wrist_side
