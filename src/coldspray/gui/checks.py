@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QFrame, QGridLayout, QLabel, QSizePolicy, QToolBut
 
 from coldspray.gui import style
 from coldspray.gui.widgets import Chip
+from coldspray.planner.solve_arm import JUMP_DEG
 
 STATES = ("ok", "bad", "warn", "crash", "todo")
 CHIP_KIND = {"ok": "good", "bad": "bad", "warn": "warn", "crash": "crash", "todo": "neutral"}
@@ -66,6 +67,31 @@ def pair_summary(hits: dict[int, set], top: int = 3) -> str:
     return text + (f" and {len(pairs) - top} more" if len(pairs) > top else "")
 
 
+def _flips(scene):
+    """Samples (the later of each pair) where a joint steps > JUMP_DEG inside one non-PTP move;
+    None when the scene lacks joints / move kinds. Kinds: scene.move_kind (per sample) or
+    scene.path.moves[scene.samples.move_index]."""
+    joints = getattr(scene, "joints", None)
+    samples = getattr(scene, "samples", None)
+    if joints is None or samples is None or len(joints) != scene.n_points:
+        return None
+    mi = np.asarray(samples.move_index)
+    kind = getattr(scene, "move_kind", None)
+    if kind is None:
+        moves = getattr(getattr(scene, "path", None), "moves", None)
+        if moves is None:
+            return None
+        kind = [moves[i].kind for i in mi]
+    lin = np.asarray(kind) != "PTP"
+    j = np.asarray(joints, float)
+    if len(j) < 2:
+        return np.zeros(0, int)
+    with np.errstate(invalid="ignore"):
+        step = np.nanmax(np.abs(np.diff(j, axis=0)), axis=1)
+    bad = (mi[1:] == mi[:-1]) & lin[1:] & (step > JUMP_DEG)
+    return np.flatnonzero(bad) + 1
+
+
 def simulate_checks(scene, cell, collision_state, solve_report=None) -> list[Check]:
     """Reach, gun angle and collision rows for the toolpath shown in `scene`."""
     if not getattr(scene, "n_points", 0):
@@ -85,6 +111,13 @@ def simulate_checks(scene, cell, collision_state, solve_report=None) -> list[Che
                Check("gun", "warn", f"Gun more than {limit:.0f}° down at {n_steep} points",
                      f"Down to {worst:.0f}° below horizontal (yellow), bad for the equipment",
                      _first(steep), n_steep))
+
+    flips = _flips(scene)
+    if flips is not None:
+        out.append(Check("flip", "ok", "No configuration flips in linear moves") if not len(flips) else
+                   Check("flip", "bad", f"{len(flips)} configuration flips inside linear moves",
+                         f"A joint jumps more than {JUMP_DEG:.0f}° between neighbouring points of one LIN move; "
+                         "the real robot cannot follow that", int(flips[0]), len(flips)))
 
     if isinstance(collision_state, str):
         if collision_state == "off":
