@@ -33,8 +33,8 @@ def _rgba(hex_colour: str, alpha: float) -> str:
 
 def glass_button_qss(t: dict | None = None) -> str:
     """Round glass buttons: faint translucent fill on hover, orange tint when checked."""
-    from coldspray.gui.style import tokens
-    t = t or tokens()
+    from coldspray.gui.style import current_mode, tokens
+    t = t or tokens(current_mode())
     return f"""
 QToolButton {{ background: transparent; border: 1px solid transparent; border-radius: 14px;
     padding: 3px 10px; min-height: 22px; color: {t['ink']}; }}
@@ -157,8 +157,8 @@ class ViewBar(QWidget):
 
     def apply_glass(self):
         """(Re)read the theme tokens: restyle the buttons; the capsule is painted in paintEvent."""
-        from coldspray.gui.style import tokens
-        self._tokens = t = tokens()
+        from coldspray.gui.style import current_mode, tokens
+        self._tokens = t = tokens(current_mode())
         self.setStyleSheet(glass_button_qss(t) + f"QFrame#view_sep {{ color: {_rgba(t['ink'], 0.15)}; }}")
         self.update()
 

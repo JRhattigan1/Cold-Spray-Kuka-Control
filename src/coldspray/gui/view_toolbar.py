@@ -6,7 +6,8 @@
 
 from PySide6.QtWidgets import QDoubleSpinBox, QHBoxLayout, QLabel, QMenu, QToolButton, QWidget, QWidgetAction
 
-from coldspray.gui.view_bar import glass_button_qss
+from coldspray.gui.view_bar import ViewBar, glass_button_qss
+from coldspray.gui.style import tokens
 from coldspray.sim.datums import NORMALS
 
 
@@ -66,3 +67,17 @@ def datum_button(scene, plotter) -> QToolButton:
 
 def refresh_icons(win, mode: str):
     """Re-colour the toolbar icons after a theme change."""
+    from coldspray.sim.viewer import apply_view_background
+    for plotter in (getattr(win, "plotter", None), getattr(win, "part_plotter", None)):
+        if plotter is not None:
+            apply_view_background(plotter, mode)
+            plotter.render()
+    for name in ("datum_button", "marker_button"):
+        button = getattr(win, name, None)
+        if button is not None:
+            button.setStyleSheet(glass_button_qss(tokens(mode)))
+    for bar in win.findChildren(ViewBar):
+        bar.apply_glass()
+    scene = getattr(win, "scene", None)
+    if scene is not None:
+        scene.set_theme(mode)
