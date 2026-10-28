@@ -88,34 +88,65 @@ def add_purge(path: Toolpath, cell, speed: float | None = None) -> Toolpath:
     return Toolpath(path.name, out, path.skipped_points)
 
 
+BACK_DIR = (0.0, 1.0, 0.0)          # WORLD direction of the back of the cell (filtration unit)
+
+
+def _unit_mesh(unit):
+    import trimesh
+    tri = unit.triangulate()
+    return trimesh.Trimesh(np.asarray(tri.points, float), tri.faces.reshape(-1, 4)[:, 1:], process=False)
+
+
 def suggest_purge(cell, meshes, robot, e1: float = 0.0, standoff: float = 150.0,
-                  clearance: float = 100.0, step: float = 50.0):
-    """Purge (point, spray_dir) in WORLD: a horizontal line from the robot root towards the
-    "Filtration unit" bbox centre; the point is `standoff + clearance` in front of the unit's
-    near face and the spray goes horizontally into it. Steps back towards the robot until the
-    gun reaches it (gantry at `e1`); if nothing is reachable, returns the last point tried.
-    Raises ValueError without a filtration unit."""
+                  clearance: float = 100.0, step: float = 50.0, max_dist: float = 1500.0):
+    """Purge (point, spray_dir) in WORLD: the spray goes exactly along the cell's back
+    direction (`cell.back_dir`, default +Y) into the "Filtration unit". Candidate X/Z lines
+    start in the unit's footprint closest to the robot root and fan out in X and Z; along
+    each, a ray along spray_dir must hit the unit MESH, and the point starts
+    `standoff + clearance` before the hit and steps back (-spray_dir) until it is at least
+    `standoff` from the mesh and the gun reaches it (gantry at `e1`), at most `max_dist`
+    from the hit. Raises ValueError without a filtration unit or if nothing qualifies."""
     from coldspray.sim.markers import marker_pose
 
     unit = (getattr(meshes, "groups", None) or {}).get("Filtration unit")
     if unit is None or unit.n_points == 0:
         raise ValueError("No filtration unit in the cell CAD")
+    tm = _unit_mesh(unit)
     lo, hi = np.array(unit.bounds[0::2], float), np.array(unit.bounds[1::2], float)
     root_t = robroot(cell, e1)
     root = root_t[:3, 3]
-    d = (lo + hi) / 2 - root
-    d[2] = 0.0
+    d = np.asarray(getattr(cell, "back_dir", None) or BACK_DIR, float)
     d /= np.linalg.norm(d)
-    z = float(np.clip(root[2], lo[2] + 50, hi[2] - 50))
-    o = np.array([root[0], root[1], z])
-    with np.errstate(divide="ignore", invalid="ignore"):          # slab test for the near face
-        t1, t2 = (lo - o) / d, (hi - o) / d
-    t_near = max(np.nanmax(np.minimum(t1, t2)[:2]), 0.0)
-    t_min = 300.0                                                   # not on top of the robot
-    t = t_near - standoff - clearance
+    a = int(np.argmax(np.abs(d)))                                   # spray axis
+    u, v = [k for k in range(3) if k != a]
     inv = np.linalg.inv(root_t)
-    while True:
-        point = o + max(t, t_min) * d
-        if robot.ik(inv @ marker_pose(tuple(point), tuple(d)), cell.home_deg) or t <= t_min:
-            return tuple(float(x) for x in point), tuple(float(x) for x in d)
-        t -= step
+
+    def cands(k):
+        c = float(np.clip(root[k], lo[k] + 50, hi[k] - 50))
+        vals = np.arange(lo[k] + 50, hi[k] - 49, 100.0)
+        return sorted(np.append(vals, c), key=lambda x: abs(x - c))
+
+    lines = sorted(((x, y) for x in cands(u) for y in cands(v)),
+                   key=lambda p: np.hypot(p[0] - root[u], p[1] - root[v]))
+    for cu, cv in lines:
+        o = np.zeros(3)
+        o[u], o[v] = cu, cv
+        o[a] = (lo[a] if d[a] > 0 else hi[a]) - d[a] * (max_dist + 1000.0)
+        hits, _, _ = tm.ray.intersects_location([o], [d])
+        if not len(hits):
+            continue
+        hit = hits[np.argmin((hits - o) @ d)]
+        t = standoff + clearance
+        while t <= max_dist:
+            point = hit - t * d
+            if (robot.ik(inv @ marker_pose(tuple(point), tuple(d)), cell.home_deg)
+                    and trimesh_dist(tm, point) >= standoff):
+                return tuple(float(x) for x in point), tuple(float(x) for x in d)
+            t += step
+    raise ValueError("No reachable purge point in front of the filtration unit")
+
+
+def trimesh_dist(tm, point) -> float:
+    """Unsigned distance from `point` to the mesh surface."""
+    import trimesh
+    return float(trimesh.proximity.closest_point(tm, [point])[1][0])

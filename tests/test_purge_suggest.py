@@ -36,13 +36,14 @@ def test_reachable_and_hits_unit(world):
     point, d = suggest_purge(cell, meshes, robot, 0.0)
     assert robot.ik(np.linalg.inv(robroot(cell, 0.0)) @ marker_pose(point, d), cell.home_deg)
     assert d[2] == 0 and np.isclose(np.linalg.norm(d), 1)
-    b = meshes.groups["Filtration unit"].bounds
-    lo, hi = np.array(b[0::2]), np.array(b[1::2])
-    p, dd = np.array(point), np.array(d)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        t1, t2 = (lo - p) / dd, (hi - p) / dd
-    tin, tout = np.nanmax(np.minimum(t1, t2)), np.nanmin(np.maximum(t1, t2))
-    assert 0 < tin < tout
+    assert tuple(d) == (0.0, 1.0, 0.0)                 # back of the cell: exactly +Y
+    from coldspray.planner.purge import _unit_mesh, trimesh_dist
+    tm = _unit_mesh(meshes.groups["Filtration unit"])
+    hits, _, _ = tm.ray.intersects_location([point], [d])
+    tin = min((hits - np.array(point)) @ np.array(d)) if len(hits) else -1
+    assert 0 < tin <= 1500                              # the spray enters the unit's mesh
+    assert trimesh_dist(tm, point) >= 150               # point outside, standoff clear
+    assert tin >= 150
 
 
 def test_button_fills_fields(world):
