@@ -266,7 +266,8 @@ class CollisionChecker:
         if e1 == self._root_e1:          # the usual case: no robroot / allclose per sample
             return
         root = robroot(self.cell, e1)
-        if np.max(np.abs(root[:3, 3] - self.crop_centre)) > self.reach_mm - ROBOT_REACH_MM:
+        # + 1e-6: sampled E1 is interpolated between moves (1499.9999999999998 for 1500)
+        if np.max(np.abs(root[:3, 3] - self.crop_centre)) > self.reach_mm - ROBOT_REACH_MM + 1e-6:
             raise ValueError(f"E1 {e1:.0f} mm is too far from where this collision check was set up "
                              f"(more than {self.reach_mm - ROBOT_REACH_MM:.0f} mm): build a new checker")
         self.set_placement(root)
