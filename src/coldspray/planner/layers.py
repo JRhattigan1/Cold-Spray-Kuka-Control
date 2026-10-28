@@ -68,7 +68,7 @@ def plan_layers(layers: list[Layer], proc: ProcessConfig, name="part", table_axe
         extended = (proc.turn_mode != "inside"
                     and proc.infill_pattern in RASTER_PATTERNS)
         if extended:
-            infill = extend_strokes(infill, infill_area, proc, plane, z=z)
+            infill = extend_strokes(infill, infill_area, proc, plane, z=z, body=layer.region)
         strokes += infill
         if not strokes:
             continue
