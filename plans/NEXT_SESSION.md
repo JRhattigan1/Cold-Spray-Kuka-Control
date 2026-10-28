@@ -14,7 +14,8 @@ User asked: fix known bugs, add day-to-day features, housekeeping (robot T1 not 
   | S9J | Job save/open (`job_io.py`, Ctrl+S/O, recent jobs) | job_io.py, gui/app.py |
   | S9H | HOME legs in solver; HOME→first checked as the real LIN/PTP; PTP drawn along joint path; finding 8 | planner/solver.py, sim/collision.py, viewer path drawing |
   | S9T | Predicted thickness map (`sim/deposit.py`), Simulate toggle; cycle time + powder (`powder_feed_g_min`) in Simulate and Export | sim/deposit.py, viewer colouring, steps/simulate.py, export |
-  Overlap: S9H and S9T both touch `sim/viewer.py` (different functions). If an agent died mid-run, its worktree has uncommitted work: commit it as WIP and finish inline.
+  Overlap: S9H and S9T both touch `sim/viewer.py` (different functions).
+  **Status at session end:** S9S **done** (`1bbead8`, 107 passed; step-over by arc length via `arc_map`; repair reach fixed by keeping the next stroke's roll on turns, not by lowering lift; xfail removed; no KRL hash change; read `plans/reports/S9S-1.md`) → review and merge. S9J (`6a3ae46`), S9H (`1ca5684`), S9T (`7c66585`) were **stopped** and their work committed as unreviewed WIP, tests not run: finish inline or resume an agent on the same worktree. S9J has job_io.py, job_menu.py, tests; S9H has solver/collision/simulate edits (no viewer yet); S9T has deposit.py + process config, no GUI/tests yet.
 - **Wave 3, not started:** (a) undo for part placement and constraint edits; (b) spray on/off from KRL `$OUT` (option, off by default; default KRL hashes must not change); (c) A4/A6 cable wind-up check in Simulate; (d) filtration-unit collisions (P7). (a) touches gui/app.py: start after S9J is merged.
 - **After merging:** full suite; rewrite `ROADMAP.md` (still describes session 5); update this file; push main.
 
