@@ -67,3 +67,45 @@ def test_undo_redo_placement_and_constraints(tmp_path, monkeypatch):
         assert not u.redo_stack and win.roll.value() == 10.0
     finally:
         win.close()
+
+
+def test_undo_redo_purge_edit_and_drag(tmp_path, monkeypatch):
+    from PySide6.QtCore import QSettings
+    from PySide6.QtWidgets import QApplication, QMessageBox
+    QApplication.instance() or QApplication([])
+    from coldspray.gui.app import MainWindow
+    from coldspray.gui.stepper import POSITION
+    for kind in ("warning", "critical", "information", "question"):
+        monkeypatch.setattr(QMessageBox, kind, staticmethod(lambda *a, **kw: None))
+    monkeypatch.setattr(MainWindow, "_refresh_steps", lambda self, *a, **k: None)
+    win = MainWindow(QSettings(str(tmp_path / "ui.ini"), QSettings.IniFormat))
+    try:
+        win._startup()
+        win._set_part("test_block")
+        win.go_to(POSITION)
+        u = win.undo
+        u.reset()
+        x0 = win.purge_xyz[0].value()
+        win.purge_on.setChecked(True)
+        win.purge_xyz[0].setValue(x0 + 100.0)           # typed edit
+        u.commit()
+        assert win.purge_cfg["enabled"] and win.purge_cfg["point"][0] == pytest.approx(x0 + 100.0)
+        n = len(u.undo_stack)
+
+        win._purge_dragged(np.array([x0 + 250.0, 10.0, 1500.0]), False)   # drag: many moves, one step
+        win._purge_dragged(np.array([x0 + 300.0, 20.0, 1600.0]), True)
+        u.commit()
+        assert len(u.undo_stack) == n + 1
+        assert win.purge_cfg["point"] == pytest.approx((x0 + 300.0, 20.0, 1600.0))
+
+        assert u.undo()                                  # the drag goes
+        assert win.purge_xyz[0].value() == pytest.approx(x0 + 100.0)
+        assert win.purge_cfg["point"][0] == pytest.approx(x0 + 100.0)
+        assert u.undo()                                  # the typed edit goes, purge off again
+        assert win.purge_xyz[0].value() == pytest.approx(x0) and not win.purge_on.isChecked()
+        assert not win.purge_cfg["enabled"]
+        assert u.redo() and u.redo()
+        assert win.purge_cfg["point"] == pytest.approx((x0 + 300.0, 20.0, 1600.0))
+        assert win.purge_on.isChecked()
+    finally:
+        win.close()

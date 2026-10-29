@@ -724,3 +724,5 @@ class PositionStep:
             box.setValue(float(v))
             box.blockSignals(False)
         self._purge_changed()
+        if final and getattr(self, "undo", None) is not None:
+            self.undo.touch()                   # one drag = one undo step
