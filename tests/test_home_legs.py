@@ -76,12 +76,12 @@ def test_drawn_path_follows_ptp_in_joint_space():
     class Pl:
         def add_mesh(self, mesh, **kw):
             drawn.append(np.array(mesh.points))
-            return SimpleNamespace(SetPickable=lambda _: None)
+            return SimpleNamespace(SetPickable=lambda _: None, SetVisibility=lambda _: None)
 
         def remove_actor(self, a):
             pass
 
-    fake = SimpleNamespace(line_actors=[], path_actors=[], samples=s, layer_filter=("all", None), n_layers=0,
+    fake = SimpleNamespace(line_actors=[], path_actors=[], samples=s, layer_filter=("all", None), n_layers=0, build_actor=None,
                            joints=joints, root_frames=roots, base_frames=bases, robot=robot, pl=Pl())
     Scene._draw_lines(fake)
     pts = drawn[0]
