@@ -65,3 +65,26 @@ def save_purge(purge: PurgeConfig, path=None) -> Path:
     with open(path, "w", newline="") as f:
         f.write("".join(lines))
     return path
+
+
+def save_home(home_deg, path=None) -> Path:
+    """Rewrite only the `home_deg:` line of cell.yaml (a trailing comment is kept);
+    appends one if missing. All other bytes are kept."""
+    path = Path(path or CONFIG_DIR / "cell.yaml")
+    with open(path, newline="") as f:
+        text = f.read()
+    nl = "\r\n" if "\r\n" in text else "\n"
+    lines = text.splitlines(keepends=True)
+    value = "[" + ", ".join(f"{float(x):g}" for x in home_deg) + "]"
+    for i, line in enumerate(lines):
+        m = re.match(r"home_deg:\s*\[[^\]]*\](\s*#.*)?$", line.rstrip("\r\n"))
+        if m:
+            lines[i] = f"home_deg: {value}{m.group(1) or ''}{nl}"
+            break
+    else:
+        if lines and not lines[-1].endswith(("\n", "\r")):
+            lines[-1] += nl
+        lines.append(f"home_deg: {value}{nl}")
+    with open(path, "w", newline="") as f:
+        f.write("".join(lines))
+    return path
