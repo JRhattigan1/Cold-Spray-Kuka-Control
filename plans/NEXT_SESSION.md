@@ -1,14 +1,17 @@
 # Next session
 
-**Start here.** Where each feature stands is in [ROADMAP.md](ROADMAP.md), and what the app does is in [README.md](../README.md). Each agent's detail is in `plans/reports/<ID>-1.md` on its branch (`git show wp/<ID>:plans/reports/<ID>-1.md`; the session 5 worktrees are removed). Older hand-offs are in git history.
+**Start here.** Where each feature stands is in [ROADMAP.md](ROADMAP.md), and what the app does is in [README.md](../README.md). Each agent's detail is in `plans/reports/<ID>-1.md` on main. Older hand-offs (session 7 state, run 8 solver speed-up) and the finished feature and optimisation plans are in git history.
 
-## Session 10 (2026-10-28): Build-up toggle (on main, not committed)
+## State (2026-10-29)
+- `main` @ `e2ec9ae`; origin/main is one commit behind (session 10 not pushed).
+
+## Session 10 (2026-10-28): Build-up toggle (committed `e2ec9ae`)
 - Simulate **Build-up** checkbox (under Thickness). Layers: finished layers solid (copper, part cut at the layer being sprayed), that layer's contour/infill tracks appear as the gun passes (step-over wide, one layer high, two alternating shades); path lines hidden, target part faded. Other modes: thickness map follows playback (final scale). Thickness map: uncoated now grey.
 - Files: `sim/deposit.py` (`thickness(keep_steps=)`, `Deposit.thickness_at`, `spray_samples(times=)`), `sim/viewer.py` (`set_build_up`, `_layer_tracks`, `set_thickness(times=)`; `BUILT`/`TRACKS`/`UNCOATED`), `gui/steps/simulate.py`, `tests/test_deposit.py` (2 new tests + GUI toggle), HAND_CHECK.
 - Limits: strips are flat; turns not drawn as strips; overrun lost once a layer is finished (solid = part shape); deposit steps kept in memory (grows with path length); thickness/build-up still on the GUI thread.
 
 ## Session 9 (2026-10-28): all merged
-User asked: fix known bugs, add day-to-day features, housekeeping (robot T1 not possible yet). Everything is merged to main; see ROADMAP.md (rewritten).
+User asked: fix known bugs, add day-to-day features, housekeeping (robot T1 not possible yet).
 | merge / commit | what |
 |---|---|
 | `246e8c3` | CI: `.github/workflows/tests.yml` (windows-latest; KRL hashes, imports, planner/post units) |
@@ -30,39 +33,21 @@ User asked: fix known bugs, add day-to-day features, housekeeping (robot T1 not 
 
 **Open from session 9:** thickness map runs on the GUI thread (~4 s on test_tube); undo does not cover purge edits; HOME legs not drawn; no lever fixes HOME-leg problems directly.
 
-**Cleanup left for the user (blocked by the permission check):** `git branch -D wp/KM-K1`; `git worktree remove --force` on `C:/Users/qrb21117/worktrees/cs-S8B` and `cs-U20` (throwaway untracked files only), then `git branch -d wp/S8B wp/U20`; delete merged `wp/S9*` branches and worktrees (remove each `assets` junction with `cmd /c rmdir` first); pause OneDrive and `git worktree prune`. Remote `surface-patterns` still exists (merged).
+**Cleanup left for the user (blocked by the permission check):**
+- Worktrees still present: `C:/Users/qrb21117/worktrees/cs-S8B`, `cs-S9F`, `cs-S9H`, `cs-S9J`, `cs-S9S`, `cs-S9T`, `cs-S9U`, `cs-U20`. For each: `cmd /c rmdir <wt>\assets` (if the junction exists), then `git worktree remove <wt>` (`--force` only for S8B and U20, which hold throwaway untracked files).
+- Then `git branch -d wp/S8B wp/S9F wp/S9H wp/S9J wp/S9S wp/S9T wp/S9U wp/U20` and `git branch -D wp/KM-K1` (obsolete).
+- Pause OneDrive and `git worktree prune`. Remote `origin/surface-patterns` still exists (merged).
 
 ## To do, in order
-1. **By-hand check:** [HAND_CHECK.md](HAND_CHECK.md) (add: Job save/open, undo, thickness toggle, estimates, Export spray-by-hand and split; **Build-up** toggle, session 10).
+1. **By-hand check:** [HAND_CHECK.md](HAND_CHECK.md).
 2. **Decide (user):** S9F findings above (HOME at E1 2730, E1 5500 wall, purge example, elbow-up IK weighting).
 3. **Arcs in T1** (test_block, arcs on): orientation along CIRC with `#PATH`, C_DIS blending, `$VEL.CP`, `$CIRC_TYPE` inside split `_Pnn`. CIRC on a turning table is a 2-LIN chord (short arcs only).
 4. **Calibrate:** thickness model and `powder_feed_g_min` against a sprayed coupon; `cable_windup_deg` from the cable dressing.
 5. **Collision-aware auto-position** (repair Surface hits); gantry lever sampling vs the 2 mm check; gantry lever speed on WearPlate2.
 6. Thickness map on a worker thread; HOME legs drawn; undo for purge edits.
 7. **Position Simple mode:** compare E1 with `gantry.position_mm` for "changed" (user: maybe).
-8. Slicer `polygonize` option; launch time; S/T bits vs `$POS_ACT`; holes in Surface; reach IK on a worker; `solve_arm` uses Cartesian samples; README robot checks in T1.
-
-## State (2026-10-28, session 7)
-- **`main` @ `7efb1f8`**, all session 6/7 work merged; nothing pushed. **Full suite** (before S7O/S7S/startup fix): 703 passed, 1 failed (fixed: `d3795b7`), 3 xfailed, 18 min. After the last merges, touched tests: 141 passed, 1 xfailed.
-- Merged this session (`git log --first-parent main`):
-  | merge | what |
-  |---|---|
-  | S6P2 | purge sprays +Y (`CellConfig.back_dir`) |
-  | S7Q | gun on between layers at jump 0; crosshatch removed (old configs load as zigzag); `gun_max_down_deg` 70 (warning); solver logs "trying <lever>"; purge → start rises over the part |
-  | S7K (+S6C) | gantry carriage in collision; E1 agrees Simulate/KRL (`Toolpath.sample(initial=)`, `cell.axis_defaults`); moved-E1 crash; NaN PTP seed warning; PTP + HOME legs in joint space and collision-checked; **no part collisions in Layers** (`collision.part_for_mode`) |
-  | S7M (+S6M, F3, F1, F2fit, U20, S6E, S6A, S6B, S6F) | panels ≤ 398 px with the real stylesheet; mojibake; purge actions dropdown; crisp step-bar; SpaceMouse name in tooltip |
-  | S7A (K1) | CIRC arcs + merged LINs behind `ProcessConfig.arcs`, **off by default** (default KRL unchanged) |
-  | S7G | solver levers "gantry" (one whole-program E1, Apply button) and "purge" (point moved ±200 mm XYZ, angle kept); purge clearance on every trip |
-  | S7O | Layers overrun measured from the part outline, not the inset infill |
-  | S7S | wrapping Surface pick split per CAD face (own raster, gun off between); oneway overrun from the face edge |
-- Branches left: `wp/FM`, `wp/KM-K1` (obsolete, delete), `wp/U20` + worktree `cs-U20` (merged; holds 12 untracked `shots_before` PNGs), `surface-patterns` (merged). Remote: `origin/wp/E2p`, `O5`, `P8` still exist.
-
-## Run 8: Solve problems speed (2026-10-28, merged `15c0b74`)
-- 10 agents (S8B bench, S8T golden test, S8F solver caches, S8C collision, S8R route/e1, S8G gantry/purge, S8A arm, S8N angle, S8I profile only, S8M merger).
-- `tools/bench_solve.py` (`--only`, `--json`, `--compare`, `--profile`); `tests/test_solver_golden.py` guards solver output.
-- Solve only, collision on: block_layers 29.0 → 24.8 s; repair_surface 115.5 → 42.9 s; total 144.6 → 67.7 s. Output IDENTICAL to main on both.
-- Still slow: block_layers **reroute** (19 s; IK over the whole range per candidate; sample/IK only the changed span) and repair_surface **gantry** (30 s; FCL narrow phase; split the cell mesh into chunks so the broadphase culls). IK `ik_path` per-sample loop (S8I). tube_surface not benchmarked (about 25k issues).
-- `.git\worktrees\cs-S8*` records locked by OneDrive: pause OneDrive, `git worktree prune`. `wp/S8B`, `wp/S8I` (report only) and worktree `cs-S8B` (2 baseline JSONs) are left.
+8. Solver speed: block_layers **reroute** (~19 s; IK over the whole range per candidate: sample/IK only the changed span) and repair_surface **gantry** (~30 s; FCL narrow phase: split the cell mesh so the broadphase culls). Benchmark with `tools/bench_solve.py`.
+9. Slicer `polygonize` option; launch time; S/T bits vs `$POS_ACT`; holes in Surface; reach IK on a worker; `solve_arm` uses Cartesian samples; README robot checks in T1.
 
 ## User decisions (2026-10-28)
 - Spray stays on between layers at jump 0; crosshatch removed; purge spray on first→last visit (spray is manual for now).
@@ -74,13 +59,12 @@ User asked: fix known bugs, add day-to-day features, housekeeping (robot T1 not 
 - **Fewer agents** (user, session 7): do work inline; use an agent only for a big separate piece.
 
 ## Lessons for running agents
-- Keep agents few (user, session 7); the earlier crashes came from on-screen app windows, so app, screenshot and GUI-test runs stay offscreen.
-- App and screenshot runs are offscreen and one at a time.
+- App, screenshot and GUI-test runs stay offscreen and one at a time (the earlier crashes came from on-screen app windows).
 - Agents' clocks drift: use `date`, not their own sense of time.
 - A manager per team (KM, FM) worked: one plan, disjoint files, one merger.
 - A hook that crosses branches (e.g. K2's `krl.py` hook on K1's file) needs one named owner.
 - No agent may edit the main checkout. One did, and it blocked a merge. Check `git status` on main before merging.
-- **Cleanup:** each worktree's `assets` is a junction to the real `assets\` (licensed CAD, not in git). Remove the junction with `cmd /c rmdir <wt>\assets` before `git worktree remove` (no `--force`). Never `Remove-Item -Recurse` or `rm -rf` a worktree folder.
+- **Cleanup:** each worktree's `assets` is a junction to the real `assets\` (licensed CAD, not in git). Remove the junction with `cmd /c rmdir <wt>\assets` before `git worktree remove`. Never `Remove-Item -Recurse` or `rm -rf` a worktree folder.
 - Per-run files (brief, check-in log, INT and CLEANUP reports, screenshots) live in `C:\Users\qrb21117\worktrees\run5\`.
 
 ## Agent protocol (paste into every agent prompt)
@@ -96,7 +80,7 @@ Test first, minimal diff, edit only owned files. Commit on wp/<ID>, trailer "Co-
 Report plans/reports/<ID>-1.md: status, done, not done, test line. Return: sha + test line + 1 line.
 ```
 **Models:**
-- The `worker` agent type (`.claude/agents/worker.md`, Sonnet) loaded in session 5. Use it for contained single-module tasks; otherwise `general-purpose` with `model: sonnet`.
+- The `worker` agent type (`.claude/agents/worker.md`, Sonnet): contained single-module tasks; otherwise `general-purpose` with `model: sonnet`.
 - Use `model: opus` for work across threading, the interface and result flow, or tricky maths (IK, arcs).
 
 **Merging:**

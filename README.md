@@ -90,12 +90,14 @@ stays at the bottom of its panel while the panel scrolls.
    description), process parameters, then Generate. "Save as
    default" writes the process values to `config/process.yaml`.
    - **Layers**: contour passes, then infill. `infill_pattern`: zigzag, oneway
-     (all strokes one way, lifted return), concentric, spiral, crosshatch (0/90°
-     on alternate layers), islands (checkerboard tiles). `raster_start_deg` sets
+     (all strokes one way, lifted return), concentric, spiral, islands
+     (checkerboard tiles); old configs with crosshatch load as zigzag. `raster_start_deg` sets
      the first raster direction (from BASE X); `raster_angle_step_deg` turns it
      each layer. `contour_tilt_deg` > 0 leans the contour passes outward (into
      the hole for holes). Long gaps are lifted jumps of `jump_height_mm`, and the
-     move to the next layer lifts the same (0: the gun stays at spray height).
+     move to the next layer lifts the same (0: the gun stays at spray height and
+     the spray stays on between layers). The part is not a collision body in
+     Layers (it isn't built yet); in Revolve and Surface it is.
      `turn_mode` puts the raster turns on the part (`inside`), `overrun_mm` past
      its edge (`overrun`), or past a datum plane (`beyond_plane` + `turn_plane`),
      e.g. off a masked area. Path colours: contour magenta, infill orange, turn
@@ -103,7 +105,9 @@ stays at the bottom of its panel while the panel scrolls.
    - **Revolve**: coat a round part while the turntable spins.
    - **Surface**: coat the faces picked in step 1, gun along the surface normal
      at standoff, curved faces allowed. Picked faces that don't touch are
-     separate regions, joined by a jump. With **zigzag** the faces are cut by
+     separate regions, joined by a jump; a region that wraps round is split per
+     CAD face (own raster, gun off between). Step-over is measured along the
+     surface, so passes stay evenly spaced over blends. With **zigzag** the faces are cut by
      parallel planes (strokes along the longest side, turned by
      `raster_start_deg`; rings round a whole cylinder). With **any other
      pattern** a region that faces one way (an end face, a plate top, a curved
@@ -119,22 +123,41 @@ stays at the bottom of its panel while the panel scrolls.
      added.
 4. **Simulate** - playback with reach, gun angle and collision results (the
    collision check runs in the background after Generate; "Check collisions"
-   turns it off). **Markers** (view toolbar) shows or hides the collision,
-   unreachable and steep-gun points. The **flip** row flags a joint jump of
-   more than 20° inside one LIN or CIRC (a configuration flip the real arm
-   can't make). **Solve problems** tries to fix what the
-   check found: arm configuration, gun angle (±30°) and lean (±10°), re-routing
-   approach / jump / purge moves, and E1 per layer (±1000 mm; a change of E1 is
-   written as a PTP). What it can't fix is listed and Save stays disabled. The
-   **Before the robot** list collects what still has to be checked on the cell.
+   turns it off). Collisions cover the robot, gun, table, gantry carriage and
+   cell; the HOME → first and last → HOME legs are checked as the KRL moves
+   them. A gun more than `gun_max_down_deg` (70°) below horizontal is a
+   warning, as is A4 / A6 winding further than `cell.cable_windup_deg` from
+   home (270°, a placeholder). **Markers** (view toolbar) shows or hides the
+   collision, unreachable and steep-gun points. The **flip** row flags a joint
+   jump of more than 20° inside one LIN or CIRC (a configuration flip the real
+   arm can't make). **Solve problems** tries to fix what the check found (the
+   status bar shows "Solver: trying …" for each): arm configuration, gun angle
+   (±30°) and lean (±10°), re-routing approach / jump / purge moves, E1 per
+   layer (±1000 mm; a change of E1 is written as a PTP), one gantry E1 for the
+   whole program, and moving the purge point (XYZ, angle kept). Suggested E1 /
+   purge values are filled in with **Apply suggested set-up**. What it can't
+   fix is listed and Save stays disabled. The **Before the robot** list
+   collects what still has to be checked on the cell. Cycle time and powder
+   use (`powder_feed_g_min`, a placeholder) are estimated.
    **Thickness** colours the part by predicted coating thickness (grey = none).
    **Build-up** shows material going down during playback: in Layers, finished
    layers solid (copper) and the layer being sprayed track by track in two
    alternating shades (path lines hidden);
    in other modes the thickness map fills in as the gun passes.
 5. **Export** - shows the BASE / TOOL numbers (the part's KRL base when one is
-   picked), spray output and turntable mode, then saves the KRL `.src`. Open
-   items from the Before the robot list are confirmed once before saving.
+   picked), spray output and turntable mode, the cycle time and powder
+   estimate, then saves the KRL `.src`. Options: **Pre-flight check** (HALT
+   before motion if `$ACT_TOOL` / `$ACT_BASE` differ or are untaught),
+   **Split long programs** (main + `_Pnn` subprograms) and, in Advanced,
+   **Program switches spray** (untick to spray by hand: the `$OUT` lines become
+   comments, timing unchanged). Open items from the Before the robot list are
+   confirmed once before saving.
+
+**Jobs**: the Job button (Ctrl+S / Ctrl+O, recent jobs) saves and opens a
+`*.csjob` file: part, placement, constraints, KRL base, process settings, E1,
+purge and export options. Opening a job does not regenerate (press Generate).
+**Undo / redo** of Position edits: Ctrl+Z, Ctrl+Shift+Z / Ctrl+Y, or ↶ ↷ in
+the step bar (purge edits are not covered).
 
 Start it with:
 ```
@@ -163,18 +186,24 @@ Other entry points: `python -m coldspray.demo_part [part.step]` (command line),
 | `src/coldspray/planner/gun.py` | Gun hold: no winding, wrist up / towards the robot, gun angle |
 | `src/coldspray/planner/purge.py` | Warm-up / purge visits, purge point suggestion |
 | `src/coldspray/planner/position.py` | Auto position (table tilt, E1) |
-| `src/coldspray/planner/solver.py`, `solve_*.py` | Solve problems: arm, gun angle, re-route, E1 levers |
+| `src/coldspray/planner/solver.py`, `solve_*.py` | Solve problems: arm, gun angle, re-route, E1 per layer, gantry, purge levers |
 | `src/coldspray/toolpath/` | Toolpath format, sampling for simulation |
 | `src/coldspray/post/krl.py` | Toolpath → KRL `.src` (faceplate BASE or the part's KRL base) |
 | `src/coldspray/post/joints.py` | PTP joints for the program, computed as Simulate does |
-| `src/coldspray/post/krl_split.py`, `krl_preflight.py`, `krl_status.py` | Not used by Export yet: split a long program into subprograms, TOOL/BASE check at the start, Status/Turn bits (unverified) |
+| `src/coldspray/post/krl_split.py`, `krl_preflight.py` | Split a long program into subprograms; TOOL/BASE check at the start (Export options) |
+| `src/coldspray/post/krl_status.py` | Status/Turn bits (unverified, not used by Export yet) |
+| `src/coldspray/job_io.py` | Job files (`*.csjob`, versioned YAML) |
 | `src/coldspray/sim/` | 3D scene (cell, robot, gun, turntable, path), collision checking |
+| `src/coldspray/sim/deposit.py` | Predicted coating thickness, Build-up playback, cycle time and powder estimates |
 | `src/coldspray/sim/datums.py` | XY / XZ / YZ datum planes on the faceplate |
 | `src/coldspray/sim/markers.py` | Ghost gun marker for the purge point |
 | `src/coldspray/gui/` | Main window: `app.py` shell and step bar, `steps/` one module per step |
 | `src/coldspray/gui/plan_jobs.py` | Planning on a worker thread, plan cache |
 | `src/coldspray/gui/checks.py` | Simulate and "Before the robot" check lists |
-| `plans/` | `NEXT_SESSION.md` (start here), `ROADMAP.md`, plans, agent reports |
+| `src/coldspray/gui/job_menu.py`, `undo.py` | Job button and recent jobs; Position undo/redo |
+| `tools/` | `bench_solve.py`, `bench_plan.py` (timings), `ui_screenshots.py` |
+| `.github/workflows/tests.yml` | CI: KRL hashes, imports, planner/post unit tests |
+| `plans/` | `NEXT_SESSION.md` (start here), `ROADMAP.md`, `HAND_CHECK.md`, agent reports |
 
 ## Before running on the real robot
 - Gun TCP is computed from CAD: check `clock_deg` / nozzle length in `tool.yaml`, or paste the taught TOOL_DATA.
@@ -186,7 +215,9 @@ Other entry points: `python -m coldspray.demo_part [part.step]` (command line),
   the table is clear and that is where you expect it.
 - Gantry: confirm E1 = 0 matches the CAD carriage position, and the travel limits.
   Programs from Solve problems may change E1 between layers (written as PTP,
-  on gun-off moves only). The gantry carriage is not in the collision check.
+  on gun-off moves only). The gantry carriage is in the collision check.
+  Simulation flags HOME at E1 2730 (nozzle into the rotary base) and E1 5500
+  (arm crosses the booth wall): check both on the cell.
 - Turntable: confirm +E2 tilts towards the tailstock and which way +E5 turns, the
   axis limits and max speeds, and whether it is mathematically coupled to BASE 1
   (`cell.yaml` → `turntable.coupled`).
@@ -196,8 +227,9 @@ Other entry points: `python -m coldspray.demo_part [part.step]` (command line),
 - Purge transit is sprayed: the gun travels purge point → part → purge point
   with the spray ON. Check the collision results for the purge moves and that
   the path through free space does not cross anything.
-- Cables and powder line: the gun hold avoids winding the gun round, but
-  check A4 / A6 travel over a whole program in Simulate before the first run.
+- Cables and powder line: the gun hold avoids winding the gun round, and
+  Simulate warns past `cell.cable_windup_deg`, but that limit is a guess: set
+  it from the cable dressing.
 - Contour tilt and Surface mode change the gun orientation along a pass: run
   them in T1 first and watch for wrist flips / singularities.
 - First run in T1, spray off, well clear of the part.

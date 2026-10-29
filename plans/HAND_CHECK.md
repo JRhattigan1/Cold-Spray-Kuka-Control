@@ -1,6 +1,6 @@
 # By-hand check in the app
 
-Run `.\run` from the repo. Do it once the session 7 branches (S7M, S7K, S7Q) are merged. Allow about 45 min.
+Run `.\run` from the repo (everything is on main). Allow about 55 min.
 For each line, tick it or write what you saw. Anything odd: note the part, mode and the exact click.
 
 ## 1. Window and layout (10 min)
@@ -26,7 +26,7 @@ Do this at 100 % and at 150 % Windows scaling (Settings → Display → Scale; r
 - [ ] **Surface** on the tube end: try each pattern. Crosshatch should be gone.
 - [ ] Layers with **jump height 0**: the gun stays on between layers (no off/on, no settle wait in the timeline).
 - [ ] Layers with **turn mode = overrun** and 1–2 contour passes: the turns sit `overrun_mm` past the part edge, not just past the infill.
-- [ ] **Surface**, pick the tube side and its end face together: each face gets its own raster, and the gun goes off between faces. Try the repair patch (top + 4 sides) and note the far-side reach (to-do 2).
+- [ ] **Surface**, pick the tube side and its end face together: each face gets its own raster, and the gun goes off between faces. Try the repair patch (top + 4 sides): all sides should be reachable (fixed in S9S).
 - [ ] **Arcs** (Advanced → arcs on) on test_block: the hole contour becomes CIRCs, and Simulate follows the arc.
 - [ ] **Cancel** during a long Generate: the old path stays and the app stays responsive. Generate again with the same settings: it's instant (plan cache). Change one setting: it re-plans.
 
@@ -44,7 +44,7 @@ Do this at 100 % and at 150 % Windows scaling (Settings → Display → Scale; r
 - [ ] Save a KRL program, once with the split option and once with the pre-flight checkbox. Open the `.src`: the header shows BASE/TOOL, E1 changes come only on gun-off PTPs, and there are no NaN or odd joint values.
 - [ ] Re-export the same path: the file is identical (diff it).
 
-## 6. Session 9 additions (10 min)
+## 6. Session 9 and 10 additions (10 min)
 - [ ] **Job**: set up a part fully (placement, constraints, KRL base, Surface faces, settings, E1, purge), Job → Save job…; close the app, Job → Open job (or Recent): every step comes back; Generate gives the same KRL.
 - [ ] **Undo** in Position: move the part, add a constraint, Ctrl+Z twice, Ctrl+Shift+Z: placement and rows follow. ↶ ↷ in the step bar too.
 - [ ] **Surface over a fillet** (flat face running into a blend): passes evenly spaced on the curve, not bunched.
@@ -55,7 +55,7 @@ Do this at 100 % and at 150 % Windows scaling (Settings → Display → Scale; r
 - [ ] **A4/A6 wind-up** warning appears on a path that winds the wrist.
 - [ ] **Export** (Advanced): untick "Program switches spray": the `$OUT` lines are comments. Tick "Split long programs" on a long path: main + `_Pnn` files next to it.
 
-## After this, on the controller (to-do 14, 17)
+## After this, on the controller (ROADMAP order step 2)
 - Copy the split program over and check that all parts load.
 - Check that the pre-flight HALT triggers with the wrong TOOL/BASE.
 - Then follow README → "Before running on the real robot", in T1, spray off.
