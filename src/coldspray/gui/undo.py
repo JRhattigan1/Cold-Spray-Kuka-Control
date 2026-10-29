@@ -1,5 +1,5 @@
 """Undo / redo for the Position step: part placement, mount, keep on plate, substrate plate, nozzle,
-table tilt / rotation, gantry E1, gun angle and the constraint rows.
+table tilt / rotation, gantry E1, gun angle, the constraint rows and the purge settings.
 
 A snapshot of those settings is committed once the edits pause (COALESCE_MS), so a drag, a held spin
 arrow or a burst of typed values is one step. Undo restores the widgets, the part placement and the
@@ -25,7 +25,14 @@ def snapshot(win) -> dict:
         fixed=win._fixed(), keep=win.keep_on_plate.isChecked(), sub=win.sub_check.isChecked(),
         sub_fields={k: b.value() for k, b in win.sub_fields.items()}, nozzle=win.nozzle.currentIndex(),
         tilt=win.tilt.value(), rotation=win.rotation.value(), e1=win.e1.value(), roll=win.roll.value(),
-        rows=win.constraints.rows_state())
+        rows=win.constraints.rows_state(), purge=_purge_state(win))
+
+
+def _purge_state(win):
+    c = getattr(win, "purge_cfg", None)
+    if c is None:
+        return None
+    return {k: (tuple(float(x) for x in v) if isinstance(v, (tuple, list)) else v) for k, v in c.items()}
 
 
 def same(a: dict, b: dict) -> bool:
@@ -139,12 +146,37 @@ class Undo:
             win.part.placement = placement            # exactly as it was
             if win.scene is not None:
                 win.scene.set_part_placement()
+            self._restore_purge(s.get("purge"))
             win._show_placement()
             win._enter_setup()
             widgets.refresh()
         finally:
             self.timer.stop()
             self.restoring = False
+
+    def _restore_purge(self, c):
+        """Purge widgets, purge_cfg, cell.purge and the ghost gun back to `c`."""
+        win = self.win
+        if c is None or not hasattr(win, "purge_on"):
+            return
+        from coldspray.sim.markers import preset_for
+        win._purge_loading = True
+        try:
+            win.purge_on.setChecked(c["enabled"])
+            for box, v in zip(win.purge_xyz, c["point"]):
+                box.setValue(v)
+            win.purge_dir.setCurrentText(preset_for(c["spray_dir"]))
+            for box, v in zip(win.purge_custom, c["spray_dir"]):
+                box.setValue(v)
+            win.purge_dwell.setValue(c["dwell_s"])
+            win.purge_approach.setValue(c["approach_mm"])
+            win.purge_start.setChecked(c["at_start"])
+            win.purge_end.setChecked(c["at_end"])
+            win.purge_every.setValue(c["every_n_layers"])
+        finally:
+            win._purge_loading = False
+        win._purge_changed()
+        win.purge_cfg.update(point=tuple(c["point"]), spray_dir=tuple(c["spray_dir"]))   # exact, not box-rounded
 
     def _buttons(self):
         for btn, stack in ((getattr(self, "undo_btn", None), self.undo_stack),
@@ -169,6 +201,12 @@ def install(win):
         win.stepbar.chip_area.insertWidget(1 if attr == "undo_btn" else 2, btn)
     for b in (*win.place.values(), *win.sub_fields.values(), win.tilt, win.rotation, win.e1, win.roll):
         b.valueChanged.connect(u.touch)
+    if hasattr(win, "purge_on"):
+        for b in (*win.purge_xyz, *win.purge_custom, win.purge_dwell, win.purge_approach, win.purge_every):
+            b.valueChanged.connect(u.touch)
+        for b in (win.purge_on, win.purge_start, win.purge_end):
+            b.toggled.connect(u.touch)
+        win.purge_dir.currentIndexChanged.connect(u.touch)
     for sig in (win.mount.currentIndexChanged, win.nozzle.currentIndexChanged, win.keep_on_plate.toggled,
                 win.sub_check.toggled, win.constraints.changed):
         sig.connect(u.touch)
