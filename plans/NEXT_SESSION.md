@@ -5,6 +5,12 @@
 ## State (2026-10-29)
 - `main` @ `641faad` (session 11 merged); not pushed (origin/main is at session 9).
 
+## Session 12 (2026-10-29): Surface as one blended raster (in progress)
+- User: a multi-face Surface pick must be coated as one smoothly blended raster, with a **consistent step-over on the surface** (reverses the S7S per-face split).
+- Round 1 `wp/S12U` (not merged): passes = geodesic-distance level sets; `surface_split_faces` option (default off); `test_wearplate` built-in. Reviewer `wp/S12UR`: FIX FIRST: repair top+4 sides 18.9 % of gaps outside ±10 % (max 2.99 mm at 3-face corners), wearplate 9.5 %; gun jumps 90° / 56°; planning 35 s (box) vs 1.3 s on main, tube 207 s / 193k moves. The builder loosened its own spacing test (rejected). Independent checker: `wp/S12UR` `tests/test_S12UR_accept.py`.
+- Round 2 `wp/S12V` (from S12U, not merged) + reviewer `wp/S12VR`: FIX FIRST. Only cap + square walls handled (`wall_split`, `_ring_strokes`): top rastered alone, sides as rings, gun off between. Repair: 4.5 % of gaps outside ±10 % (min 0.94 mm at the cap/wall seam, max 2.42), axis step 14.7° infill; 26.7 s, 5652 moves. Wearplate unchanged (9.9 %, max 3.02, 55.8° turns). Tube not measured (>180 s). Not done: one-shot geodesic, smoothing, 3-face corner seams in general. `test_surface_unfold.py:89` is still round 1's loosened "99 % within ±10 %": tighten to every gap. Golden/KRL/imports not run on S12V.
+- **Decision needed (user):** at sharp edges (box top→sides) one pass can't stay at standoff and turn smoothly. (a) blend everywhere (quick smooth turn, spacing near the edge suffers) or (b) blend fillets/gentle edges, split only at sharp edges with passes lined up so step-over carries across (first pass step/2 from the edge, gun off only there). Recommended (b).
+
 ## Session 11 (2026-10-29): 6 builders + 6 reviewers, 18 min, all merged
 | merge | what |
 |---|---|
