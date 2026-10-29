@@ -65,3 +65,60 @@ def save_purge(purge: PurgeConfig, path=None) -> Path:
     with open(path, "w", newline="") as f:
         f.write("".join(lines))
     return path
+
+
+def _flow(v) -> str:
+    """XYZABC as a one-line YAML mapping."""
+    return "{" + ", ".join(f"{k}: {float(x):g}" for k, x in v.model_dump().items()) + "}"
+
+
+def _rewrite(path, edit) -> Path:
+    path = Path(path)
+    with open(path, newline="") as f:
+        text = f.read()
+    nl = "\r\n" if "\r\n" in text else "\n"
+    lines = edit(text.splitlines(keepends=True), nl)
+    with open(path, "w", newline="") as f:
+        f.write("".join(lines))
+    return path
+
+
+def save_tools(tool, path=None) -> Path:
+    """Write each nozzle's `tool_number` and taught `tcp` into tool.yaml (other lines kept).
+    A nozzle with no taught tcp gets no `tcp:` line: the CAD TCP is used."""
+    def edit(lines, nl):
+        for name, nz in tool.gun.nozzles.items():
+            start = next(i for i, ln in enumerate(lines) if re.match(rf"\s+{re.escape(name)}:\s*$", ln.rstrip("\r\n")))
+            ind = len(lines[start]) - len(lines[start].lstrip())
+            j = start + 1
+            while j < len(lines) and lines[j].strip() and len(lines[j]) - len(lines[j].lstrip()) > ind:
+                j += 1
+            body = [ln for ln in lines[start + 1:j] if not re.match(r"\s+(tool_number|tcp):", ln)]
+            pad = " " * (ind + 2)
+            if nz.tool_number is not None:
+                body.append(f"{pad}tool_number: {nz.tool_number}{nl}")
+            if nz.tcp is not None:
+                body.append(f"{pad}tcp: {_flow(nz.tcp)}   # taught TOOL_DATA{nl}")
+            lines[start + 1:j] = body
+        return lines
+    return _rewrite(path or CONFIG_DIR / "tool.yaml", edit)
+
+
+def save_bases(bases: dict, path=None) -> Path:
+    """Write the `bases_taught:` block (BASE_DATA from the pendant) into cell.yaml."""
+    def edit(lines, nl):
+        block = ["bases_taught:" + (" {}" if not bases else "") + nl]
+        block += [f"  {n}: {_flow(v)}{nl}" for n, v in sorted(bases.items())]
+        for i, ln in enumerate(lines):
+            if re.match(r"bases_taught:", ln):
+                j = i + 1
+                while j < len(lines) and re.match(r"[ \t]+\S", lines[j]):
+                    j += 1
+                lines[i:j] = block
+                return lines
+        if not bases:
+            return lines
+        if lines and not lines[-1].endswith(("\n", "\r")):
+            lines[-1] += nl
+        return lines + block
+    return _rewrite(path or CONFIG_DIR / "cell.yaml", edit)

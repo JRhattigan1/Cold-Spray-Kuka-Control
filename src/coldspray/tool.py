@@ -1,8 +1,10 @@
 """Spray gun geometry: where the gun CAD sits on the flange, and the TCP."""
 
+import re
+
 import numpy as np
 
-from coldspray.models import GunConfig, NozzleConfig, ToolConfig
+from coldspray.models import XYZABC, GunConfig, NozzleConfig, ToolConfig
 from coldspray.transforms import frame
 
 # Tool axes expressed in gun-CAD coordinates: X = spray (+Y gun), Y = -X gun, Z = +Z gun
@@ -34,5 +36,26 @@ def tool_frame(tool: ToolConfig | None) -> np.ndarray:
         return frame(**tool.tcp.model_dump())
     if tool.gun is None:
         raise ValueError("tool needs either `tcp` or `gun`")
-    tip = frame(y=tool.gun.nozzle_length) @ _TOOL_IN_GUN
-    return gun_to_flange(tool.gun) @ tip
+    if tool.gun.current_nozzle.tcp is not None:     # taught on the pendant
+        return frame(**tool.gun.current_nozzle.tcp.model_dump())
+    return cad_tool_frame(tool.gun)
+
+
+def cad_tool_frame(gun: GunConfig, nozzle: str | None = None) -> np.ndarray:
+    """TCP frame relative to the flange from the gun + nozzle CAD."""
+    length = gun.nozzles[nozzle or gun.nozzle].length
+    tip = frame(y=length) @ _TOOL_IN_GUN
+    return gun_to_flange(gun) @ tip
+
+
+_PENDANT = re.compile(r"\b([XYZABC])\s*[ =:]\s*([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)")
+
+
+def parse_pendant(text: str) -> XYZABC:
+    """XYZABC from a pendant frame like `{X 517.79,Y 214.24,Z 130.91,A 0,B 0,C 0}`
+    or `DECL FRAME TOOL_DATA[1]={...}` (any order or spacing; missing values 0)."""
+    body = text[text.index("{"):] if "{" in text else text
+    vals = {k.lower(): float(v) for k, v in _PENDANT.findall(body)}
+    if not vals:
+        raise ValueError(f"no X/Y/Z/A/B/C values in {text!r}")
+    return XYZABC(**vals)
