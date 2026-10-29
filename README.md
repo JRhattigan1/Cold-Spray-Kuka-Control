@@ -168,8 +168,10 @@ the step bar (purge edits are not covered).
 Start it with:
 ```
 .\run          (or double-click run.bat)
-.\run test     (the tests, 4 at a time; only one test run at once: more crashed the PC)
-.\run test serial   (one at a time: ~30 min)
+.\run test          (the areas your changes touch + a guard set: under a minute)
+.\run test surface  (one area: surface, layers, krl, solver, collision, kinematics, part, cell, sim, gui)
+.\run test all      (everything, 4 at a time, ~12 min: before merging; one at once, more crashed the PC)
+.\run test serial   (everything, one at a time: ~30 min)
 ```
 which runs `C:\Users\qrb21117\.venvs\coldspray\Scripts\python.exe -m coldspray.gui`.
 Other entry points: `python -m coldspray.demo_part [part.step]` (command line),
