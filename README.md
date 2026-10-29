@@ -168,7 +168,8 @@ the step bar (purge edits are not covered).
 Start it with:
 ```
 .\run          (or double-click run.bat)
-.\run test     (the tests)
+.\run test     (the tests, 6 at a time: ~10 min)
+.\run test serial   (one at a time: ~30 min)
 ```
 which runs `C:\Users\qrb21117\.venvs\coldspray\Scripts\python.exe -m coldspray.gui`.
 Other entry points: `python -m coldspray.demo_part [part.step]` (command line),

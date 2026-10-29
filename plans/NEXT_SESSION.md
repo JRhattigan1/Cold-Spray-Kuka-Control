@@ -91,7 +91,7 @@ User asked: fix known bugs, add day-to-day features, housekeeping (robot T1 not 
 Repo C:\Users\qrb21117\OneDrive - University of Strathclyde\Documents\Cold-Spray-Kuka-Control. Timebox 10-20 min; stop coding 3 min before.
 git worktree add C:\Users\qrb21117\worktrees\cs-<ID> -b wp/<ID> main
 Assets junction from PowerShell (Git Bash mklink mangles the path): cmd /c mklink /J C:\Users\qrb21117\worktrees\cs-<ID>\assets "<repo>\assets"
-Test: $env:PYTHONPATH="C:\Users\qrb21117\worktrees\cs-<ID>\src"; C:\Users\qrb21117\.venvs\coldspray\Scripts\python.exe -m pytest -q -p no:cacheprovider <files>
+Test: $env:PYTHONPATH="C:\Users\qrb21117\worktrees\cs-<ID>\src"; C:\Users\qrb21117\.venvs\coldspray\Scripts\python.exe -m pytest -q -p no:cacheprovider <files>   (wider runs: add -n 6 --dist loadfile)
 GUI tests offscreen; stub MainWindow._refresh_steps (cell assets never load off screen); plan_jobs.wait(win) after generate/_auto_position; cap long runs.
 Benchmark on small built-in parts (test_tube, test_block, test_repair), not WearPlate2 (too slow).
 Use absolute worktree paths for every edit (an agent once wrote into the main checkout by mistake).
