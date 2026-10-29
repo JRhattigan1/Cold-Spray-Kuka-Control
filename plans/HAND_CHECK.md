@@ -53,6 +53,8 @@ Do this at 100 % and at 150 % Windows scaling (Settings → Display → Scale; r
 - [ ] **Estimates**: cycle time and powder line in Simulate and above Save in Export.
 - [ ] **HOME legs**: problems on HOME → first / last → HOME show in Simulate and Solve; with move 0 a LIN, the leg is a straight line.
 - [ ] **A4/A6 wind-up** warning appears on a path that winds the wrist.
+- [ ] **KRL base methods** (Part step): 3 planes on a block corner (top, front, side): the faces turn purple in turn, the hint names the next one, origin at the corner, X along the top/front edge into the part; two parallel faces give a status message and start again.
+- [ ] **KRL base vertex**: hover near corners: a small sphere and faded arrows follow, the view stays smooth; click places it. Spin ±90° and Flip Z update the arrows and label live; save and reopen the job: the turned base comes back, same KRL.
 - [ ] **Export** (Advanced): untick "Program switches spray": the `$OUT` lines are comments. Tick "Split long programs" on a long path: main + `_Pnn` files next to it.
 
 ## After this, on the controller (ROADMAP order step 2)

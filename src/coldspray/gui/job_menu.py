@@ -95,7 +95,7 @@ def apply(win, job: dict):
     win.part_view.highlight("start", src.start_face)
     win.part_view.highlight("base", src.base_face)
     win.part_view.highlight_coat(src.coat_faces)
-    win.part_view.show_frame(src.krl_base)
+    win._set_krl_base(src.krl_base, src.krl_base_face)    # spin / flip start from the saved base
     win._show_faces()
 
     # Toolpath step: mode, coats, every process value
