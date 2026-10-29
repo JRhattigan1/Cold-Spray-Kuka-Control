@@ -98,6 +98,25 @@ def _cell_mesh(poly: pv.PolyData, centre, half_size) -> trimesh.Trimesh | None:
     return trimesh.Trimesh(pts, faces, process=False)
 
 
+CHUNK_SEP = "#"       # "cell#3": chunk 3 of the cell (reported as "cell")
+CHUNK_MM = 600.0      # grid cell size for splitting the fixed equipment
+
+
+def _chunks(mesh: trimesh.Trimesh, size=CHUNK_MM) -> list[trimesh.Trimesh]:
+    """`mesh` split into grid cells of `size` by triangle centroid (every triangle in
+    exactly one chunk, so the union is the same surface)."""
+    f = np.asarray(mesh.faces)
+    v = np.asarray(mesh.vertices)
+    key = np.floor(v[f].mean(axis=1) / size).astype(np.int64)
+    _, inv = np.unique(key, axis=0, return_inverse=True)
+    inv = inv.ravel()
+    out = []
+    for g in range(inv.max() + 1):
+        used, sub = np.unique(f[inv == g], return_inverse=True)
+        out.append(trimesh.Trimesh(v[used], sub.reshape(-1, 3), process=False))
+    return out
+
+
 def part_for_mode(mode: str | None, part_mesh):
     """The part mesh to collision-check for a toolpath mode: none in Layers (built up
     layer by layer, the part isn't there yet), the part in Revolve and Surface."""
@@ -142,7 +161,8 @@ class CollisionChecker:
         for label, poly in sources:
             mesh = _cell_mesh(poly, centre, reach_mm)
             if mesh is not None:
-                self.env.add_object(label, mesh)
+                for k, chunk in enumerate(_chunks(mesh)):   # chunks: the broadphase culls most of the cell
+                    self.env.add_object(f"{label}{CHUNK_SEP}{k}", chunk)
         rotating = meshes.rotating
         for label, poly in meshes.groups.items():
             if OPTIONAL[label][2] == "rotating":
@@ -292,6 +312,7 @@ class CollisionChecker:
         hit, names = self.tool.in_collision_other(self.own, return_names=True)
         if hit:
             pairs |= set(names)
+        pairs = {(a.split(CHUNK_SEP)[0], b.split(CHUNK_SEP)[0]) for a, b in pairs}
         return pairs - self.allowed
 
     def check_path(self, joints, axes_per_sample, every=1, progress=None, cancel=None,
