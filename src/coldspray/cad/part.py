@@ -188,7 +188,8 @@ def krl_base_from_planes(planes, toward, min_deg: float = 10.0) -> np.ndarray:
     n = np.array([np.asarray(p.normal, float) / np.linalg.norm(p.normal) for p in planes])
     d = np.cross(n[0], n[1])
     s = np.sin(np.radians(min_deg))
-    if min(np.linalg.norm(np.cross(n[i], n[j])) for i, j in ((0, 1), (0, 2), (1, 2))) < s             or abs(n[2] @ d) / np.linalg.norm(d) < s:
+    if min(np.linalg.norm(np.cross(n[i], n[j])) for i, j in ((0, 1), (0, 2), (1, 2))) < s \
+            or abs(n[2] @ d) / np.linalg.norm(d) < s:
         raise ValueError("Two of the faces are (nearly) parallel: pick three faces meeting at a corner")
     origin = np.linalg.solve(n, [n[k] @ np.asarray(planes[k].point, float) for k in range(3)])
     x = d / np.linalg.norm(d)
