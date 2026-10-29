@@ -176,7 +176,7 @@ class Undo:
         finally:
             win._purge_loading = False
         win._purge_changed()
-        win.purge_cfg["spray_dir"] = tuple(c["spray_dir"])   # exact, not re-derived from the boxes
+        win.purge_cfg.update(point=tuple(c["point"]), spray_dir=tuple(c["spray_dir"]))   # exact, not box-rounded
 
     def _buttons(self):
         for btn, stack in ((getattr(self, "undo_btn", None), self.undo_stack),
