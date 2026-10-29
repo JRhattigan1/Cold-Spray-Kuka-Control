@@ -43,6 +43,8 @@ class NozzleConfig(BaseModel):
     step_file: str | None = None
     exit_x_mm: float          # outlet face, nozzle CAD x
     mount_x_mm: float         # face seated on the gun, nozzle CAD x
+    tool_number: int | None = None   # TOOL_DATA index on the pendant
+    tcp: XYZABC | None = None        # taught TOOL_DATA; None = use the CAD TCP
 
     @property
     def length(self) -> float:
@@ -119,6 +121,7 @@ class CellConfig(BaseModel):
     base: XYZABC
     back_dir: tuple[float, float, float] = (0.0, 1.0, 0.0)  # WORLD; back of the cell (filtration unit)
     part_base_number: int = 2        # BASE_DATA taught on the part, when a KRL base is picked on it
+    bases_taught: dict[int, XYZABC] = {}  # BASE_DATA copied from the pendant, for comparison
     tool_number: int
     gun_output: int
     ptp_velocity_pct: int

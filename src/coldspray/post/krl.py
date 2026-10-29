@@ -46,6 +46,7 @@ class KRLOptions:
     preflight: bool = False
     check_taught: bool = True
     spray_output: bool = True
+    tool_number: int | None = None
 
 
 log = logging.getLogger(__name__)
@@ -81,6 +82,7 @@ def to_krl(path: Toolpath, robot: Robot, cell: CellConfig, proc: ProcessConfig,
     if options is not None and not options.spray_output:
         gun = ";" + gun   # manual spray: the switch is left in as a comment
     home = cell.home_deg
+    tool_no = options.tool_number if options is not None and options.tool_number else cell.tool_number
     tt = cell.turntable
     table_names = table_axis_names(cell)
     coupled = bool(tt and tt.coupled)
@@ -105,13 +107,13 @@ def to_krl(path: Toolpath, robot: Robot, cell: CellConfig, proc: ProcessConfig,
         return to_part @ (pose if coupled else in_fixed_base[i] @ pose)
 
     if part_base is None:
-        base_note = [f";BASE_DATA[{base_number}] / TOOL_DATA[{cell.tool_number}] must match the cell config"]
+        base_note = [f";BASE_DATA[{base_number}] / TOOL_DATA[{tool_no}] must match the cell config"]
     else:
         zero = {k: 0.0 for k in table_names}
         seen = "the faceplate" if coupled else "WORLD, table axes at 0"
         base_note = [
             f";BASE_DATA[{base_number}] taught on the part (KRL base picked in the Part step);"
-            f" TOOL_DATA[{cell.tool_number}] must match the cell config",
+            f" TOOL_DATA[{tool_no}] must match the cell config",
             f";  expected in {seen}: " + " ".join(
                 f"{k} {x:.2f}" for k, x in zip("XYZABC", xyzabc(part_base if coupled
                                                                else base_world(cell, zero) @ part_base)))]
@@ -127,9 +129,9 @@ def to_krl(path: Toolpath, robot: Robot, cell: CellConfig, proc: ProcessConfig,
         ";FOLD INI",
         "  BAS(#INITMOV, 0)",
         ";ENDFOLD",
-        f"BAS(#TOOL, {cell.tool_number})",
+        f"BAS(#TOOL, {tool_no})",
         f"BAS(#BASE, {base_number})",
-        *(preflight_lines(cell.tool_number, base_number, options.check_taught)
+        *(preflight_lines(tool_no, base_number, options.check_taught)
           if options is not None and options.preflight else []),
         f"BAS(#VEL_PTP, {cell.ptp_velocity_pct})",
         f"$APO.CDIS = {proc.approx_distance_mm:.1f}",

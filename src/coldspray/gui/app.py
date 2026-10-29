@@ -111,6 +111,10 @@ class MainWindow(QMainWindow, PartStep, PositionStep, ToolpathStep, SimulateStep
                            lambda m=mode: self.set_theme(m))
         self.theme_btn.setMenu(menu)
         self.stepbar.chip_area.addWidget(self.theme_btn)
+        self.cell_btn = QToolButton(text="Cell", toolTip="TOOL_DATA / BASE_DATA as on the KUKA pendant")
+        self.cell_btn.clicked.connect(self.open_cell_dialog)
+        self.stepbar.chip_area.addWidget(self.cell_btn)
+        self.cell_dialog = None
 
         # Left: one scrolling panel per step (built in order: later panels use earlier widgets)
         self.panels = QStackedWidget()
@@ -281,6 +285,17 @@ class MainWindow(QMainWindow, PartStep, PositionStep, ToolpathStep, SimulateStep
         self._done.add(i)
         self._stale.discard(i)
         self._refresh_steps()
+
+    def open_cell_dialog(self):
+        from coldspray.gui.cell_dialog import CellDialog
+        if self.cell_dialog is None:
+            self.cell_dialog = CellDialog(self)
+            from coldspray.gui.home_editor import HomeEditor
+            self.cell_dialog.add_tab(HomeEditor(self), "HOME")
+            # tool.yaml is re-read by each run: a new active TCP makes Position on out of date
+            self.cell_dialog.saved.connect(lambda changed: changed and self._invalidate(POSITION))
+        self.cell_dialog.show()
+        self.cell_dialog.raise_()
 
     def _invalidate(self, first: int):
         """Steps from `first` on no longer match the settings: done ones become out of date."""

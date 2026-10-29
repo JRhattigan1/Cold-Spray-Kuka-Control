@@ -89,6 +89,15 @@ class HomeEditor(QWidget):
         super().showEvent(event)
         self._changed()
 
+    def hideEvent(self, event):
+        """Put the robot back at the cell's HOME and gantry once the tab is left."""
+        super().hideEvent(event)
+        scene = getattr(self.win, "scene", None)
+        if scene is not None:
+            cell = self.win._work_cell() if hasattr(self.win, "_work_cell") else self.cell
+            scene.set_placement(robroot(cell), gantry_offset(cell))
+            scene.set_robot_pose(list(self.cell.home_deg))
+
     def _work_cell(self):
         cell = self.cell.model_copy(deep=True)
         if cell.gantry is not None:

@@ -9,7 +9,7 @@ from coldspray.gui.stepper import EXPORT
 from coldspray.gui import style, widgets
 from coldspray.gui.steps.simulate import capsule
 from coldspray.gui.widgets import Section, primary_button, wrap_label
-from coldspray.models import PROJECT_ROOT
+from coldspray.models import PROJECT_ROOT, load_tool
 from coldspray.post.krl import KRLError, KRLOptions, to_krl
 from coldspray.post.krl_split import KRLSplitError, split_krl
 from coldspray.sim.deposit import estimate
@@ -131,7 +131,8 @@ class ExportStep:
 
     def krl_options(self) -> KRLOptions:
         return KRLOptions(preflight=self.preflight_check.isChecked(),
-                          spray_output=self.spray_output_check.isChecked())
+                          spray_output=self.spray_output_check.isChecked(),
+                          tool_number=load_tool().gun.current_nozzle.tool_number)
 
     def write_program(self, fn: Path, path, robot, cell, proc, part_base) -> list[Path]:
         """Write the program to `fn` and, when split, its parts beside it as <part name>.src
