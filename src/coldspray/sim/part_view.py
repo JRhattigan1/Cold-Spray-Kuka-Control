@@ -6,6 +6,8 @@ its role: build, fixture, or ignore. Flat faces are picked by clicking them;
 only visible bodies can be picked. Drawn in part-CAD coordinates.
 """
 
+import time
+
 import numpy as np
 import pyvista as pv
 from vtkmodules.vtkRenderingCore import vtkCellPicker
@@ -15,6 +17,7 @@ from coldspray.sim.viewer import BUILD_FACE, FIXTURE, PART, VIEW_DIRS, _aim, _bo
 BASE_FACE = "#c2410c"
 COAT_FACE = "#f28c28"   # faces chosen for surface coating
 IGNORED = "#c9ccd1"
+KRL_FACE = "#7c3aed"    # faces picked for a 3-plane KRL base
 ROLES = ("build", "fixture", "ignore")
 
 
@@ -29,6 +32,9 @@ class PartView:
         self.highlights: dict = {}       # "start" / "base" -> actor
         self.highlighted: dict = {}      # "start" / "base" -> face id
         self._pick_cb = self._pick_obs = None
+        self._hover_cb = self._hover_obs = None
+        self._hover_t = 0.0              # time of the last hover handled (throttle)
+        self.preview_actors: list = []   # vertex snap marker and faded frame arrows
         self._keep = False               # coat-face picking: keep picking after each click
         self.coat_actor, self.coat_faces = None, set()   # the coat faces, highlighted together
         self.frame_actors: list = []     # the KRL base's X / Y / Z arrows
@@ -136,8 +142,8 @@ class PartView:
             self.pl.remove_actor(old)
         if face_id is not None and self.part is not None:
             faces = self.part.faces[self.part.face_ids == face_id]
-            actor = self.pl.add_mesh(_polydata(self.part.vertices, faces),
-                                     color=BUILD_FACE if kind == "start" else BASE_FACE)
+            color = BUILD_FACE if kind == "start" else KRL_FACE if kind.startswith("krl") else BASE_FACE
+            actor = self.pl.add_mesh(_polydata(self.part.vertices, faces), color=color)
             actor.mapper.SetResolveCoincidentTopologyToPolygonOffset()
             actor.mapper.SetRelativeCoincidentTopologyPolygonOffsetParameters(-2, -20)
             actor.SetPickable(False)
@@ -169,27 +175,47 @@ class PartView:
         """Draw the KRL base `t` (part-CAD <- base) as red X, green Y and blue Z arrows; None clears it."""
         for a in self.frame_actors:
             self.pl.remove_actor(a)
-        self.frame_actors = []
-        if t is not None and self.part is not None:
-            size = 0.15 * float(np.ptp(self.part.vertices, axis=0).max())
-            for k, color in enumerate(("red", "green", "blue")):
-                arrow = pv.Arrow(t[:3, 3], t[:3, k], scale=size, tip_radius=0.08, shaft_radius=0.03)
-                actor = self.pl.add_mesh(arrow, color=color)
-                actor.SetPickable(False)
-                self.frame_actors.append(actor)
+        self.frame_actors = self._arrows(t, 1.0) if t is not None and self.part is not None else []
+        self.pl.render()
+
+    def _arrows(self, t, opacity) -> list:
+        size = 0.15 * float(np.ptp(self.part.vertices, axis=0).max())
+        out = []
+        for k, color in enumerate(("red", "green", "blue")):
+            arrow = pv.Arrow(t[:3, 3], t[:3, k], scale=size, tip_radius=0.08, shaft_radius=0.03)
+            actor = self.pl.add_mesh(arrow, color=color, opacity=opacity)
+            actor.SetPickable(False)
+            out.append(actor)
+        return out
+
+    def show_preview(self, point, t=None):
+        """Vertex-pick preview: a small sphere at `point` and faded arrows of frame `t`; None clears."""
+        for a in self.preview_actors:
+            self.pl.remove_actor(a)
+        self.preview_actors = []
+        if point is not None and self.part is not None:
+            r = 0.012 * float(np.ptp(self.part.vertices, axis=0).max())
+            ball = self.pl.add_mesh(pv.Sphere(radius=r, center=np.asarray(point, float)), color="#7c3aed")
+            ball.SetPickable(False)
+            self.preview_actors = [ball] + (self._arrows(t, 0.4) if t is not None else [])
         self.pl.render()
 
     # --- picking ----------------------------------------------------------------
-    def start_pick(self, callback, hint="", keep=False) -> bool:
+    def start_pick(self, callback, hint="", keep=False, hover=None) -> bool:
         """The next left click on a visible body calls `callback(face_id, body)`
         once (every click until `cancel_pick` with `keep`); clicks beside the
-        part still turn the view."""
+        part still turn the view. With `hover`, moving the mouse over a visible
+        body calls `hover(triangle, point)` (point in part-CAD; throttled), and
+        `hover(None, None)` off the part."""
         self.cancel_pick()
         self._keep = keep
         if not self.actors or getattr(self.pl, "iren", None) is None:
             return False
         self._pick_cb = callback
         self._pick_obs = self.pl.iren.add_observer("LeftButtonPressEvent", self._click)
+        if hover is not None:
+            self._hover_cb = hover
+            self._hover_obs = self.pl.iren.add_observer("MouseMoveEvent", self._move)
         self.hint.SetText(2, hint)
         self.pl.render()
         return True
@@ -197,11 +223,16 @@ class PartView:
     def cancel_pick(self):
         if self._pick_obs is not None:
             self.pl.iren.remove_observer(self._pick_obs)
-        self._pick_cb = self._pick_obs = None
+        if self._hover_obs is not None:
+            self.pl.iren.remove_observer(self._hover_obs)
+        self._pick_cb = self._pick_obs = self._hover_cb = self._hover_obs = None
+        if self.preview_actors:
+            self.show_preview(None)
         self._keep = False
         self.hint.SetText(2, "")
 
-    def _click(self, iren, _event):
+    def _cell_at(self, iren):
+        """(part triangle, part-CAD point) under the mouse on a visible body, or (None, None)."""
         x, y = iren.GetEventPosition()
         picker = vtkCellPicker()
         picker.SetTolerance(0.0005)
@@ -211,7 +242,27 @@ class PartView:
                 picker.AddPickList(actor)
         if picker.Pick(x, y, 0, self.pl.renderer) and picker.GetCellId() >= 0:
             body = next(b for b, a in enumerate(self.actors) if a is picker.GetActor())
-            self.pick_triangle(int(self.triangles[body][picker.GetCellId()]), picker.GetPickPosition())
+            return int(self.triangles[body][picker.GetCellId()]), np.array(picker.GetPickPosition())
+        return None, None
+
+    def _click(self, iren, _event):
+        tri, point = self._cell_at(iren)
+        if tri is not None:
+            self.pick_triangle(tri, point)
+
+    def _move(self, iren, _event):
+        now = time.monotonic()
+        if now - self._hover_t < 0.03:      # at most ~30 picks a second
+            return
+        self._hover_t = now
+        self.hover_triangle(*self._cell_at(iren))
+
+    def hover_triangle(self, tri, point=None):
+        """The mouse is over part triangle `tri` at `point` (None: off the part)."""
+        if self._hover_cb is not None:
+            if tri is not None and point is None:
+                point = self.part.vertices[self.part.faces[tri]].mean(0)
+            self._hover_cb(tri, point)
 
     def pick_triangle(self, tri: int, point=None):
         """Report the CAD face and body of part triangle `tri`; stop picking

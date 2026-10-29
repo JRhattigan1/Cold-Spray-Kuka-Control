@@ -13,7 +13,10 @@ is picked, is a flat face of the build body that the layers grow away from
 The KRL base, if one is picked, is a frame on the part (part-CAD coords) that
 the program's points are written relative to, so it can be taught on the real
 part: +Z out of a flat face, +X along one of its straight edges, the origin at
-that edge's end (a corner). See `krl_base_frame`.
+that edge's end (a corner). See `krl_base_frame`; or from three flat faces
+(`krl_base_from_planes`) or a corner vertex (`krl_base_at_vertex`), then turned
+about its Z (`spin_frame`) or flipped (`flip_z`). A base not made on one face
+has `krl_base_face` None.
 """
 
 from dataclasses import dataclass, field, replace
@@ -92,7 +95,7 @@ class Part:
                        base_face=self.base_face if self.base_face in present else None,
                        start_face=self.start_face if self.start_face in present else None,
                        coat_faces=self.coat_faces & present,
-                       krl_base=self.krl_base if self.krl_base_face in present else None,
+                       krl_base=self.krl_base if self.krl_base_face in present | {None} else None,
                        krl_base_face=self.krl_base_face if self.krl_base_face in present else None,
                        body_ids=renumber[self.body_ids[keep]] if len(kept) > 1 else None,
                        build_body=int(renumber[self.build_body]) if len(kept) > 1 else 0)
@@ -127,17 +130,22 @@ def grow_tangent(part: Part, faces, max_deg: float = 10.0) -> set[int]:
     return out
 
 
+def _face_rim(part: Part, face_id: int) -> tuple[np.ndarray, np.ndarray]:
+    """(vertices, rim segments) of CAD face `face_id`: its outline (and hole) edges."""
+    import trimesh
+    mesh = trimesh.Trimesh(part.vertices, part.faces[part.face_ids == face_id])   # merges vertices
+    v, edges = mesh.vertices, mesh.edges_sorted
+    _, index, count = np.unique(edges, axis=0, return_index=True, return_counts=True)
+    return v, edges[index[count == 1]]
+
+
 def krl_base_frame(part: Part, face_id: int, click) -> np.ndarray:
     """Part-CAD <- KRL base picked by a click (part-CAD point) on flat face `face_id`:
     +Z the face's outward normal, +X along the face's straight edge nearest the
     click, the origin at the end of that edge nearest the click."""
     z = np.asarray(part.planar[face_id].normal, float)
     z /= np.linalg.norm(z)
-    import trimesh
-    mesh = trimesh.Trimesh(part.vertices, part.faces[part.face_ids == face_id])   # merges vertices
-    v, edges = mesh.vertices, mesh.edges_sorted
-    _, index, count = np.unique(edges, axis=0, return_index=True, return_counts=True)
-    rim = edges[index[count == 1]]                  # the face's outline (and hole) segments
+    v, rim = _face_rim(part, face_id)
     click = np.asarray(click, float)
     a, ab = v[rim[:, 0]], v[rim[:, 1]] - v[rim[:, 0]]
     t = np.clip(np.einsum("ij,ij->i", click - a, ab) / np.einsum("ij,ij->i", ab, ab), 0, 1)
@@ -160,6 +168,93 @@ def krl_base_frame(part: Part, face_id: int, click) -> np.ndarray:
     out = np.eye(4)
     out[:3, :3] = np.column_stack([x, np.cross(z, x), z])
     out[:3, 3] = origin
+    return out
+
+
+def _frame_xz(origin, x, z) -> np.ndarray:
+    out = np.eye(4)
+    out[:3, :3] = np.column_stack([x, np.cross(z, x), z])
+    out[:3, 3] = origin
+    return out
+
+
+def krl_base_from_planes(planes, toward, min_deg: float = 10.0) -> np.ndarray:
+    """Part-CAD <- KRL base from three flat faces (`PlanarFace`s, in pick order): the
+    origin where the three planes meet, +Z the 1st face's outward normal, +X along the
+    line where the 1st and 2nd planes meet, pointing from the origin toward the side of
+    the point `toward` (e.g. the part's centre: into the part's extent).
+    ValueError if two planes are within `min_deg` of parallel or the 3rd is near
+    parallel to the 1st-2nd line (no single meeting point)."""
+    n = np.array([np.asarray(p.normal, float) / np.linalg.norm(p.normal) for p in planes])
+    d = np.cross(n[0], n[1])
+    s = np.sin(np.radians(min_deg))
+    if min(np.linalg.norm(np.cross(n[i], n[j])) for i, j in ((0, 1), (0, 2), (1, 2))) < s             or abs(n[2] @ d) / np.linalg.norm(d) < s:
+        raise ValueError("Two of the faces are (nearly) parallel: pick three faces meeting at a corner")
+    origin = np.linalg.solve(n, [n[k] @ np.asarray(planes[k].point, float) for k in range(3)])
+    x = d / np.linalg.norm(d)
+    if x @ (np.asarray(toward, float) - origin) < 0:
+        x = -x
+    return _frame_xz(origin, x, n[0])
+
+
+def vertex_edges(part: Part, point, tol: float = 1e-4) -> tuple[np.ndarray, np.ndarray]:
+    """(unit directions of the CAD-face rim edges leaving the vertex at `point`,
+    the area-weighted mean outward normal of the triangles around it)."""
+    point = np.asarray(point, float)
+    near = np.flatnonzero(np.linalg.norm(part.vertices - point, axis=1) < tol)
+    tris = np.flatnonzero(np.isin(part.faces, near).any(axis=1))
+    tri = part.vertices[part.faces[tris]]
+    normal = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]).sum(axis=0)
+    normal = normal / np.linalg.norm(normal) if np.linalg.norm(normal) > 1e-12 else np.array([0, 0, 1.0])
+    dirs = []
+    for f in sorted(set(part.face_ids[tris].tolist())):
+        v, rim = _face_rim(part, f)
+        for i, j in rim:
+            for a, b in ((i, j), (j, i)):
+                if np.linalg.norm(v[a] - point) < tol:
+                    dirs.append((v[b] - point) / np.linalg.norm(v[b] - point))
+    dirs = np.unique(np.round(np.array(dirs).reshape(-1, 3), 9), axis=0)
+    return dirs, normal
+
+
+def krl_base_at_vertex(point, z, edges, toward=None) -> np.ndarray:
+    """Part-CAD <- KRL base at a vertex `point`: +Z along `z` (the flat face under the
+    cursor's normal, or the vertex's mean normal), +X along the edge (unit `edges`
+    directions from the vertex, laid into the XY plane) closest to the direction
+    `toward` (cursor - vertex); the first edge without one. No edge off the Z
+    axis: X is the part-CAD X (or Y) laid into the plane."""
+    z = np.asarray(z, float) / np.linalg.norm(z)
+    cand = np.asarray(edges, float).reshape(-1, 3)
+    cand = cand - np.outer(cand @ z, z)
+    lens = np.linalg.norm(cand, axis=1)
+    cand = cand[lens > 0.1] / lens[lens > 0.1, None]
+    if len(cand):
+        k = 0
+        if toward is not None:
+            t = np.asarray(toward, float) - (np.asarray(toward, float) @ z) * z
+            if np.linalg.norm(t) > 1e-9:
+                k = int(np.argmax(cand @ t))
+        x = cand[k]
+    else:
+        x = np.array([1.0, 0, 0]) - z[0] * z
+        if np.linalg.norm(x) < 0.1:
+            x = np.array([0, 1.0, 0]) - z[1] * z
+        x /= np.linalg.norm(x)
+    return _frame_xz(np.asarray(point, float), x, z)
+
+
+def spin_frame(t, deg: float) -> np.ndarray:
+    """Frame `t` turned by `deg` about its own Z (origin and Z kept)."""
+    c, s = np.cos(np.radians(deg)), np.sin(np.radians(deg))
+    rz = np.eye(4)
+    rz[:2, :2] = [[c, -s], [s, c]]
+    return np.asarray(t, float) @ rz
+
+
+def flip_z(t) -> np.ndarray:
+    """Frame `t` with Z reversed: origin and X kept, Y follows (right-handed)."""
+    out = np.array(t, float)
+    out[:3, 1:3] *= -1
     return out
 
 

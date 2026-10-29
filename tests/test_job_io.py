@@ -53,3 +53,12 @@ def test_step_found_relative_to_job(tmp_path):
     shutil.move(str(old), str(new))
     job = job_io.load_job(new / "jobs" / "j.csjob")
     assert job["part"]["source"] == str((new / "cad" / "p.step").resolve())
+
+
+def test_krl_base_without_a_face_round_trips(tmp_path):
+    from coldspray.job_io import load_job, save_job
+    t = np.eye(4)
+    t[:3, 3] = [1.0, 2.0, 3.0]
+    path = save_job({"part": {"source": "test_block", "krl_base": t, "krl_base_face": None}}, tmp_path / "j")
+    job = load_job(path)
+    assert job["part"]["krl_base_face"] is None and np.allclose(job["part"]["krl_base"], t)

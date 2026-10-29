@@ -6,11 +6,13 @@ from pathlib import Path
 import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QFileDialog, QGridLayout, QHBoxLayout, QMessageBox, QPushButton,
+    QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QGridLayout, QHBoxLayout, QMessageBox, QPushButton,
     QSizePolicy, QVBoxLayout, QWidget, QFrame,
 )
 
-from coldspray.cad.part import grow_tangent, krl_base_frame
+from coldspray.cad.part import (
+    flip_z, grow_tangent, krl_base_at_vertex, krl_base_frame, krl_base_from_planes, spin_frame, vertex_edges,
+)
 from coldspray.gui.stepper import PART, POSITION, TOOLPATH
 from coldspray.gui.style import tokens
 from coldspray.gui.widgets import Section, fit_combo, primary_button, wrap_label
@@ -139,16 +141,52 @@ class PartStep:
         krl_box = self.krl_section = Section("KRL base (optional)")
         self.krl_btn = QPushButton("Pick KRL base")
         self.krl_btn.setCheckable(True)
-        self.krl_btn.setToolTip("Write the program relative to a base on the part, taught on the real part.\n"
-                                "Click a flat face near a corner, beside the edge to use as X:\n"
-                                "+Z out of the face, +X along that edge, origin at the corner")
+        self.krl_btn.setToolTip("Write the program relative to a base on the part, taught on the real part")
         self.krl_btn.toggled.connect(self._pick_krl_base)
         clear_krl = QPushButton("Clear")
         clear_krl.clicked.connect(lambda: self._set_krl_base(None, None))
         row = capsule_row(self.krl_btn, clear_krl)
         capsule(self.krl_btn, True)
+        self.krl_method = QComboBox()
+        for text, key, tip in (
+                ("Face + edge", "face", "Click a flat face near a corner, beside the edge to use as X:\n"
+                                        "+Z out of the face, +X along that edge, origin at the corner"),
+                ("3 planes", "planes", "Click three flat faces: origin where they meet, +Z out of the 1st,\n"
+                                       "+X along the 1st/2nd face line, pointing into the part"),
+                ("Vertex", "vertex", "Hover snaps to the nearest corner; click to place it there:\n"
+                                     "+Z out of the face under the cursor, +X along the edge toward the cursor")):
+            self.krl_method.addItem(text, key)
+            self.krl_method.setItemData(self.krl_method.count() - 1, tip, Qt.ToolTipRole)
+        self.krl_method.setToolTip("How the KRL base is picked")
+        self.krl_method.currentIndexChanged.connect(lambda _: self.krl_btn.setChecked(False))
+        fit_combo(self.krl_method)
+        self.krl_spin = QDoubleSpinBox()
+        self.krl_spin.setRange(-180.0, 180.0)
+        self.krl_spin.setDecimals(1)
+        self.krl_spin.setWrapping(True)
+        self.krl_spin.setSuffix("°")
+        self.krl_spin.setToolTip("Turn the base about its Z (origin and Z kept)")
+        self.krl_spin.valueChanged.connect(lambda _: self._apply_krl_spin())
+        turns = []
+        for text, step in (("-90°", -90.0), ("+90°", 90.0)):
+            b = QPushButton(text)
+            b.clicked.connect(lambda _=False, d=step: self._turn_krl(d))
+            turns.append(b)
+        self.krl_flip = QPushButton("Flip Z")
+        self.krl_flip.setCheckable(True)
+        self.krl_flip.setToolTip("Reverse Z (origin and X kept, Y follows)")
+        self.krl_flip.toggled.connect(lambda _: self._apply_krl_spin())
+        spin_row = capsule_row(*turns)
+        self.krl_spin.setMinimumWidth(90)   # the ±180.0° hint is wider than needed
+        spin_row.insertWidget(0, self.krl_spin)
+        self._krl_raw = None              # the base as picked, before spin / flip
+        self._krl_how = ""                # how it was made, for the label
+        self._krl_planes = []             # 3 planes: the faces picked so far
         self.krl_label = wrap_label()
+        krl_box.add(self.krl_method)
         krl_box.add(row)
+        krl_box.add(spin_row)
+        krl_box.add(capsule_row(self.krl_flip))
         krl_box.add(self.krl_label)
         layout.addWidget(krl_box)
 
@@ -353,7 +391,9 @@ class PartStep:
         self._show_faces()
 
     def _pick_krl_base(self, on: bool):
-        """Start (or cancel) picking the KRL base: one click on a flat face, near a corner."""
+        """Start (or cancel) picking the KRL base by the chosen method: one click on a flat
+        face near a corner, three flat faces in turn, or a click on a (snapped) vertex."""
+        self._krl_planes_clear()
         if not on:
             self.part_view.cancel_pick()
             self.part_plotter.render()
@@ -362,26 +402,134 @@ class PartStep:
             btn.blockSignals(True)
             btn.setChecked(False)
             btn.blockSignals(False)
-        if not self.part_view.start_pick(self._krl_base_picked,
-                                         "Click a flat face near the origin corner, beside the X edge"):
+        method = self.krl_method.currentData()
+        if method == "planes":
+            ok = self.part_view.start_pick(self._krl_plane_picked, self._krl_plane_hint())
+        elif method == "vertex":
+            from scipy.spatial import cKDTree
+            v = self.source.vertices
+            self._krl_tree = cKDTree(v)          # once per pick: a hover is one tree query
+            self._krl_snap = 0.05 * float(np.ptp(v, axis=0).max())
+            self._krl_hover_key = self._krl_edges = self._krl_preview = None
+            ok = self.part_view.start_pick(self._krl_vertex_clicked, "Hover to snap to a corner, click to place",
+                                           hover=self._krl_vertex_hover)
+        else:
+            ok = self.part_view.start_pick(self._krl_base_picked,
+                                           "Click a flat face near the origin corner, beside the X edge")
+        if not ok:
             self.krl_btn.setChecked(False)
+
+    def _krl_done(self):
+        self.krl_btn.blockSignals(True)
+        self.krl_btn.setChecked(False)
+        self.krl_btn.blockSignals(False)
 
     def _krl_base_picked(self, face_id, _body):
         if face_id not in self.source.planar:
             self._status("Not a flat face: pick a flat face for the KRL base")
             self.part_view.start_pick(self._krl_base_picked, "Not a flat face: pick a flat face")
             return
-        self.krl_btn.blockSignals(True)
-        self.krl_btn.setChecked(False)
-        self.krl_btn.blockSignals(False)
+        self._krl_done()
         self._set_krl_base(krl_base_frame(self.source, face_id, self.part_view.pick_point), face_id)
 
-    def _set_krl_base(self, t, face_id):
-        """Use KRL base `t` (part-CAD <- base, picked on `face_id`), or None for the faceplate BASE.
+    # 3 planes: the faces picked so far stay highlighted until the third
+    def _krl_plane_hint(self, problem="") -> str:
+        what = ("1st flat face (+Z out of it)", "2nd flat face (+X along its line with the 1st)",
+                "3rd flat face (the origin is where all three meet)")[len(self._krl_planes)]
+        return (problem + ": " if problem else "") + f"Click the {what}"
+
+    def _krl_planes_clear(self):
+        for k in range(len(self._krl_planes)):
+            self.part_view.highlight(f"krl{k}", None)
+        self._krl_planes = []
+
+    def _krl_plane_picked(self, face_id, _body):
+        part, problem = self.source, ""
+        if face_id not in part.planar:
+            problem = "Not a flat face"
+        elif face_id in self._krl_planes:
+            problem = "Already picked"
+        else:
+            self._krl_planes.append(face_id)
+            self.part_view.highlight(f"krl{len(self._krl_planes) - 1}", face_id)
+        if len(self._krl_planes) == 3:
+            planes = [part.planar[f] for f in self._krl_planes]
+            self._krl_planes_clear()
+            try:
+                t = krl_base_from_planes(planes, part.vertices.mean(0))
+            except ValueError:
+                problem = "Faces (nearly) parallel, start again"
+            else:
+                self._krl_done()
+                self._set_krl_base(t, None, "from 3 planes")
+                return
+        if problem:
+            self._status(self._krl_plane_hint(problem))
+        self.part_view.start_pick(self._krl_plane_picked, self._krl_plane_hint(problem))
+
+    # vertex: hover snaps to the nearest vertex and previews the base, click places it
+    def _krl_at(self, face_id, point):
+        """(vertex, base) snapped from part-CAD `point` on CAD face `face_id`, or (None, None)."""
+        dist, i = self._krl_tree.query(np.asarray(point, float))
+        if dist > self._krl_snap:
+            return None, None
+        vertex = self.source.vertices[i]
+        key = tuple(np.round(vertex, 6))
+        if key != self._krl_hover_key:            # the edges only change with the vertex
+            self._krl_hover_key, self._krl_edges = key, vertex_edges(self.source, vertex)
+        edges, normal = self._krl_edges
+        z = self.source.planar[face_id].normal if face_id in self.source.planar else normal
+        return vertex, krl_base_at_vertex(vertex, z, edges, np.asarray(point, float) - vertex)
+
+    def _krl_vertex_hover(self, tri, point):
+        vertex, t = (None, None) if tri is None else self._krl_at(int(self.source.face_ids[tri]), point)
+        shown = self._krl_preview
+        if (t is None and shown is None) or (t is not None and shown is not None and np.allclose(shown, t)):
+            return                                # nothing new: no render
+        self._krl_preview = t
+        self.part_view.show_preview(vertex, t)
+
+    def _krl_vertex_clicked(self, face_id, _body):
+        self._krl_preview = None
+        _, t = self._krl_at(face_id, self.part_view.pick_point)
+        if t is None:
+            self._status("No corner near the click: click closer to a vertex")
+            self.part_view.start_pick(self._krl_vertex_clicked, "No corner there: click near a vertex",
+                                      hover=self._krl_vertex_hover)
+            return
+        self._krl_done()
+        self._set_krl_base(t, None, "at a vertex")
+
+    def _set_krl_base(self, t, face_id, how=""):
+        """Use KRL base `t` (part-CAD <- base, picked on `face_id`, None if not made on one face),
+        or None for the faceplate BASE. Spin and flip start again from it.
         Only the KRL output changes, so the toolpath stays valid."""
+        self._krl_raw, self._krl_how = (None if t is None else np.array(t, float)), how
+        for w in (self.krl_spin, self.krl_flip):
+            w.blockSignals(True)
+        self.krl_spin.setValue(0.0)
+        self.krl_flip.setChecked(False)
+        for w in (self.krl_spin, self.krl_flip):
+            w.blockSignals(False)
         for p in (self.source, self.part):
             if p is not None:
-                p.krl_base, p.krl_base_face = t, face_id
+                p.krl_base_face = face_id
+        self._apply_krl_spin()
+
+    def _turn_krl(self, deg):
+        v = self.krl_spin.value() + deg
+        self.krl_spin.setValue((v + 180.0) % 360.0 - 180.0)
+
+    def _apply_krl_spin(self):
+        """The picked base turned by the spin about its Z, then Z flipped if ticked."""
+        t = self._krl_raw
+        if t is not None:
+            t = spin_frame(t, self.krl_spin.value())
+            if self.krl_flip.isChecked():
+                t = flip_z(t)
+        for p in (self.source, self.part):
+            if p is not None:
+                p.krl_base = t
         self.part_view.show_frame(t)
         self._show_faces()
 
@@ -421,9 +569,15 @@ class PartStep:
             x = np.round(part.krl_base[:3, 0], 2) + 0.0
             cell = getattr(self.assets, "cell", None)
             number = f"[{cell.part_base_number}]" if cell is not None else ""
+            on = (f"on {self._face_text(part.krl_base_face)}" if part.krl_base_face in part.planar
+                  else self._krl_how or "on the part")
+            if self.krl_spin.value():
+                on += f", turned {self.krl_spin.value():g}° about Z"
+            if self.krl_flip.isChecked():
+                on += ", Z flipped"
             self.krl_label.setText(
                 f"<span style='color:#d93025'>X</span> <span style='color:#188038'>Y</span> "
-                f"<span style='color:#1a73e8'>Z</span> on {self._face_text(part.krl_base_face)}<br>"
+                f"<span style='color:#1a73e8'>Z</span> {on}<br>"
                 f"Origin ({o[0]:g}, {o[1]:g}, {o[2]:g}), X ({x[0]:g}, {x[1]:g}, {x[2]:g}) in the CAD."
                 f" Teach it on the part as BASE_DATA{number}")
             self.krl_section.set_chip("set")

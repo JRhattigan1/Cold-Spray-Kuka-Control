@@ -44,10 +44,16 @@ stays at the bottom of its panel while the panel scrolls.
    then click toggles a face, Shift+click adds, Ctrl+click removes. "Grow to
    tangent faces" adds neighbours whose normals are within 10° across the
    shared edge. "Clear" empties the set. Coat faces show orange.
-   **KRL base (optional)**: "Pick KRL base", then click a flat face near the
-   corner to use as the origin, beside the edge to use as X: +Z points out of
-   the face, +X along that edge, the origin is the corner. Red/green/blue arrows
-   show it. The program is then written relative to this frame and selects
+   **KRL base (optional)**: choose a method, then "Pick KRL base". *Face + edge*
+   (default): click a flat face near the corner to use as the origin, beside the
+   edge to use as X: +Z points out of the face, +X along that edge, the origin is
+   the corner. *3 planes*: click three flat faces in turn (each turns purple): the
+   origin is where they meet, +Z out of the 1st, +X along the 1st/2nd line,
+   pointing into the part; near-parallel faces are rejected. *Vertex*: hovering
+   snaps to the nearest corner and previews the frame (faded arrows); click to
+   place it: +Z out of the face under the cursor, +X along the edge toward the
+   cursor. Then turn it about Z (spin box, ±90°) or Flip Z (origin and X kept).
+   Red/green/blue arrows show it. The program is then written relative to this frame and selects
    `BASE_DATA[part_base_number]` (`cell.yaml`, default 2), which you teach on the
    real part (3-point: origin, along X, into the XY plane). Only the KRL changes;
    the simulation is the same. "Clear" goes back to the faceplate BASE.

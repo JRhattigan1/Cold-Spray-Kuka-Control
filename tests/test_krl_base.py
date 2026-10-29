@@ -74,3 +74,66 @@ def test_program_relative_to_the_part_base(setup):
     # joint (PTP) lines don't change
     ptp = lambda s: [l for l in s.splitlines() if l.startswith("PTP")]
     assert ptp(plain) == ptp(on_part)
+
+
+# --- 3 planes, vertex, spin / flip ---------------------------------------------------
+from coldspray.cad.part import PlanarFace, flip_z, krl_base_at_vertex, krl_base_from_planes, spin_frame, vertex_edges
+
+
+def _ok(t):
+    assert np.allclose(t[:3, :3].T @ t[:3, :3], np.eye(3), atol=1e-9) and np.linalg.det(t[:3, :3]) > 0
+
+
+def _face(part, normal):
+    return max(part.planar, key=lambda k: part.planar[k].normal @ np.asarray(normal, float))
+
+
+def test_frame_from_three_planes():
+    part = load_part("test_block")
+    lo, hi = part.vertices.min(0), part.vertices.max(0)
+    top, front, left = (part.planar[_face(part, n)] for n in ([0, 0, 1], [0, -1, 0], [-1, 0, 0]))
+    t = krl_base_from_planes([top, front, left], part.vertices.mean(0))
+    _ok(t)
+    assert np.allclose(t[:3, 3], [lo[0], lo[1], hi[2]], atol=1e-6)
+    assert np.allclose(t[:3, 2], [0, 0, 1]) and np.allclose(t[:3, 0], [1, 0, 0])   # X into the part
+    # 1st and 2nd swapped: Z out of the front, X along the same edge
+    t = krl_base_from_planes([front, top, left], part.vertices.mean(0))
+    assert np.allclose(t[:3, 2], [0, -1, 0]) and np.allclose(t[:3, 0], [1, 0, 0])
+    with pytest.raises(ValueError):
+        krl_base_from_planes([top, part.planar[_face(part, [0, 0, -1])], left], part.vertices.mean(0))
+    tilted = PlanarFace(np.zeros(3), np.array([0.05, 0, 1.0]), 1.0)
+    with pytest.raises(ValueError):
+        krl_base_from_planes([top, front, tilted], part.vertices.mean(0))
+
+
+def test_frame_at_vertex():
+    part = load_part("test_block")
+    lo, hi = part.vertices.min(0), part.vertices.max(0)
+    corner = np.array([lo[0], lo[1], hi[2]])
+    edges, normal = vertex_edges(part, corner)
+    assert len(edges) == 3 and normal[2] > 0 and normal[0] < 0 and normal[1] < 0
+    top = part.planar[_face(part, [0, 0, 1])].normal
+    t = krl_base_at_vertex(corner, top, edges, toward=[1.0, 0.1, 0])
+    _ok(t)
+    assert np.allclose(t[:3, 3], corner) and np.allclose(t[:3, 0], [1, 0, 0]) and np.allclose(t[:3, 2], [0, 0, 1])
+    t = krl_base_at_vertex(corner, top, edges, toward=[0.1, 1.0, 0])
+    assert np.allclose(t[:3, 0], [0, 1, 0])
+    _ok(krl_base_at_vertex(corner, normal, edges, toward=[1.0, 0, 0]))      # mean normal: still a frame
+    assert np.allclose(krl_base_at_vertex(corner, [0, 0, 1], [], None)[:3, 0], [1, 0, 0])
+
+
+def test_spin_and_flip():
+    t = frame(10.0, 20.0, 30.0, 0.0, 0.0, 0.0)
+    s = spin_frame(t, 90)
+    _ok(s)
+    assert np.allclose(s[:3, 3], t[:3, 3]) and np.allclose(s[:3, 2], t[:3, 2]) and np.allclose(s[:3, 0], [0, 1, 0])
+    assert np.allclose(spin_frame(spin_frame(t, 30), -30), t)
+    f = flip_z(t)
+    _ok(f)
+    assert np.allclose(f[:3, 0], t[:3, 0]) and np.allclose(f[:3, 2], -t[:3, 2]) and np.allclose(f[:3, 3], t[:3, 3])
+
+
+def test_without_keeps_a_base_with_no_face():
+    part = load_part("test_block")
+    part.krl_base, part.krl_base_face = frame(1.0, 2.0, 3.0, 0, 0, 0), None
+    assert np.allclose(part.without([]).krl_base, part.krl_base)
