@@ -116,10 +116,12 @@ def save_tools(tool, path=None) -> Path:
             j = start + 1
             while j < len(lines) and lines[j].strip() and len(lines[j]) - len(lines[j].lstrip()) > ind:
                 j += 1
+            old = [re.match(r"\s+tool_number:\s*[^\s#]*(\s*#.*)?$", ln.rstrip("\r\n")) for ln in lines[start + 1:j]]
+            note = next((m.group(1) for m in old if m and m.group(1)), "")   # keep the line's comment
             body = [ln for ln in lines[start + 1:j] if not re.match(r"\s+(tool_number|tcp):", ln)]
             pad = " " * (ind + 2)
             if nz.tool_number is not None:
-                body.append(f"{pad}tool_number: {nz.tool_number}{nl}")
+                body.append(f"{pad}tool_number: {nz.tool_number}{note}{nl}")
             if nz.tcp is not None:
                 body.append(f"{pad}tcp: {_flow(nz.tcp)}   # taught TOOL_DATA{nl}")
             lines[start + 1:j] = body

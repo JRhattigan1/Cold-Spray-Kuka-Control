@@ -168,7 +168,7 @@ the step bar (purge edits are not covered).
 Start it with:
 ```
 .\run          (or double-click run.bat)
-.\run test     (the tests, 6 at a time: ~10 min)
+.\run test     (the tests, 4 at a time; only one test run at once: more crashed the PC)
 .\run test serial   (one at a time: ~30 min)
 ```
 which runs `C:\Users\qrb21117\.venvs\coldspray\Scripts\python.exe -m coldspray.gui`.

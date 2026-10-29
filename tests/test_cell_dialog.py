@@ -53,6 +53,12 @@ def test_roundtrip_and_tcp_per_nozzle(cfg):
     assert load_cell(cfg / "cell.yaml").bases_taught == {2: XYZABC(x=3)}
 
 
+def test_save_tools_unchanged_keeps_file(cfg):
+    before = (cfg / "tool.yaml").read_bytes()
+    config_io.save_tools(load_tool(cfg / "tool.yaml"), cfg / "tool.yaml")
+    assert (cfg / "tool.yaml").read_bytes() == before      # comments on tool_number lines kept
+
+
 def test_dialog_offscreen(cfg):
     from PySide6.QtWidgets import QApplication, QLabel
     from coldspray.gui.cell_dialog import CellDialog
