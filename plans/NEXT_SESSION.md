@@ -10,6 +10,8 @@
 - `test_rotor` built-in (500 long, 60 dia journals, drum + 4 discs); picks Revolve.
 - Revolve honours picked coat faces: `revolve_bands` -> one region per axial band, gun off between.
 - `turntable.rotation.endless` (default false): Revolve plans one helix per band. Open: real axis mode on the controller and how KRL must write an endless E5 (now a growing angle, e.g. 28800°). No dedicated tests yet for bands / helix.
+- `endless: true` is committed in `cell.yaml` for testing the helix: test_tube Revolve tests (incl. KRL regression) expect rings, so set it back to false before `run test all`.
+- Cell view: double-click empty background = zoom to fit the cell (`Scene._double_click_fit`); not on the part preview panel.
 - Note: `process.yaml` is rewritten by the GUI's "Save as default"; values other than the committed ones (e.g. `jump_height_mm: 0`) fail the KRL regression and layer tests.
 
 ## Session 12 (2026-10-29): Surface as one blended raster (in progress)

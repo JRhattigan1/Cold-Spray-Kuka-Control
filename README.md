@@ -30,7 +30,8 @@ problems) run in the background with a progress bar and Cancel.
 The sidebar and the 3D view share the window: drag the gap between them to
 widen the sidebar (its width is remembered). The window starts at 1440x900, or
 less on a small screen, and can't go below 1100x680. Each step's "Next" button
-stays at the bottom of its panel while the panel scrolls.
+stays at the bottom of its panel while the panel scrolls. Double-click empty
+background in the 3D cell view to zoom to fit the whole cell.
 
 1. **Part** - open a STEP part or assembly, or pick a built-in test part from
    the drop-down (square, block with hole, round boss, stepped block, taper,

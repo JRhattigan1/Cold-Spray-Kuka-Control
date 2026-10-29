@@ -48,7 +48,7 @@ turntable:
     limits_deg: [-355.0, 355.0]
     position_deg: 0.0
     max_speed_deg_s: 156.0  # 2600 rpm motor / i = 100 (KDT3000 manual) - CHECK $VEL_AXIS_MA
-    endless: false          # true: turns without unwinding, Revolve sprays one helix per band - CHECK axis mode on the controller
+    endless: true         # true: turns without unwinding, Revolve sprays one helix per band - CHECK axis mode on the controller
   # true if the controller couples the turntable mathematically to BASE_DATA[1]
   # (positions then move with the faceplate); false writes positions in the
   # fixed base and adds the axis values to every point.

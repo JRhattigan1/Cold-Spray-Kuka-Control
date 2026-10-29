@@ -17,6 +17,7 @@ from dataclasses import dataclass
 import numpy as np
 import pyvista as pv
 from scipy.spatial.transform import Rotation
+from vtkmodules.vtkRenderingCore import vtkPropPicker
 
 from coldspray.cell import axis_defaults, base_world, base_worlds, robroot, turntable_motion
 from coldspray.kinematics.robot import HOME_DEG, Robot
@@ -139,6 +140,8 @@ class Scene:
         self._face_pick = None           # (callback, on_cancel, observer ids) while picking part faces
 
         self.set_theme()
+        if getattr(pl, "iren", None) is not None:
+            pl.iren.add_observer("LeftButtonPressEvent", self._double_click_fit)
         pl.enable_anti_aliasing("msaa")   # not ssaa: its render pass breaks the hardware picker the drag handles use
         self.link_actors, self.stick, self.carriage = [], None, None
         self.group_actors = {}
@@ -831,6 +834,17 @@ class Scene:
     def focus_on_work(self):
         target = base_world(self.cell_cfg)[:3, 3] if self.cell_cfg else self.world_from_robot[:3, 3]
         self.pl.camera_position = [target + [-2600, -4200, 2600], target + [600, 300, 700], (0, 0, 1)]
+
+    def _double_click_fit(self, iren, _event):
+        """Double-click on empty background: zoom to fit the whole cell."""
+        if not iren.GetRepeatCount():
+            return
+        x, y = iren.GetEventPosition()
+        picker = vtkPropPicker()
+        if picker.Pick(x, y, 0, self.pl.renderer) and picker.GetViewProp() is not None:
+            return                       # on something: leave it to picking
+        self.pl.reset_camera()
+        self.pl.render()
 
     def focus_on_part(self, distance=900.0):
         """Close-up of the faceplate for setting up the part: down the faceplate
