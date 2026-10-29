@@ -17,7 +17,7 @@ dependencies = [
 [project.optional-dependencies]
 sim = ["pyvista", "pyvistaqt", "PySide6", "trimesh", "python-fcl", "hidapi"]
 cad = ["cadquery-ocp", "trimesh", "shapely", "networkx", "rtree"]
-dev = ["pytest"]
+dev = ["pytest", "pytest-xdist"]
 
 [project.scripts]
 coldspray-gui = "coldspray.gui:main"

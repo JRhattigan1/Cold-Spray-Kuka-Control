@@ -74,7 +74,7 @@ User asked: fix known bugs, add day-to-day features, housekeeping (robot T1 not 
 - Layers: the part is not a collision body (not built yet); Revolve/Surface: it is.
 - Purge → start avoids the part. Solver suggests gantry E1 and moves purge XYZ, not its angle.
 - Overrun is measured from the body's faces, not the toolpath.
-- Wrapping Surface regions split per CAD face.
+- ~~Wrapping Surface regions split per CAD face.~~ **Reversed 2026-10-29:** the user wants a multi-face Surface pick coated as one smoothly blended raster (unfold and raster across), with a consistent step-over measured on the surface for even deposition; per-face split becomes an option (S12U).
 - **Fewer agents** (user, session 7): do work inline; use an agent only for a big separate piece.
 
 ## Lessons for running agents
