@@ -56,6 +56,10 @@ Do this at 100 % and at 150 % Windows scaling (Settings → Display → Scale; r
 - [ ] **KRL base methods** (Part step): 3 planes on a block corner (top, front, side): the faces turn purple in turn, the hint names the next one, origin at the corner, X along the top/front edge into the part; two parallel faces give a status message and start again.
 - [ ] **KRL base vertex**: hover near corners: a small sphere and faded arrows follow, the view stays smooth; click places it. Spin ±90° and Flip Z update the arrows and label live; save and reopen the job: the turned base comes back, same KRL.
 - [ ] **Export** (Advanced): untick "Program switches spray": the `$OUT` lines are comments. Tick "Split long programs" on a long path: main + `_Pnn` files next to it.
+- [ ] **Cell → Tool**: paste a pendant line (`{X 517.79,Y 214.24,Z 130.91,A 0,B 0,C 0}`) into the central injector row, Save: tool.yaml keeps its comments, Position/Toolpath go out of date; after Generate the exported `.src` has `BAS(#TOOL, <that nozzle's number>)`. Switch to the radial nozzle: its tool number is used. Restart: the 3D gun TCP matches.
+- [ ] **Cell → Base**: paste BASE_DATA 1 and 2; saved in cell.yaml under `bases_taught`.
+- [ ] **Cell → HOME**: jog A1–A6 and E1: the robot follows live, out-of-limit joints and collisions show; try E1 2730 (expect a hit) and find a clear HOME; Save: cell.yaml `home_deg` changes, KRL starts/ends at it. Leave the tab: the robot goes back.
+- [ ] **Purge undo**: drag the purge marker, Ctrl+Z: it goes back in one step; edit dwell, Ctrl+Z, Ctrl+Shift+Z.
 
 ## After this, on the controller (ROADMAP order step 2)
 - Copy the split program over and check that all parts load.

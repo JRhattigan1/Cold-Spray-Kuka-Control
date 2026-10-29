@@ -3,7 +3,26 @@
 **Start here.** Where each feature stands is in [ROADMAP.md](ROADMAP.md), and what the app does is in [README.md](../README.md). Each agent's detail is in `plans/reports/<ID>-1.md` on main. Older hand-offs (session 7 state, run 8 solver speed-up) and the finished feature and optimisation plans are in git history.
 
 ## State (2026-10-29)
-- `main` @ `e2ec9ae`; origin/main is one commit behind (session 10 not pushed).
+- `main` @ `641faad` (session 11 merged); not pushed (origin/main is at session 9).
+
+## Session 11 (2026-10-29): 6 builders + 6 reviewers, 18 min, all merged
+| merge | what |
+|---|---|
+| S11B | KRL base picker: Face + edge (default, KRL unchanged) / 3 planes / Vertex (hover preview, KD-tree snap); spin about Z, ±90°, Flip Z; faceless bases save/open (job stores the final turned base) |
+| S11T | **Cell** button → dialog: Tool tab (TOOL_DATA per nozzle, pendant paste, CAD TCP + difference), Base tab (BASE_DATA stored only). At merge: KRL now selects the active nozzle's tool number (`KRLOptions.tool_number`) |
+| S11H | HOME tab in the Cell dialog: jog A1–A6 + E1, live robot, collisions/limits, Save `home_deg` to cell.yaml; robot goes back on leaving the tab |
+| S11P | Purge settings in Position undo; a drag is one undo step (dragging already existed) |
+| S11S | Re-route lever checks only the changed span: block_layers reroute 29 → 10 s, output identical |
+| S11G | Cell meshes split into 600 mm FCL chunks: gantry lever 53 → 41 s (noisy; re-time), output identical |
+Reviewer reports: `wp/<ID>R` branches (`plans/reports/<ID>R-1.md`, acceptance tests not merged).
+
+**Open from session 11 (reviewers):**
+- Radial nozzle `tool_number: 2` in tool.yaml is a guess: CHECK the pendant. 3D view's TCP only refreshes after restart. Taught bases not shown in the KRL header.
+- `save_tools` drops a trailing comment on a `tool_number:` line; `parse_pendant` reads `X abc` as 0 (should reject); a typo in a Cell table cell raises an uncaught ValueError.
+- HOME: Save allowed with joints out of limits or colliding (warning only); E1 edited but not saved; multi-line `home_deg` not matched.
+- Gantry lever: likely dominated by building a checker per candidate E1: profile (`bench_solve --profile`), cache checkers/cropped meshes per E1.
+- Reroute: add a test comparing span vs full-path results at E1 changes / path end.
+- Session 11 branches/worktrees (`wp/S11*`, `cs-S11*`) to clean up with the rest.
 
 ## Session 10 (2026-10-28): Build-up toggle (committed `e2ec9ae`)
 - Simulate **Build-up** checkbox (under Thickness). Layers: finished layers solid (copper, part cut at the layer being sprayed), that layer's contour/infill tracks appear as the gun passes (step-over wide, one layer high, two alternating shades); path lines hidden, target part faded. Other modes: thickness map follows playback (final scale). Thickness map: uncoated now grey.
@@ -44,9 +63,9 @@ User asked: fix known bugs, add day-to-day features, housekeeping (robot T1 not 
 3. **Arcs in T1** (test_block, arcs on): orientation along CIRC with `#PATH`, C_DIS blending, `$VEL.CP`, `$CIRC_TYPE` inside split `_Pnn`. CIRC on a turning table is a 2-LIN chord (short arcs only).
 4. **Calibrate:** thickness model and `powder_feed_g_min` against a sprayed coupon; `cable_windup_deg` from the cable dressing.
 5. **Collision-aware auto-position** (repair Surface hits); gantry lever sampling vs the 2 mm check; gantry lever speed on WearPlate2.
-6. Thickness map on a worker thread; HOME legs drawn; undo for purge edits.
+6. Thickness map on a worker thread; HOME legs drawn.
 7. **Position Simple mode:** compare E1 with `gantry.position_mm` for "changed" (user: maybe).
-8. Solver speed: block_layers **reroute** (~19 s; IK over the whole range per candidate: sample/IK only the changed span) and repair_surface **gantry** (~30 s; FCL narrow phase: split the cell mesh so the broadphase culls). Benchmark with `tools/bench_solve.py`.
+8. Solver speed: reroute's remaining time is `find_issues` over the whole path after each accepted candidate; gantry: profile and cache per-E1 checkers (see session 11). Benchmark with `tools/bench_solve.py`.
 9. Slicer `polygonize` option; launch time; S/T bits vs `$POS_ACT`; holes in Surface; reach IK on a worker; `solve_arm` uses Cartesian samples; README robot checks in T1.
 
 ## User decisions (2026-10-28)
