@@ -29,8 +29,14 @@ def count_in(path: Toolpath, ctx: Context, lo: int, hi: int, limit: int | None =
     but it stops once the count reaches `limit` (then the result is only >= limit). The
     expensive collision checks run on every `stride`-th reachable sample first, so a bad
     candidate is usually dropped after a fraction of them. IK and seeds are those of issues_in."""
-    s, all_targets, hint = _sampled(path, ctx)
-    sel = np.flatnonzero((s.move_index >= lo) & (s.move_index <= hi))
+    if path.joint_hint is None and 1 <= lo < len(path.moves):
+        s, targets, idx = _span_samples(path, ctx, lo, min(hi, len(path.moves) - 1))
+        sel, hint = np.arange(len(idx)), None
+    else:
+        s, all_targets, hint = _sampled(path, ctx)
+        sel = np.flatnonzero((s.move_index >= lo) & (s.move_index <= hi))
+        targets, idx = all_targets[sel], s.move_index[sel]
+        hint = None if hint is None else hint[sel]
     if not len(sel):
         return 0
     seed = ctx.cell.home_deg if ctx.seed is None else ctx.seed
@@ -39,9 +45,8 @@ def count_in(path: Toolpath, ctx: Context, lo: int, hi: int, limit: int | None =
         before = np.flatnonzero(last[0].move_index < lo)
         if len(before) and not np.isnan(last[1][before[-1], 0]):
             seed = last[1][before[-1]]
-    targets = all_targets[sel]
-    joints = ctx.robot.ik_path(targets, seed_deg=seed, hint=None if hint is None else hint[sel])
-    joints = ptp_in_joint_space(ptp_moves(path, ctx.cell), s.move_index[sel], joints,
+    joints = ctx.robot.ik_path(targets, seed_deg=seed, hint=hint)
+    joints = ptp_in_joint_space(ptp_moves(path, ctx.cell), idx, joints,
                                 before=seed if last is not None or lo == 0 else None)
     reach = ~np.isnan(joints[:, 0])
     n = int((~reach).sum())
@@ -55,6 +60,34 @@ def count_in(path: Toolpath, ctx: Context, lo: int, hi: int, limit: int | None =
             if limit is not None and n >= limit:
                 break
     return n
+
+
+def _span_samples(path: Toolpath, ctx: Context, lo: int, hi: int):
+    """(samples, targets, move_index) of moves lo..hi only (lo >= 1), equal to the rows of
+    _sampled(path, ctx) with move_index in lo..hi: each segment depends only on its two end
+    moves, so sample moves lo-1..hi with move lo-1 carrying every axis value in force there."""
+    from coldspray.planner.solver import axis_defaults, robot_targets
+    vals = path.axis_values()
+    names = sorted({k for a in vals for k in a})
+    init = axis_defaults(ctx.cell) or {}
+    first = {k: init.get(k, vals[-1].get(k, 0.0)) for k in names}
+    m0 = path.moves[lo - 1]
+    head = replace(m0, axes={k: vals[lo - 1].get(k, first[k]) for k in names})
+    sub = Toolpath(path.name, [head] + list(path.moves[lo:hi + 1]), path.skipped_points)
+    o = ctx.opts
+    full = sub.sample(o.sample_mm, o.angle_step_deg, axis_defaults(ctx.cell))
+    rows = np.flatnonzero(full.move_index >= 1)
+    s = _Rows(full, rows)
+    return s, robot_targets(full, ctx.cell)[rows], full.move_index[rows] + (lo - 1)
+
+
+class _Rows:
+    """axes_at(i) of `samples` row rows[i]."""
+    def __init__(self, samples, rows):
+        self._s, self._r = samples, rows
+
+    def axes_at(self, i):
+        return self._s.axes_at(int(self._r[i]))
 
 
 def prime_seed(path: Toolpath, ctx: Context, lo: int) -> None:
