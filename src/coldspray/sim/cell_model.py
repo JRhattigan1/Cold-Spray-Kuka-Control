@@ -58,8 +58,18 @@ def _merge(chunks) -> pv.PolyData:
         verts.append(v)
         faces.append(f + offset)
         offset += len(v)
-    f = np.vstack(faces)
-    return pv.PolyData(np.vstack(verts), np.hstack([np.full((len(f), 1), 3), f]).ravel())
+    v, f = np.vstack(verts), np.vstack(faces)
+    mesh = pv.PolyData(v, np.hstack([np.full((len(f), 1), 3), f]).ravel())
+    # Area-weighted point normals: with these set, add_mesh(smooth_shading=True)
+    # skips VTK's compute_normals (~3 s at startup for the whole cell).
+    n = np.zeros_like(v)
+    cross = np.cross(v[f[:, 1]] - v[f[:, 0]], v[f[:, 2]] - v[f[:, 0]])
+    for i in range(3):
+        np.add.at(n, f[:, i], cross)
+    n /= np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-12)
+    mesh.point_data.set_array(n, "Normals")
+    mesh.point_data.active_normals_name = "Normals"
+    return mesh
 
 
 def load_cell_meshes(cache: str) -> CellMeshes:

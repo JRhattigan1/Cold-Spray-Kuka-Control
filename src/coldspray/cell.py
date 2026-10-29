@@ -51,6 +51,8 @@ def turntable_axes(cell: CellConfig, ext: dict | None = None) -> tuple[float, fl
     tilt = ext.get(tt.tilt.axis, tt.tilt.position_deg)
     rot = ext.get(tt.rotation.axis, tt.rotation.position_deg)
     for ax, v in ((tt.tilt, tilt), (tt.rotation, rot)):
+        if ax.endless:
+            continue
         lo, hi = ax.limits_deg
         if not lo - 1e-9 <= v <= hi + 1e-9:
             raise ValueError(f"{ax.axis} = {v:.2f} deg outside limits {lo}..{hi} deg")

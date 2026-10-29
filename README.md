@@ -108,7 +108,14 @@ stays at the bottom of its panel while the panel scrolls.
      its edge (`overrun`), or past a datum plane (`beyond_plane` + `turn_plane`),
      e.g. off a masked area. Path colours: contour magenta, infill orange, turn
      yellow, jump grey.
-   - **Revolve**: coat a round part while the turntable spins.
+   - **Revolve**: coat a round part while the turntable spins. With coat faces
+     picked in step 1 only their axial bands are coated, each as its own region
+     (e.g. the two bearing journals of the built-in compressor rotor). By default
+     each pass is one ring and the table reverses between passes (±355° travel);
+     with `turntable.rotation.endless: true` in `cell.yaml` each band is one
+     continuous helix (pitch = step-over, a flat turn at each end, table always
+     turning the same way). CHECK how the controller takes an endless E5 before
+     running that KRL (it is written as a growing angle).
    - **Surface**: coat the faces picked in step 1, gun along the surface normal
      at standoff, curved faces allowed. Picked faces that don't touch are
      separate regions, joined by a jump; a region that wraps round is split per

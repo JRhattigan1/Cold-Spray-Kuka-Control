@@ -5,6 +5,13 @@
 ## State (2026-10-29)
 - `main` @ `641faad` (session 11 merged); not pushed (origin/main is at session 9).
 
+## Session 13 (2026-10-29, no agents): startup, rotor part, Revolve regions + helix
+- Startup 24 s -> 16 s: OCP/trimesh imported on a thread (`gui/__main__.py`); cell meshes carry numpy point normals so PyVista skips `compute_normals` (`sim/cell_model.py`).
+- `test_rotor` built-in (500 long, 60 dia journals, drum + 4 discs); picks Revolve.
+- Revolve honours picked coat faces: `revolve_bands` -> one region per axial band, gun off between.
+- `turntable.rotation.endless` (default false): Revolve plans one helix per band. Open: real axis mode on the controller and how KRL must write an endless E5 (now a growing angle, e.g. 28800°). No dedicated tests yet for bands / helix.
+- Note: `process.yaml` is rewritten by the GUI's "Save as default"; values other than the committed ones (e.g. `jump_height_mm: 0`) fail the KRL regression and layer tests.
+
 ## Session 12 (2026-10-29): Surface as one blended raster (in progress)
 - User: a multi-face Surface pick must be coated as one smoothly blended raster, with a **consistent step-over on the surface** (reverses the S7S per-face split).
 - Round 1 `wp/S12U` (not merged): passes = geodesic-distance level sets; `surface_split_faces` option (default off); `test_wearplate` built-in. Reviewer `wp/S12UR`: FIX FIRST: repair top+4 sides 18.9 % of gaps outside ±10 % (max 2.99 mm at 3-face corners), wearplate 9.5 %; gun jumps 90° / 56°; planning 35 s (box) vs 1.3 s on main, tube 207 s / 193k moves. The builder loosened its own spacing test (rejected). Independent checker: `wp/S12UR` `tests/test_S12UR_accept.py`.

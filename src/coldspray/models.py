@@ -89,6 +89,7 @@ class RotaryAxisConfig(BaseModel):
     limits_deg: tuple[float, float]
     position_deg: float = 0.0
     max_speed_deg_s: float | None = None
+    endless: bool = False                      # turns without unwinding (limits_deg ignored): Revolve plans a helix
 
 
 class TurntableConfig(BaseModel):

@@ -17,7 +17,7 @@ from coldspray.planner.gun import level_gun
 from coldspray.toolpath.simplify import simplify
 from coldspray.planner.layers import plan_layers
 from coldspray.planner.purge import add_purge
-from coldspray.planner.revolve import plan_revolve
+from coldspray.planner.revolve import STEP_DEG, plan_revolve
 from coldspray.transforms import frame
 
 FACEPLATE_RADIUS = 500.0  # mm
@@ -148,16 +148,33 @@ def test_groove_repair():
     return both
 
 
+def test_rotor():
+    """Compressor rotor, 500 mm long along Z: 60 dia x 80 bearing journals at both ends,
+    80 dia shoulders, a 180 dia x 250 drum with four 260 dia x 20 stage discs."""
+    from OCP.BRepAlgoAPI import BRepAlgoAPI_Fuse
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeCylinder
+    from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt
+
+    sections = [(0, 80, 60), (80, 45, 80), (125, 250, 180), (375, 45, 80), (420, 80, 60)]  # (z, length, dia)
+    sections += [(140 + 60 * i, 20, 260) for i in range(4)]
+    shape = None
+    for z, length, dia in sections:
+        cyl = BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(0, 0, z), gp_Dir(0, 0, 1)), dia / 2, length).Shape()
+        shape = cyl if shape is None else BRepAlgoAPI_Fuse(shape, cyl).Shape()
+    return shape
+
+
 BUILT_IN = {"test_square": test_square, "test_block": test_block, "test_boss": test_boss,
             "test_steps": test_steps, "test_frustum": test_frustum, "test_u_block": test_u_block,
             "test_tube": test_tube, "test_panel": test_panel, "test_repair": test_repair,
-            "test_groove_repair": test_groove_repair}
+            "test_groove_repair": test_groove_repair, "test_rotor": test_rotor}
 BUILT_IN_LABELS = {"test_square": "Square block 50 x 50 x 10", "test_block": "Block with hole 40 x 30 x 5",
                    "test_boss": "Round boss 60 dia x 30", "test_steps": "Stepped block 60 x 40, steps 10/20/30",
                    "test_frustum": "Taper 80 to 50 dia x 30", "test_u_block": "U-block 60 x 40 x 30, 20 slot",
                    "test_tube": "Tube 120 OD x 150", "test_panel": "Curved panel R150, 60 deg x 100",
                    "test_repair": "Repair: patch on a component",
-                   "test_groove_repair": "Repair: patch in a groove"}
+                   "test_groove_repair": "Repair: patch in a groove",
+                   "test_rotor": "Compressor rotor 500 long, 60 dia journals"}
 
 
 def load_part(source=None, deflection=0.05) -> Part:
@@ -231,11 +248,20 @@ def plan_part(part: Part, proc: ProcessConfig, mode="layers", tilt_deg=0.0, rota
         floor = substrate.top if substrate else 0.0
         v = v - [0.0, 0.0, floor]
         up = frame(z=floor)
+        bands = revolve_bands(part, floor) if getattr(part, "coat_faces", None) else None
+        if bands == []:
+            raise ValueError("Revolve coats round faces: the picked faces have no height along the axis")
         path = plan_revolve(v, faces, proc, part.name, coats=coats, tilt_deg=tilt_deg,
-                            tilt_axis=tilt_axis, rotation_axis=rot_axis).transformed(up)
-        passes = sum(1 for a, b in zip(path.moves, path.moves[1:]) if b.gun_on and a.gun_on
-                     and abs(b.pose[2, 3] - a.pose[2, 3]) > 1e-9)
-        return f"{coats} coat(s), {passes + coats} passes", _hold_gun(add_purge(path, cell), cell, roll_deg, wrist, proc.arcs)
+                            tilt_axis=tilt_axis, rotation_axis=rot_axis, bands=bands,
+                            helical=bool(tt and tt.rotation.endless)).transformed(up)
+        if tt and tt.rotation.endless:
+            turns = sum(STEP_DEG for m in path.moves if m.gun_on) / 360.0
+            return (f"{coats} coat(s), helix, {turns:.0f} turns",
+                    _hold_gun(add_purge(path, cell), cell, roll_deg, wrist, proc.arcs))
+        steps = sum(1 for a, b in zip(path.moves, path.moves[1:]) if b.gun_on and a.gun_on
+                    and abs(b.pose[2, 3] - a.pose[2, 3]) > 1e-9)
+        starts = sum(1 for a, b in zip([None] + path.moves, path.moves) if b.gun_on and not (a and a.gun_on))
+        return f"{coats} coat(s), {steps + starts} passes", _hold_gun(add_purge(path, cell), cell, roll_deg, wrist, proc.arcs)
     if mode == "surface":                       # the picked faces, on any body
         coat = part.coat_faces
         if not coat:
@@ -259,6 +285,19 @@ def plan_part(part: Part, proc: ProcessConfig, mode="layers", tilt_deg=0.0, rota
     path = plan_layers(layers, proc, part.name, table_axes=table, to_base=to_base).transformed(to_base)
     start = f" from start face {part.start_face}" if part.start_face is not None else ""
     return f"{len(layers)} layers{start}", _hold_gun(add_purge(path, cell), cell, roll_deg, wrist, proc.arcs)
+
+
+def revolve_bands(part, floor=0.0) -> list[tuple[float, float]]:
+    """(zmin, zmax) above `floor` of each picked coat face, for Revolve: each band
+    (after merging overlaps) is coated as its own region. Faces with no height
+    (flat ends square to the axis) are left out."""
+    v = placed_vertices(part)
+    bands = []
+    for k in sorted(part.coat_faces):
+        z = v[np.unique(part.faces[part.face_ids == k]), 2] - floor
+        if len(z) and np.ptp(z) > 1e-6:
+            bands.append((float(z.min()), float(z.max())))
+    return bands
 
 
 def same_surface_ids(part) -> np.ndarray:

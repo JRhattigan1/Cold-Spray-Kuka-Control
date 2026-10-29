@@ -225,7 +225,7 @@ class PartStep:
             self.part_label.setText(f"{BUILT_IN_LABELS.get(source, part.name)} (built in)" if builtin
                                     else Path(source).name)
             self.stepbar.set_chip_text(part.name if builtin else Path(source).name)
-            if source == "test_tube":
+            if source in ("test_tube", "test_rotor"):
                 self.mode.setCurrentIndex(self.mode.findData("revolve"))
             elif builtin:
                 self.mode.setCurrentIndex(self.mode.findData("layers"))
